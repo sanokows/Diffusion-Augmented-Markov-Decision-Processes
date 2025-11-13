@@ -7,9 +7,8 @@ import distrax
 import jax
 import jax.numpy as jnp
 from flax import nnx
-
 from src.jaxrl import utils
-from src.diffusion.common.utils import inverse_softplus, sample_kernel, log_prob_kernel, check_stop_grad
+from src.networks.diffusion.utils import inverse_softplus, sample_kernel, log_prob_kernel, check_stop_grad
 
 
 def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.0):
@@ -776,108 +775,6 @@ class DiffusionModel(nnx.Module):
             return self.bwd_model(x, obs, step)
         else:
             return jnp.zeros_like(x)
-
-
-# class DIMEActor(nnx.Module):
-#     def __init__(
-#         self,
-#         action_dim: int,
-#         observation_dim: int,
-#         diffusion_model: nnx.Module,
-#         sde_integrator: callable,
-#         ode_integrator: callable,
-#         logratio: callable,
-#         kl_start: float = 0.1,
-#         ent_start: float = 0.1,
-#     ):
-#         self.action_dim = action_dim
-#         self.observation_dim = observation_dim
-#         self.diffusion_model = diffusion_model
-#         self.sde_integrator = sde_integrator
-#         self.ode_integrator = ode_integrator
-#         self.logratio = logratio
-
-#         # Parameters
-#         self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
-#         self.log_temperature = nnx.Param(jnp.ones(1) * math.log(ent_start))
-
-#     def sample(
-#         self,
-#         key,
-#         obs: jax.Array,
-#         stop_grad: bool = False,
-#         ode: bool = False,
-#         ode_coef: float = 1.0,
-#     ) -> jax.Array:
-#         """Sample actions from the diffusion model."""
-#         final_action, running_costs, stochastic_costs, terminal_costs = (
-#             sample(
-#                 key,
-#                 obs,
-#                 self.sde_integrator,
-#                 self.diffusion_model,
-#                 stop_grad=stop_grad,
-#                 ode=ode,
-#                 ode_coef=ode_coef,
-#             )
-#         )
-#         return (final_action, running_costs, stochastic_costs, terminal_costs)
-
-#     def det_action(
-#         self,
-#         key,
-#         obs: jax.Array,
-#         stop_grad: bool = False,
-#         ode: bool = False,
-#         ode_coef: float = 1.0,
-#     ) -> jax.Array:
-#         """Sample actions from the diffusion model."""
-#         final_action, running_costs, stochastic_costs, terminal_costs = (
-#             sample(
-#                 key,
-#                 obs,
-#                 self.ode_integrator,
-#                 self.diffusion_model,
-#                 stop_grad=stop_grad,
-#                 ode=ode,
-#                 ode_coef=ode_coef,
-#             )
-#         )
-#         return (final_action, running_costs, stochastic_costs, terminal_costs)
-
-#     def kl_div(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, n_samples: int, stop_grad: bool = False) -> jax.Array:
-#         """Compute KL divergence between current and old diffusion models."""
-#         log_ratios = kl_div(
-#             key,
-#             obs,
-#             self.logratio,
-#             self.diffusion_model,
-#             target_diffusion_model.diffusion_model,
-#             stop_grad=stop_grad,
-#             kl_action_rep=n_samples,
-#         )
-
-#         return log_ratios
-    
-#     def kl_div_dime(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
-#         """Compute KL divergence between current and old diffusion models."""
-
-#         log_ratios = kl_div(
-#             key,
-#             obs,
-#             self.logratio,
-#             self.diffusion_model,
-#             target_diffusion_model.diffusion_model,
-#             stop_grad=stop_grad,
-#         )
-#         return log_ratios
-
-#     def temperature(self) -> jax.Array:
-#         return jnp.exp(self.log_temperature.value)
-
-#     def lagrangian(self) -> jax.Array:
-#         return jnp.exp(self.log_lagrangian.value)
-
 
 class DIMEActor(nnx.Module):
     def __init__(

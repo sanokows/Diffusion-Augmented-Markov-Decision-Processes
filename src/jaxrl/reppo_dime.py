@@ -16,7 +16,6 @@ from jax.random import PRNGKey
 from omegaconf import DictConfig, OmegaConf
 
 import wandb
-from src.diffusion.common.models.control_net import ControlNetwork
 from src.env_utils.jax_wrappers import (
     BraxGymnaxWrapper,
     ClipAction,
@@ -25,6 +24,7 @@ from src.env_utils.jax_wrappers import (
     NormalizeVec,
 )
 from src.jaxrl import utils
+from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models import (
     CategoricalCriticNetwork,
     CriticNetwork,
