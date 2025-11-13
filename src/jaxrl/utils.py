@@ -58,6 +58,49 @@ def hl_gauss(inp, num_bins, vmin, vmax, epsilon=0.0):
 
     return (1 - epsilon) * target_probs + epsilon * uniform
 
+def projection(next_dist, rewards, dones, truncated, ent_coef, next_log_prob, gamma, v_min, v_max, num_atoms, support):
+    delta_z = (v_max - v_min) / (num_atoms - 1)
+    batch_size = rewards.shape[0]
+
+    entr_bon = - (1 - dones[:, None]) * gamma * ent_coef * next_log_prob.reshape(-1,1)
+
+    # Compute target_z
+    target_z = jnp.clip(rewards[:,None] + entr_bon + (1 - dones[:, None]) * gamma * support, a_min=v_min, a_max=v_max)
+    b = (target_z - v_min) / delta_z
+    l = jnp.floor(b).astype(jnp.int32)
+    u = jnp.ceil(b).astype(jnp.int32)
+
+    # Adjust l and u to ensure they remain within valid bounds
+    l = jnp.where((u > 0) & (l == u), l - 1, l)
+    u = jnp.where((l < (num_atoms - 1)) & (l == u), u + 1, u)
+
+    # Create the projected distribution
+    proj_dist = jnp.zeros_like(next_dist)
+
+    # Offset calculation for batch indexing
+    offset = jnp.arange(batch_size)[:, None] * num_atoms
+    # offset = jnp.tile(offset, (1, num_atoms))  # Repeat along the second axis
+
+    # Index updates for proj_dist
+    l_idx = (l + offset).ravel()
+    u_idx = (u + offset).ravel()
+
+    # Flattened updates
+    l_update = (next_dist * (u.astype(jnp.float32) - b)).ravel()
+    u_update = (next_dist * (b - l.astype(jnp.float32))).ravel()
+
+    # Flatten proj_dist for updates
+    proj_dist_flat = proj_dist.ravel()
+
+    # Add values to proj_dist
+    proj_dist_flat = proj_dist_flat.at[l_idx].add(l_update)
+    proj_dist_flat = proj_dist_flat.at[u_idx].add(u_update)
+
+    # Reshape back to [batch_size, num_atoms]
+    proj_dist = proj_dist_flat.reshape(batch_size, num_atoms)
+
+    return proj_dist
+
 
 @flax.struct.dataclass
 class MultiSampleLogProb:
@@ -134,3 +177,9 @@ def simplical_softmax_cross_entropy(pred, target, dim=8):
     return jnp.sum(-target * jax.nn.log_softmax(pred, axis=-1), axis=-1).mean() / (
         shape / dim
     )
+
+def tree_norm(tree):
+    return jnp.sqrt(sum((x**2).sum() for x in jax.tree_util.tree_leaves(tree)))
+
+def count_params(params):
+    return sum([p.size for p in jax.tree_util.tree_leaves(params)])

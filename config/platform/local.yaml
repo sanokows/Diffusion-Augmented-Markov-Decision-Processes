@@ -1,0 +1,8 @@
+# @package _global_
+
+hydra:
+  run:
+    dir: logs/${env.name}_${seed}/${now:%Y-%m-%d_%H-%M-%S-%f}
+  sweep:
+    dir: logs/multiruns/${env.name}_${seed}/${now:%Y-%m-%d_%H-%M-%S-%f}
+    subdir: ${hydra.job.override_dirname}

@@ -183,9 +183,13 @@ def make_init(
     def init(key: jax.random.PRNGKey) -> SACTrainState:
         # Number of calls to train_step
         key, model_key = jax.random.split(key)
+        obs_dim=env.observation_space(env_params)[0].shape[0]
+        critic_obs_dim=env.observation_space(env_params)[1].shape[0]
+        action_dim=env.action_space(env_params).shape[0]
+
         actor_networks = SACActorNetworks(
-            obs_dim=env.observation_space(env_params)[0].shape[0],
-            action_dim=env.action_space(env_params).shape[0],
+            obs_dim=obs_dim,
+            action_dim=action_dim,
             hidden_dim=cfg.actor_hidden_dim,
             ent_start=cfg.ent_start,
             kl_start=cfg.kl_start,
@@ -195,8 +199,8 @@ def make_init(
             rngs=nnx.Rngs(model_key),
         )
         actor_target_networks = SACActorNetworks(
-            obs_dim=env.observation_space(env_params)[0].shape[0],
-            action_dim=env.action_space(env_params).shape[0],
+            obs_dim=obs_dim,
+            action_dim=action_dim,
             hidden_dim=cfg.actor_hidden_dim,
             ent_start=cfg.ent_start,
             kl_start=cfg.kl_start,
@@ -208,8 +212,8 @@ def make_init(
 
         if cfg.hl_gauss:
             critic_networks: nnx.Module = CategoricalCriticNetwork(
-                obs_dim=env.observation_space(env_params)[1].shape[0],
-                action_dim=env.action_space(env_params).shape[0],
+                obs_dim=critic_obs_dim,
+                action_dim=action_dim,
                 hidden_dim=cfg.critic_hidden_dim,
                 num_bins=cfg.num_bins,
                 vmin=cfg.vmin,
@@ -224,8 +228,8 @@ def make_init(
             )
         else:
             critic_networks: nnx.Module = CriticNetwork(
-                obs_dim=env.observation_space(env_params)[1].shape[0],
-                action_dim=env.action_space(env_params).shape[0],
+                obs_dim=critic_obs_dim,
+                action_dim=action_dim,
                 hidden_dim=cfg.critic_hidden_dim,
                 use_norm=cfg.use_critic_norm,
                 encoder_layers=cfg.num_critic_encoder_layers,
@@ -272,6 +276,13 @@ def make_init(
             tx=critic_optimizer,
         )
 
+        actor_param_count = utils.count_params(actor_trainstate.params)
+        critic_param_count = utils.count_params(critic_trainstate.params)
+        
+        print(f"Actor parameters: {actor_param_count:,}")
+        print(f"Critic parameters: {critic_param_count:,}")
+        print(f"Total parameters: {actor_param_count + critic_param_count:,}")
+
         key, env_key = jax.random.split(key)
         env_key = jax.random.split(env_key, cfg.num_envs)
         obs, critic_obs, env_state = env.reset(key=env_key, params=env_params)
@@ -309,7 +320,6 @@ def make_train_fn(
     num_seeds: int = 1,
     reward_scale: float = 1.0,
 ):
-    env_params = env_params  # or env.default_params
     env = LogWrapper(env, cfg.num_envs)
     env = ClipAction(env)
     # env = VecEnv(env, cfg.num_envs)
@@ -364,13 +374,13 @@ def make_train_fn(
             )
 
             # compute next state embedding and value
-            next_action, log_prob = actor_model.actor(next_obs).sample_and_log_prob(
+            next_action, next_log_prob = actor_model.actor(next_obs).sample_and_log_prob(
                 seed=act_key
             )
             next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
             soft_reward = (
                 reward
-                - cfg.gamma * log_prob.sum(-1).squeeze() * actor_model.temperature()
+                - cfg.gamma * next_log_prob.sum(-1).squeeze() * actor_model.temperature()
             )
             transition = Transition(
                 obs=obs,
@@ -511,6 +521,10 @@ def make_train_fn(
                         (1.0 - minibatch.truncated)
                         * (critic_update_loss + cfg.aux_loss_mult * aux_loss)
                     )
+
+                    # log critic parameters norm
+                    critic_pnorm = utils.tree_norm(params)
+
                     return loss, dict(
                         value_loss=critic_loss,
                         critic_update_loss=critic_update_loss,
@@ -521,6 +535,7 @@ def make_train_fn(
                         abs_batch_action=jnp.abs(minibatch.action).mean(),
                         reward_mean=minibatch.reward.mean(),
                         target_values=target_values.mean(),
+                        critic_pnorm=critic_pnorm,
                     )
 
                 def actor_loss(params):
@@ -562,24 +577,25 @@ def make_train_fn(
 
                         kl = old_pi_act_log_prob - pi_act_log_prob
 
+                    temperature = actor_model.temperature()
                     lagrangian = actor_model.lagrangian()
 
                     if cfg.actor_kl_clip_mode == "full":
                         actor_loss = (
-                            log_prob * jax.lax.stop_gradient(actor_model.temperature())
+                            log_prob * jax.lax.stop_gradient(temperature)
                             - value
                             + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
                         )
                     elif cfg.actor_kl_clip_mode == "clipped":
                         actor_loss = jnp.where(
                             kl < cfg.kl_bound,
-                            log_prob * jax.lax.stop_gradient(actor_model.temperature())
+                            log_prob * jax.lax.stop_gradient(temperature)
                             - value,
                             kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
                         )
                     elif cfg.actor_kl_clip_mode == "value":
                         actor_loss = (
-                            log_prob * jax.lax.stop_gradient(actor_model.temperature())
+                            log_prob * jax.lax.stop_gradient(temperature)
                             - value
                         )
                     else:
@@ -590,7 +606,7 @@ def make_train_fn(
                     # SAC target entropy loss
                     target_entropy = action_size_target + entropy
                     target_entropy_loss = (
-                        actor_model.temperature()
+                        temperature
                         * jax.lax.stop_gradient(target_entropy)
                     )
 
@@ -606,6 +622,9 @@ def make_train_fn(
                     if cfg.update_kl_lagrangian:
                         loss += jnp.mean(lagrangian_loss)
 
+                    # log actor parameters norm
+                    actor_pnorm = utils.tree_norm(params)
+
                     return loss, dict(
                         actor_loss=actor_loss,
                         loss=loss,
@@ -619,23 +638,31 @@ def make_train_fn(
                         entropy=entropy,
                         entropy_loss=target_entropy_loss,
                         target_values=target_values.mean(),
+                        actor_pnorm=actor_pnorm,
                     )
 
                 critic_grad_fn = jax.value_and_grad(critic_loss_fn, has_aux=True)
-                output, grads = critic_grad_fn(train_state.critic.params)
-                critic_train_state = train_state.critic.apply_gradients(grads)
+                output, critic_grads = critic_grad_fn(train_state.critic.params)
+                critic_train_state = train_state.critic.apply_gradients(critic_grads)
                 train_state = train_state.replace(
                     critic=critic_train_state,
                 )
                 critic_metrics = output[1]
+                # log critic parameters norm
+                critic_gnorm = utils.tree_norm(critic_grads)
+                critic_metrics["critic_gnorm"] = critic_gnorm
 
                 actor_grad_fn = jax.value_and_grad(actor_loss, has_aux=True)
-                output, grads = actor_grad_fn(train_state.actor.params)
-                actor_train_state = train_state.actor.apply_gradients(grads)
+                output, actor_grads = actor_grad_fn(train_state.actor.params)
+                actor_train_state = train_state.actor.apply_gradients(actor_grads)
                 train_state = train_state.replace(
                     actor=actor_train_state,
                 )
                 actor_metrics = output[1]
+                # log actor gradient norm
+                actor_gnorm = utils.tree_norm(actor_grads)
+                actor_metrics["actor_gnorm"] = actor_gnorm
+
                 return (idx + 1, train_state), {
                     **critic_metrics,
                     **actor_metrics,
@@ -746,47 +773,6 @@ def make_train_fn(
     return train_fn
 
 
-def plot_history(history: list[dict[str, jax.Array]]):
-    steps = jnp.array([m["time_step"][0] for m in history])
-    eval_return = jnp.array([m["eval/episode_return"].mean() for m in history])
-    eval_return_std = jnp.array([m["eval/episode_return"].std() for m in history])
-    fig = go.Figure(
-        [
-            go.Scatter(
-                x=steps,
-                y=eval_return,
-                name="Mean Episode Return",
-                mode="lines",
-                line=dict(color="blue"),
-                showlegend=False,
-            ),
-            go.Scatter(
-                x=steps,
-                y=eval_return + eval_return_std,
-                name="Upper Bound",
-                mode="lines",
-                line=dict(width=0),
-                showlegend=False,
-            ),
-            go.Scatter(
-                x=steps,
-                y=eval_return - eval_return_std,
-                name="Lower Bound",
-                mode="lines",
-                line=dict(width=0),
-                fill="tonexty",
-                fillcolor="rgba(50, 127, 168, 0.3)",
-                showlegend=False,
-            ),
-        ]
-    )
-    fig.update_layout(
-        xaxis=dict(title=dict(text="Environment Steps")),
-    )
-
-    return fig
-
-
 # type object
 def _get_optuna_type(trial: optuna.Trial, name, values: list):
     if all(isinstance(v, int) for v in values):
@@ -850,6 +836,8 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         log_data = {
             "eval/episode_return": episode_return,
             "eval/episode_length": eval_length,
+            # performance metric: steps per second
+            "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
         wandb.log(log_data, step=state.time_steps[0])
@@ -868,7 +856,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             episode_length=cfg.env.max_episode_steps,
             reward_scale=cfg.env.reward_scaling,
             push_distractions=cfg.env.get("push_distractions", False),
-            asymmetric_observation=cfg.env.get("asymmetric_observation", False),
+            asymmetric_observation=cfg.env.get("asymmetric_obs", False),
         )
     else:
         raise ValueError(f"Unknown environment type: {cfg.env.type}")
@@ -928,7 +916,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
 @hydra.main(version_base=None, config_path="../../config", config_name="reppo")
 def main(cfg: DictConfig):
-    print(cfg)
     cfg.hyperparameters = OmegaConf.merge(cfg.hyperparameters, cfg.experiment_overrides.hyperparameters)
     run(cfg, trial=None)
 

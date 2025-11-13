@@ -29,5 +29,5 @@ checkpoint_dir: null
 trials: 8 
 wandb:
   mode: "online" # set to online to activate wandb
-  entity: "viper_svg"
+  entity: "leh2rng"
   project: "online_sac"

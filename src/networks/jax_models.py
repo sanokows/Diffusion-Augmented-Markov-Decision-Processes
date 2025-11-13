@@ -1,12 +1,164 @@
 import math
 from typing import Sequence, Union
 
+from functools import partial
+
 import distrax
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
 from src.jaxrl import utils
+from src.diffusion.common.utils import inverse_softplus, sample_kernel, log_prob_kernel, check_stop_grad
+
+
+def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.0):
+    def integrate_EM(state, step):
+        step = step.astype(jnp.float32)
+        x, log_w, key_gen = state
+
+        # Compute SDE components
+        dt = diffusion_model.delta_t_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step)
+        eta = dt * sigma_square
+        scale = jnp.sqrt(2 * eta)
+
+        # Forward kernel
+        drift = diffusion_model.drift_fn(step, x)
+        # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+        fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+
+        key, key_gen = jax.random.split(key_gen)
+        # x_new = fwd_mean if ode else sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
+        x_new = sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
+
+        # Backward kernel
+        drift_new = diffusion_model.drift_fn(step + 1, x_new)
+        bwd_mean = x_new + eta * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
+
+        # Evaluate kernels
+        fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
+        bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
+
+        # Update weight and return
+        log_w += bwd_log_prob - fwd_log_prob
+
+        key, key_gen = jax.random.split(key_gen)
+        next_state = (x_new, log_w, key_gen)
+        return next_state, None
+
+    return integrate_EM
+
+def ode_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.0):
+    def integrate_EM(state, step):
+        step = step.astype(jnp.float32)
+        x, log_w, key_gen = state
+
+        # Compute SDE components
+        dt = diffusion_model.delta_t_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step)
+        eta = dt * sigma_square
+        scale = jnp.sqrt(2 * eta)
+
+        # Forward kernel
+        drift = diffusion_model.drift_fn(step, x)
+        # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+        fwd_mean = x + eta * (drift + ode_coef * diffusion_model.forward_model(step, x, obs))
+        x_new = fwd_mean
+
+        # Backward kernel
+        drift_new = diffusion_model.drift_fn(step + 1, x_new)
+        bwd_mean = x_new + eta * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
+
+        # Evaluate kernels
+        fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
+        bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
+
+        # Update weight and return
+        log_w += bwd_log_prob - fwd_log_prob
+
+        key, key_gen = jax.random.split(key_gen)
+        next_state = (x_new, log_w, key_gen)
+        return next_state, None
+
+    return integrate_EM
+
+def logratio(diffusion_model, target_diffusion_model, obs, stop_grad=True, kl_action_rep=1):
+    def logratio_EM(state, step):
+        x, log_w, key_gen = state
+
+        step = step.astype(jnp.float32)
+
+        # Compute SDE components
+        dt = diffusion_model.delta_t_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step)
+        eta = dt * sigma_square
+        scale = jnp.sqrt(2 * eta)
+
+        # Forward kernel
+        drift = diffusion_model.drift_fn(step, x)
+        fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+        old_fwd_mean = x + eta * (drift + target_diffusion_model.forward_model(step, x, obs))
+        key, key_gen = jax.random.split(key_gen)
+
+        # x_new from old_fwd_mean
+        x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, scale)
+        pi_old = distrax.Normal(loc=old_fwd_mean, scale=scale)
+        x_new_logprob = pi_old.sample(seed=key, sample_shape=(kl_action_rep,))
+
+        # Evaluate kernels
+        fwd_log_prob = log_prob_kernel(x_new_logprob, fwd_mean, scale)
+        old_fwd_log_prob = log_prob_kernel(x_new_logprob, old_fwd_mean, scale)
+
+        # take mean over kl_action_rep
+        fwd_log_prob = jnp.mean(fwd_log_prob, axis=0)
+        old_fwd_log_prob = jnp.mean(old_fwd_log_prob, axis=0)
+
+        # Update weight and return
+        log_w += old_fwd_log_prob - fwd_log_prob
+
+        key, key_gen = jax.random.split(key_gen)
+        next_state = (x_new, log_w, key_gen)
+        return next_state, None
+    return logratio_EM
+
+
+def logratio_DIME(diffusion_model, target_diffusion_model, obs, stop_grad=True, kl_action_rep=1):
+    def logratio_EM(state, step):
+        x, log_w, key_gen = state
+
+        step = step.astype(jnp.float32)
+
+        # Compute SDE components
+        dt = diffusion_model.delta_t_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step)
+        eta = dt * sigma_square
+        scale = jnp.sqrt(2 * eta)
+
+        # Forward kernel
+        drift = diffusion_model.drift_fn(step, x)
+        fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+        old_fwd_mean = x + eta * (drift + target_diffusion_model.forward_model(step, x, obs))
+        # stop_grad for old_diffusion
+        old_fwd_mean = jax.lax.stop_gradient(old_fwd_mean)
+
+        # x_new from old_fwd_mean
+        key, key_gen = jax.random.split(key_gen)
+        # x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, scale)
+        x_new = sample_kernel(key, old_fwd_mean, scale)
+        x_new = jax.lax.stop_gradient(x_new)
+
+        # Evaluate kernels
+        fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
+        old_fwd_log_prob = log_prob_kernel(x_new, old_fwd_mean, scale)
+
+        # Update weight and return
+        log_w += old_fwd_log_prob - fwd_log_prob
+
+        key, key_gen = jax.random.split(key_gen)
+        next_state = (x_new, log_w, key_gen)
+        return next_state, None
+    return logratio_EM
 
 
 def torch_he_uniform(
@@ -43,7 +195,8 @@ def normed_activation_layer(
         )
     ]
     if use_norm:
-        layers.append(nnx.RMSNorm(out_features, rngs=rngs))
+        # layers.append(nnx.RMSNorm(out_features, rngs=rngs))
+        layers.append(nnx.LayerNorm(out_features, rngs=rngs))
     if activation is not None:
         layers.append(activation)
     return nnx.Sequential(*layers)
@@ -97,7 +250,8 @@ class FCNN(nnx.Module):
             )
             for _ in range(layers - 2)
         ]
-        self.norm = nnx.RMSNorm(in_features, rngs=rngs)
+        # self.norm = nnx.RMSNorm(in_features, rngs=rngs)
+        self.norm = nnx.LayerNorm(in_features, rngs=rngs)
         self.output_layer = normed_activation_layer(
             rngs,
             hidden_dim,
@@ -323,6 +477,31 @@ class CategoricalCriticNetwork(nnx.Module):
         return features, pred_features, pred_rew, value
 
 
+class ValueNetwork(nnx.Module):
+    def __init__(
+        self,
+        obs_dim: int,
+        hidden_dim: int = 512,
+        use_norm: bool = True,
+        layers: int = 2,
+        use_skip: bool = False,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        self.value_module = FCNN(
+            in_features=obs_dim,
+            out_features=1,
+            hidden_dim=hidden_dim,
+            use_norm=use_norm,
+            layers=layers,
+            hidden_skip=use_skip,
+            rngs=rngs,
+        )
+
+    def __call__(self, obs: jax.Array) -> jax.Array:
+        return self.value_module(obs).squeeze(-1)
+
+
 class SACActorNetworks(nnx.Module):
     def __init__(
         self,
@@ -363,7 +542,10 @@ class SACActorNetworks(nnx.Module):
         loc = self.actor_module(obs)
         loc, log_std = jnp.split(loc, 2, axis=-1)
         std = (jnp.exp(log_std) + self.min_std) * scale
-        pi = distrax.Transformed(distrax.Normal(loc=loc, scale=std), distrax.Tanh())
+        pi = distrax.Transformed(
+            distrax.Normal(loc=loc, scale=std),
+            distrax.Tanh()
+        )
         return pi
 
     def det_action(self, obs: jax.Array) -> jax.Array:
@@ -462,3 +644,436 @@ class SACDiscreteActorNetworks(nnx.Module):
         loc = self.actor_module(obs)
         loc, std = jnp.split(loc, 2, axis=-1)
         return jnp.tanh(loc), std, self.temperature(), self.lagrangian()
+
+
+class DiffusionModel(nnx.Module):
+    def __init__(
+        self,
+        action_dim: int,
+        observation_dim: int,
+        fwd_model: nnx.Module = None,
+        bwd_model: nnx.Module = None,
+        diff_steps: int = 8,
+        init_std: float = 2.5,
+        friction: float = 1.0,
+        per_dim_friction: bool = True,
+        dt: float = 0.01,
+        learn_dt: bool = True,
+        per_step_dt: bool = False,
+        learn_prior: bool = False,
+        learn_betas: bool = False,
+        learn_friction: bool = True,
+        learn_mass_matrix: bool = False,
+        dt_schedule: callable = None,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        self.action_dim = action_dim
+        self.observation_dim = observation_dim
+        self.diff_steps = diff_steps
+        self.init_std = init_std
+        self.fwd_model = fwd_model
+        self.bwd_model = bwd_model
+        self.learn_prior = learn_prior
+        self.learn_friction = learn_friction
+        self.learn_mass_matrix = learn_mass_matrix
+        self.learn_dt = learn_dt
+        self.learn_betas = learn_betas
+        self.per_step_dt = per_step_dt
+        self.dt_schedule = dt_schedule
+        
+        # Learnable parameters (converted from the params dict)
+        self.betas = nnx.Param(jnp.ones((diff_steps,)))
+        self.prior_mean = nnx.Param(jnp.zeros((action_dim,)))
+        self.prior_std = nnx.Param(jnp.ones((action_dim,)) * inverse_softplus(init_std))
+        self.mass_std = nnx.Param(jnp.ones(1) * inverse_softplus(1.0))
+
+        # Initialize dt parameters
+        if per_step_dt:
+            self.dt = nnx.Param(inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps))))
+        else:
+            self.dt = nnx.Param(jnp.ones(1) * inverse_softplus(dt))
+        
+        # Initialize friction parameters
+        if per_dim_friction:
+            self.friction = nnx.Param(jnp.ones(action_dim) * inverse_softplus(friction))
+        else:
+            self.friction = nnx.Param(jnp.ones(1) * inverse_softplus(friction))
+
+    def prior_sampler(self, key, n_samples):
+        """Sample from the prior distribution.
+        
+        Args:
+            key: JAX random key
+            n_samples: Number of samples to generate (batch size)
+            
+        Returns:
+            Samples of shape (n_samples, action_dim)
+        """
+        # Ensure n_samples is a Python int for sample_shape
+        if isinstance(n_samples, jax.Array):
+            n_samples = int(n_samples)
+        
+        samples = distrax.MultivariateNormalDiag(
+            self.prior_mean.value, jax.nn.softplus(self.prior_std.value)
+        ).sample(seed=key, sample_shape=(n_samples,))
+        
+        return samples if self.learn_prior else jax.lax.stop_gradient(samples)
+
+    def prior_log_prob(self, x):
+        if self.learn_prior:
+            log_probs = distrax.MultivariateNormalDiag(
+                self.prior_mean.value, jax.nn.softplus(self.prior_std.value)
+            ).log_prob(x)
+        else:
+            log_probs = distrax.MultivariateNormalDiag(
+                jnp.zeros(self.action_dim), jnp.ones(self.action_dim) * self.init_std
+            ).log_prob(x)
+        return log_probs
+
+    def delta_t_fn(self, step: jax.Array) -> jax.Array:
+        """Time step function."""
+        if self.per_step_dt:
+            dt = self.dt.value[step.astype(int)] if self.learn_dt else jax.lax.stop_gradient(self.dt.value[step.astype(int)])
+            return jax.nn.softplus(dt)
+        else:
+            dt = self.dt.value if self.learn_dt else jax.lax.stop_gradient(self.dt.value)
+            return jax.nn.softplus(dt) * self.dt_schedule(step)
+
+    def friction_fn(self, step: jax.Array) -> jax.Array:
+        """Friction coefficient function."""
+        friction = jax.nn.softplus(self.friction.value)
+        return friction if self.learn_friction else jax.lax.stop_gradient(friction)
+
+    def mass_fn(self) -> jax.Array:
+        """Mass function."""
+        mass_std = jax.nn.softplus(self.mass_std.value)
+        return mass_std if self.learn_mass_matrix else jax.lax.stop_gradient(mass_std)
+
+    def drift_fn(self, step: jax.Array, x: jax.Array) -> jax.Array:
+        """Drift function for diffusion (gradient of prior log prob)."""
+        # return jax.grad(self.prior_log_prob)(x)
+        # Fall back to analytical gradient: ∇_x log p(x) = -(x-μ)/σ²
+        mean = self.prior_mean if self.learn_prior else jnp.zeros(self.action_dim)
+        std = jax.nn.softplus(self.prior_std) if self.learn_prior else jnp.ones(self.action_dim) * self.init_std
+        grad = -(x - mean) / (std ** 2)
+        return grad
+
+    def forward_model(
+        self, step: jax.Array, x: jax.Array, obs: jax.Array, aux: jax.Array = None
+    ) -> jax.Array:
+        """Forward model function."""
+        if self.fwd_model is not None:
+            return self.fwd_model(x, obs, step)
+        else:
+            return jnp.zeros_like(x)
+
+    def backward_model(
+        self, step: jax.Array, x: jax.Array, obs: jax.Array, aux: jax.Array = None
+    ) -> jax.Array:
+        """Backward model function."""
+        if self.bwd_model is not None:
+            return self.bwd_model(x, obs, step)
+        else:
+            return jnp.zeros_like(x)
+
+
+# class DIMEActor(nnx.Module):
+#     def __init__(
+#         self,
+#         action_dim: int,
+#         observation_dim: int,
+#         diffusion_model: nnx.Module,
+#         sde_integrator: callable,
+#         ode_integrator: callable,
+#         logratio: callable,
+#         kl_start: float = 0.1,
+#         ent_start: float = 0.1,
+#     ):
+#         self.action_dim = action_dim
+#         self.observation_dim = observation_dim
+#         self.diffusion_model = diffusion_model
+#         self.sde_integrator = sde_integrator
+#         self.ode_integrator = ode_integrator
+#         self.logratio = logratio
+
+#         # Parameters
+#         self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
+#         self.log_temperature = nnx.Param(jnp.ones(1) * math.log(ent_start))
+
+#     def sample(
+#         self,
+#         key,
+#         obs: jax.Array,
+#         stop_grad: bool = False,
+#         ode: bool = False,
+#         ode_coef: float = 1.0,
+#     ) -> jax.Array:
+#         """Sample actions from the diffusion model."""
+#         final_action, running_costs, stochastic_costs, terminal_costs = (
+#             sample(
+#                 key,
+#                 obs,
+#                 self.sde_integrator,
+#                 self.diffusion_model,
+#                 stop_grad=stop_grad,
+#                 ode=ode,
+#                 ode_coef=ode_coef,
+#             )
+#         )
+#         return (final_action, running_costs, stochastic_costs, terminal_costs)
+
+#     def det_action(
+#         self,
+#         key,
+#         obs: jax.Array,
+#         stop_grad: bool = False,
+#         ode: bool = False,
+#         ode_coef: float = 1.0,
+#     ) -> jax.Array:
+#         """Sample actions from the diffusion model."""
+#         final_action, running_costs, stochastic_costs, terminal_costs = (
+#             sample(
+#                 key,
+#                 obs,
+#                 self.ode_integrator,
+#                 self.diffusion_model,
+#                 stop_grad=stop_grad,
+#                 ode=ode,
+#                 ode_coef=ode_coef,
+#             )
+#         )
+#         return (final_action, running_costs, stochastic_costs, terminal_costs)
+
+#     def kl_div(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, n_samples: int, stop_grad: bool = False) -> jax.Array:
+#         """Compute KL divergence between current and old diffusion models."""
+#         log_ratios = kl_div(
+#             key,
+#             obs,
+#             self.logratio,
+#             self.diffusion_model,
+#             target_diffusion_model.diffusion_model,
+#             stop_grad=stop_grad,
+#             kl_action_rep=n_samples,
+#         )
+
+#         return log_ratios
+    
+#     def kl_div_dime(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
+#         """Compute KL divergence between current and old diffusion models."""
+
+#         log_ratios = kl_div(
+#             key,
+#             obs,
+#             self.logratio,
+#             self.diffusion_model,
+#             target_diffusion_model.diffusion_model,
+#             stop_grad=stop_grad,
+#         )
+#         return log_ratios
+
+#     def temperature(self) -> jax.Array:
+#         return jnp.exp(self.log_temperature.value)
+
+#     def lagrangian(self) -> jax.Array:
+#         return jnp.exp(self.log_lagrangian.value)
+
+
+class DIMEActor(nnx.Module):
+    def __init__(
+        self,
+        action_dim: int,
+        observation_dim: int,
+        diffusion_model: nnx.Module,
+        sde_integrator: callable,
+        ode_integrator: callable,
+        logratio: callable,
+        kl_start: float = 0.1,
+        ent_start: float = 0.1,
+    ):
+        self.action_dim = action_dim
+        self.observation_dim = observation_dim
+        self.diffusion_model = diffusion_model
+        self.sde_integrator = sde_integrator
+        self.ode_integrator = ode_integrator
+        self.logratio = logratio
+
+        # Parameters
+        self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
+        self.log_temperature = nnx.Param(jnp.ones(1) * math.log(ent_start))
+
+    def _single_sde_sample(self, key, obs, stop_grad, ode, ode_coef):
+        """
+        Private helper for SDE sampling.
+        This is the inlined logic from the old global `single_sample`.
+        """
+        key, key_gen = jax.random.split(key)
+        init_x = self.diffusion_model.prior_sampler(key, 1)
+        key, key_gen = jax.random.split(key_gen)
+        init_x = jnp.squeeze(init_x, 0)
+        if stop_grad:
+            init_x = jax.lax.stop_gradient(init_x)
+        key, key_gen = jax.random.split(key_gen)
+        aux = (init_x, jnp.zeros(1), key)
+
+        # --- Hard-coded to self.sde_integrator ---
+        integrate = self.sde_integrator(obs, self.diffusion_model, stop_grad, ode, ode_coef)
+        
+        aux, _ = jax.lax.scan(integrate, aux, jnp.arange(0, self.diffusion_model.diff_steps))
+        final_x, log_ratio, _ = aux
+
+        terminal_costs = self.diffusion_model.prior_log_prob(init_x)
+        running_cost = -(log_ratio + distrax.Tanh().forward_log_det_jacobian(final_x).sum())
+        stochastic_costs = jnp.zeros_like(running_cost)
+
+        final_x = distrax.Tanh().forward(final_x)
+        return final_x, running_cost, stochastic_costs, terminal_costs.reshape(running_cost.shape)
+
+    def sample(
+        self,
+        key,
+        obs: jax.Array,
+        stop_grad: bool = False,
+        ode: bool = False,
+        ode_coef: float = 1.0,
+    ) -> jax.Array:
+        """Sample actions from the SDE diffusion model."""
+        keys = jax.random.split(key, num=obs.shape[0])
+
+        # Define the function to vmap
+        def _single_sample_for_vmap(key, obs):
+            # This function closes over self, stop_grad, ode, ode_coef
+            return self._single_sde_sample(key, obs, stop_grad, ode, ode_coef)
+        
+        in_axes = (0, 0) # keys, obs
+        rnd_result = jax.vmap(_single_sample_for_vmap, in_axes=in_axes)(keys, obs)
+        
+        x_0, running_costs, stochastic_costs, terminal_costs = rnd_result
+        return (x_0, running_costs, stochastic_costs, terminal_costs)
+
+    def _single_ode_sample(self, key, obs, stop_grad, ode, ode_coef):
+        """
+        Private helper for ODE sampling.
+        This is the inlined logic from the old global `single_sample`.
+        """
+        key, key_gen = jax.random.split(key)
+        init_x = self.diffusion_model.prior_sampler(key, 1)
+        key, key_gen = jax.random.split(key_gen)
+        init_x = jnp.squeeze(init_x, 0)
+        if stop_grad:
+            init_x = jax.lax.stop_gradient(init_x)
+        key, key_gen = jax.random.split(key_gen)
+        aux = (init_x, jnp.zeros(1), key)
+        
+        integrate = self.ode_integrator(obs, self.diffusion_model, stop_grad, ode, ode_coef)
+        
+        aux, _ = jax.lax.scan(integrate, aux, jnp.arange(0, self.diffusion_model.diff_steps))
+        final_x, log_ratio, _ = aux
+
+        terminal_costs = self.diffusion_model.prior_log_prob(init_x)
+        running_cost = -(log_ratio + distrax.Tanh().forward_log_det_jacobian(final_x).sum())
+        stochastic_costs = jnp.zeros_like(running_cost)
+
+        final_x = distrax.Tanh().forward(final_x)
+        return final_x, running_cost, stochastic_costs, terminal_costs.reshape(running_cost.shape)
+
+    def det_action(
+        self,
+        key,
+        obs: jax.Array,
+        stop_grad: bool = False,
+        ode: bool = False,
+        ode_coef: float = 1.0,
+    ) -> jax.Array:
+        """Sample actions from the ODE diffusion model."""
+        keys = jax.random.split(key, num=obs.shape[0])
+        
+        # Define the function to vmap
+        def _single_sample_for_vmap(key, obs):
+            # This function closes over self, stop_grad, ode, ode_coef
+            return self._single_ode_sample(key, obs, stop_grad, ode, ode_coef)
+        
+        in_axes = (0, 0) # keys, obs
+        rnd_result = jax.vmap(_single_sample_for_vmap, in_axes=in_axes)(keys, obs)
+
+        x_0, running_costs, stochastic_costs, terminal_costs = rnd_result
+        return (x_0, running_costs, stochastic_costs, terminal_costs)
+    
+    def _single_kl_internal(self, key, obs, target_diffusion_model, n_samples, stop_grad):
+        key, key_gen = jax.random.split(key)
+        init_x = self.diffusion_model.prior_sampler(key, 1)
+        key, key_gen = jax.random.split(key_gen)
+        init_x = jnp.squeeze(init_x, 0)
+        if stop_grad:
+            init_x = jax.lax.stop_gradient(init_x)
+        key, key_gen = jax.random.split(key_gen)
+        aux = (init_x, jnp.zeros(1), key)
+        
+        integrate = self.logratio(
+            self.diffusion_model, 
+            target_diffusion_model.diffusion_model, 
+            obs, 
+            stop_grad=stop_grad, 
+            kl_action_rep=n_samples
+        )
+        
+        aux, _ = jax.lax.scan(integrate, aux, jnp.arange(0, self.diffusion_model.diff_steps))
+        final_x, log_ratio, _ = aux
+        return log_ratio
+
+    def kl_div(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, n_samples: int, stop_grad: bool = False) -> jax.Array:
+        """
+        Compute KL divergence using the EFFICIENT internal-sampling integrator.
+        Averages n_samples *inside* the diffusion scan.
+        """
+        keys = jax.random.split(key, num=obs.shape[0])
+        
+        def _single_kl_for_vmap(key, obs):
+            # This function closes over self, target_diffusion_model, n_samples, stop_grad
+            return self._single_kl_internal(key, obs, target_diffusion_model, n_samples, stop_grad)
+        
+        in_axes = (0, 0) # keys, obs
+        log_ratios = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
+        return log_ratios
+
+    def _single_kl_dime(self, key, obs, target_diffusion_model, stop_grad):
+        key, key_gen = jax.random.split(key)
+        init_x = self.diffusion_model.prior_sampler(key, 1)
+        key, key_gen = jax.random.split(key_gen)
+        init_x = jnp.squeeze(init_x, 0)
+        if stop_grad:
+            init_x = jax.lax.stop_gradient(init_x)
+        key, key_gen = jax.random.split(key_gen)
+        aux = (init_x, jnp.zeros(1), key)
+        
+        integrate = self.logratio(
+            self.diffusion_model, 
+            target_diffusion_model.diffusion_model, 
+            obs, 
+            stop_grad=stop_grad
+        )
+        
+        aux, _ = jax.lax.scan(integrate, aux, jnp.arange(0, self.diffusion_model.diff_steps))
+        final_x, log_ratio, _ = aux
+        return log_ratio
+
+    def kl_div_dime(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
+        """
+        Compute KL divergence using the SINGLE PATH integrator.
+        This method is designed to be vmapped externally (e.g., in actor_loss).
+        """
+        keys = jax.random.split(key, num=obs.shape[0])
+        
+        def _single_kl_for_vmap(key, obs):
+            # This function closes over self, target_diffusion_model, stop_grad
+            return self._single_kl_dime(key, obs, target_diffusion_model, stop_grad)
+
+        in_axes = (0, 0) # keys, obs
+        log_ratios = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
+        return log_ratios
+
+    def temperature(self) -> jax.Array:
+        return jnp.exp(self.log_temperature.value)
+
+    def lagrangian(self) -> jax.Array:
+        return jnp.exp(self.log_lagrangian.value)

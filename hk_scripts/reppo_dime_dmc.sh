@@ -1,0 +1,1 @@
+python src/jaxrl/reppo_dime.py -cn reppo_dime_hk env.name=CheetahRun platform=horeka_gpu

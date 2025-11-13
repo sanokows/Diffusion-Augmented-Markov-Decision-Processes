@@ -1,0 +1,9 @@
+hyperparameters:
+  # num_envs: 1
+  # num_envs: 128
+  num_envs: 64
+  num_steps: 128
+  num_mini_batches: 4
+  num_epochs: 8
+  kl_bound: 0.1
+  total_time_steps: 50_000_000

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import gymnasium as gym
+
+import humanoid_bench
+from gymnasium.wrappers import TimeLimit
+from stable_baselines3.common.vec_env import SubprocVecEnv
 import numpy as np
 import torch
-from gymnasium.wrappers import TimeLimit
 from loguru import logger as log
-from stable_baselines3.common.vec_env import SubprocVecEnv
 
 # Disable all logging below CRITICAL level
 log.remove()
@@ -35,6 +37,8 @@ def make_env(env_name, rank, render_mode=None, seed=0):
         max_episode_steps = 1000
 
     def _init():
+        import humanoid_bench
+
         env = gym.make(env_name, render_mode=render_mode)
         env = TimeLimit(env, max_episode_steps=max_episode_steps)
         env.unwrapped.seed(seed + rank)
@@ -86,9 +90,9 @@ class HumanoidBenchEnv:
         return observations
 
     def render(self):
-        assert self.num_envs == 1, (
-            "Currently only supports single environment rendering"
-        )
+        assert (
+            self.num_envs == 1
+        ), "Currently only supports single environment rendering"
         return self.envs.render()
 
     def step(self, actions):

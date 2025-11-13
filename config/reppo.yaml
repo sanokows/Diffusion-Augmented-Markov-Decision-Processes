@@ -1,5 +1,5 @@
 defaults:
-  - env: brax
+  - env: mjx_dmc
   - platform: torch
   - experiment_overrides: default
   - _self_
@@ -75,13 +75,27 @@ name: "reppo"
 seed: 0
 num_seeds: 1
 tune: false
-checkpoint_dir: null
-num_trials: 10
+checkpoint_dir: "./checkpoints"  # Directory to save checkpoints
+checkpoint_path: null  # Path to load checkpoint from (for resuming training)
+save_checkpoint_interval: 0  # Save checkpoint every N steps (0 = no periodic saving)
+save_final_checkpoint: false  # Save checkpoint at the end of training
+wandb_upload_checkpoints: false  # Upload checkpoints to wandb as artifacts
+
+# Evaluation-only mode parameters
+eval_only: false  # Set to true to run evaluation only (requires checkpoint_path)
+eval_episodes: 10  # Number of episodes to run in eval-only mode
+
+# Trajectory tracking parameters
+save_trajectories: false  # Save end-effector trajectories during evaluation
+trajectory_dir: "./trajectories"  # Directory to save trajectory data and plots
+plot_trajectories: false  # Generate visualization plots (set to false to only save data)
+
+num_trials: 1
 tags: ["experimental"]
 wandb:
   mode: "online" # set to online to activate wandb
-  entity: "viper_svg"
-  project: "reppo"
+  entity: ""
+  project: "dime_benchmark_rerun"
 
 hydra:
   job:

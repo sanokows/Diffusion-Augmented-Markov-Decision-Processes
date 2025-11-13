@@ -1,0 +1,14 @@
+# Example config snippet for profiling
+# Add these to your config YAML file
+
+# Enable profiling (default: true for first trial only)
+enable_profiling: true
+
+# Directory to save profiling traces (default: ./jax_profiling_traces)
+profile_dir: "./jax_profiling_traces"
+
+# Example: Disable profiling completely
+# enable_profiling: false
+
+# Example: Custom profiling directory
+# profile_dir: "./my_custom_profiling_output"

@@ -3,7 +3,7 @@ name:
 reconfiguration_freq: 1
 partial_reset: true
 asymmetric_obs: false
-max_episode_steps: 50
+max_episode_steps: null
 stochastic_eval: true
 has_final_obs: true
 

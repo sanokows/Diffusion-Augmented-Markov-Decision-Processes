@@ -186,7 +186,15 @@ data/
 .ruff_cache/
 
 .vscode/
-models/
+# models/
 plots/
 data.zip
 .github/*
+
+tests/
+jobs/
+jax_profiling_traces/
+FastTD3/
+fast_td3/
+
+*.pdf

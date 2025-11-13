@@ -1,0 +1,1 @@
+bkill $(bjobs -a | cut -f1 -d" " | tail -n +2 | awk '{print}' ORS=' ')
