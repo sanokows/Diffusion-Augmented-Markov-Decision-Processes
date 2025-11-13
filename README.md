@@ -49,6 +49,19 @@ Our configurations are handled with [hydra.cc](https://hydra.cc/). This means pa
 python src/jaxrl/reppo.py PARAMETER=VALUE
 ```
 
+### Example: REPPO-DIME
+
+To run REPPO-DIME:
+```bash
+python src/jaxrl/reppo_dime.py \
+    env.name=CheetahRun \
+    hyperparameters.num_eval=10 \
+    hyperparameters.total_time_steps=50000000 \
+    hyperparameters.diffusion.diff_steps=8 \
+    hyperparameters.kl_action_rep=4
+```
+
+
 By default, the environment type and name need to be provided.
 Currently the jax version supports `env=mjx_dmc`, `env=mjx_humanoid`, `env=brax`, and `env=humanoid_brax`. The latter is treated as a separate environment, as the reward scale is much larger than other brax environments, and the min and max Q values need to be tracked per environment.
 The torch version support `env=mjx_dmc`, and `env=maniskill`. We additionally provide wrappers for isaaclab, but this is still under development and might not work out of the box.
