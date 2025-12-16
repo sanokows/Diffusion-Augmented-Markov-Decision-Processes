@@ -60,10 +60,10 @@ hyperparameters:
   kl_start: 0.01
   kl_bound: 0.1 # switched to tighter bounds for MJX
   reduce_kl: true
-  reverse_kl: false # previous default "false"
+  reverse_kl: true # previous default "false"
   kl_action_rep: 4
   update_kl_lagrangian: true
-  actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
+  actor_kl_clip_mode: "full" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
   ## entropy settings
   ent_start: 0.01
   ent_target_mult: 4.

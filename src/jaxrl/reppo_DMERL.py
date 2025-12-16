@@ -805,7 +805,7 @@ def make_train_fn(
                         kl_log_ratios = jax.vmap(compute_kl_single)(keys)  # (kl_action_rep, batch_size, 1)
                         kl_log_ratios = kl_log_ratios.mean(axis=0)  # Average over samples => (batch_size, 1)
 
-                        kl = cfg.diffusion.diff_steps*kl_log_ratios.sum(-1)
+                        kl = cfg.diffusion.diff_steps*kl_log_ratios.mean(-1)
                     else:
                         keys = jax.random.split(key, cfg.kl_action_rep)
                         def compute_kl_single(k):
@@ -814,7 +814,7 @@ def make_train_fn(
                         kl_log_ratios = jax.vmap(compute_kl_single)(keys)  # (kl_action_rep, batch_size, 1)
                         kl_log_ratios = kl_log_ratios.mean(axis=0)  # Average over samples => (batch_size, 1)
 
-                        kl = cfg.diffusion.diff_steps*kl_log_ratios.sum(-1)
+                        kl = cfg.diffusion.diff_steps*kl_log_ratios.mean(-1)
 
                     lagrangian = actor_model.lagrangian()
 

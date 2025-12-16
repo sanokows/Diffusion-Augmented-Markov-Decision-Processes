@@ -83,8 +83,8 @@ def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, ob
     # Update weight and return
     key, key_gen = jax.random.split(key_gen)
     out_dict = {
-        "old_gen_log_prob": old_gen_log_prob,
-        "gen_log_prob": gen_log_prob,
+        "p_log_prob": old_gen_log_prob, ### samples are from p log prob
+        "q_log_prob": gen_log_prob,
         "x_new": x_new,
     }
     return out_dict, key_gen
@@ -1016,19 +1016,22 @@ class DMERLActor(nnx.Module):
         """
         keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
         
+        other_diff_model = self.diffusion_model 
+        sample_diff_model = target_diffusion_model.diffusion_model # p model in D_kl(p||q)
+
         def _single_kl_for_vmap(key, obs):
             # This function closes over self, target_diffusion_model, stop_grad
             current_x = obs["orig_actions"]
             step = obs["diff_time_step"]
-            return logratio_one_step(self.diffusion_model, target_diffusion_model.diffusion_model, current_x , step, obs, key, stop_grad=stop_grad)
+            return logratio_one_step(other_diff_model, sample_diff_model, current_x , step, obs, key, stop_grad=stop_grad)
         
 
         in_axes = (0, 0) # keys, obs
         out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
-        old_gen_log_probs = out_dict["old_gen_log_prob"]
-        gen_log_probs = out_dict["gen_log_prob"]
-        old_gen_log_ratios = old_gen_log_probs - gen_log_probs
-        return old_gen_log_ratios
+        p_log_probs = out_dict["p_log_prob"]
+        q_log_probs = out_dict["q_log_prob"]
+        log_ratios = p_log_probs - q_log_probs
+        return log_ratios
     
     def rkl_div_one_step(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
         """
@@ -1036,20 +1039,22 @@ class DMERLActor(nnx.Module):
         This method is designed to be vmapped externally (e.g., in actor_loss).
         """
         keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
+        sample_diff_model = self.diffusion_model # p model in D_kl(p||q)
+        other_diff_model = target_diffusion_model.diffusion_model
         
         def _single_kl_for_vmap(key, obs):
             # This function closes over self, target_diffusion_model, stop_grad
             current_x = obs["orig_actions"]
             step = obs["diff_time_step"]
-            return logratio_one_step(target_diffusion_model.diffusion_model, self.diffusion_model, current_x , step, obs, key, stop_grad=stop_grad)
+            return logratio_one_step(other_diff_model, sample_diff_model, current_x , step, obs, key, stop_grad=stop_grad)
         
 
         in_axes = (0, 0) # keys, obs
         out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
-        old_gen_log_probs = out_dict["old_gen_log_prob"]
-        gen_log_probs = out_dict["gen_log_prob"]
-        old_gen_log_ratios = old_gen_log_probs - gen_log_probs
-        return old_gen_log_ratios
+        p_log_probs = out_dict["p_log_prob"]
+        q_log_probs = out_dict["q_log_prob"]
+        log_ratios = p_log_probs - q_log_probs
+        return log_ratios
 
     def kl_div(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, n_samples: int, stop_grad: bool = False) -> jax.Array:
         """
