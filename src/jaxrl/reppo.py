@@ -103,6 +103,7 @@ class ReppoConfig(struct.PyTreeNode):
     reverse_kl: bool = False
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
+    use_lax_scan: bool = True
 
 
 class SACTrainState(struct.PyTreeNode):

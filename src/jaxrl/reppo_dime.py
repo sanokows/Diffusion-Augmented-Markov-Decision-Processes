@@ -108,6 +108,7 @@ class ReppoConfig(struct.PyTreeNode):
     reverse_kl: bool = False
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
+    use_lax_scan: bool = True
 
     # diffusion settings
     diffusion: Any = None # DictConfig
@@ -708,6 +709,7 @@ def make_train_fn(
                     )
                     # entropy = -log_prob
                     entropy = -pred_run_cost.squeeze()
+                    jax.debug.print("entropy: {e}, pred_sto_cost: {ps}, pred_terminal_cost = {pt}", e=entropy.mean(), ps=pred_sto_cost.mean(), pt=pred_terminal_cost.mean())
 
                     # policy KL constraint
                     if cfg.reverse_kl:
@@ -1104,7 +1106,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     return (0.1 * sweep_metrics_array.mean() + sweep_metrics_array[:, -1].mean()).item()
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="reppo_dime")
+@hydra.main(version_base=None, config_path="../../config", config_name="reppo_dime_vanilla")
 def main(cfg: DictConfig):
     cfg.hyperparameters = OmegaConf.merge(cfg.hyperparameters, cfg.experiment_overrides.hyperparameters)
     run(cfg, trial=None)

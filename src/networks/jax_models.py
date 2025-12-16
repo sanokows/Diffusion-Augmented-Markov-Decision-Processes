@@ -40,7 +40,10 @@ def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.
         bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
 
         # Update weight and return
+        # print log_w before
+        #jax.debug.print("step: {s}, log_w before: {lw}, bwd_log_prob: {bp}, fwd_log_prob: {fp}", s=step, lw=log_w, bp=bwd_log_prob, fp=fwd_log_prob)
         log_w += bwd_log_prob - fwd_log_prob
+        #jax.debug.print("step: {s}, log_w after: {lw}", s=step, lw=log_w)
 
         key, key_gen = jax.random.split(key_gen)
         next_state = (x_new, log_w, key_gen)

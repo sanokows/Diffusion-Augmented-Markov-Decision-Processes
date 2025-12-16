@@ -61,18 +61,65 @@ hyperparameters:
   kl_bound: 0.1 # switched to tighter bounds for MJX
   reduce_kl: true
   reverse_kl: false # previous default "false"
+  kl_action_rep: 4
   update_kl_lagrangian: true
   actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
   ## entropy settings
   ent_start: 0.01
-  ent_target_mult: 0.5
+  ent_target_mult: 4.0
   update_entropy_lagrangian: true
   ## auxiliary loss settings
-  aux_loss_mult: 1.0
+  aux_loss_mult: 0.0
 
+  # DIME diffusion settings
+  diffusion:
+    name: "dis"
+    diff_steps: 8
+    init_std: 2.5
+    friction: 1.0
+    integrator: "EM"
+
+    learn_forward: true
+    learn_backward: false
+    learn_prior: false
+    learn_betas: false
+    learn_friction: false
+    learn_mass_matrix: false
+
+    dt: 0.125
+    learn_dt: false
+    per_step_dt: false
+    per_dim_friction: true
+    use_step_size_scheduler: false
+
+    score_model:
+      use_path_gradient: false
+      use_target_score: false
+      num_layers: 4
+      num_hid: 256
+      num_time_hid: 32
+      num_time_out: 16
+      outer_clip: 1e4
+      inner_clip: 1e2
+      weight_init: 1e-8
+      bias_init: 0.
+      layer_norm: false
+      layer_norm_type: "LayerNorm"
+
+    dt_schedule:
+      _target_: src.networks.diffusion.schedulers.get_cosine_schedule
+      total_steps: ${hyperparameters.diffusion.diff_steps}
+      min: 0.001
+      s: 0.008
+      pow: 2
+
+  # Each coefficient will log metrics as: eval/episode_return_ode_XXX where XXX is coef*100
+  # ode_coefs: [0.5, 1.0, 2.0]
+  # ode_coefs: [1.0]
+  ode_coefs: []
 measure_burnin: 3
 
-name: "reppo"
+name: "reppo-dime-debug-1"
 seed: 0
 num_seeds: 1
 tune: false

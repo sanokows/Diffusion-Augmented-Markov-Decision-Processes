@@ -39,15 +39,55 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
     bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
 
+    # log_w = bwd_log_prob - fwd_log_prob
+    # jax.debug.print("step: {s}, log_w before: {lw}, bwd_log_prob: {bp}, fwd_log_prob: {fp}", s=step, lw=log_w, bp=bwd_log_prob, fp=fwd_log_prob)
 
     key, key_gen = jax.random.split(key_gen)
     out_dict = {
-        "fwd_log_prob": fwd_log_prob,
-        "bwd_log_prob": bwd_log_prob,
+        "gen_log_prob": fwd_log_prob, 
+        "dest_log_prob": bwd_log_prob,
         "x_new": x_new,
     }
     return out_dict, key_gen
 
+def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, obs, key, stop_grad=True, kl_action_rep=1):
+    step = step.astype(jnp.float32)
+    x = curr_x
+    key_gen = key
+
+    # Compute SDE components
+    dt = diffusion_model.delta_t_fn(step)
+    sigma_square = 1. / diffusion_model.friction_fn(step)
+    eta = dt * sigma_square
+    scale = jnp.sqrt(2 * eta)
+
+    # Forward kernel
+    drift = diffusion_model.drift_fn(step, x)
+    fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+    old_fwd_mean = x + eta * (drift + target_diffusion_model.forward_model(step, x, obs))
+    key, key_gen = jax.random.split(key_gen)
+
+    # x_new from old_fwd_mean
+    x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, scale)
+    pi_old = distrax.Normal(loc=old_fwd_mean, scale=scale)
+    x_new_logprob = pi_old.sample(seed=key, sample_shape=(kl_action_rep,))
+
+    # Evaluate kernels
+    fwd_log_prob = log_prob_kernel(x_new_logprob, fwd_mean, scale)
+    old_fwd_log_prob = log_prob_kernel(x_new_logprob, old_fwd_mean, scale)
+
+    # take mean over kl_action_rep
+    gen_log_prob = jnp.mean(fwd_log_prob, axis=0)
+    old_gen_log_prob = jnp.mean(old_fwd_log_prob, axis=0)
+
+    # Update weight and return
+    key, key_gen = jax.random.split(key_gen)
+    out_dict = {
+        "old_gen_log_prob": old_gen_log_prob,
+        "gen_log_prob": gen_log_prob,
+        "x_new": x_new,
+    }
+    return out_dict, key_gen
 
 
 def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.0):
@@ -415,6 +455,8 @@ class CategoricalCriticNetwork(nnx.Module):
         num_bins: int = 51,
         vmin: float = -10.0,
         vmax: float = 10.0,
+        num_time_hid: int = 32,
+        num_time_out: int = 16,
         use_skip: bool = False,
         *,
         rngs: nnx.Rngs,
@@ -422,6 +464,9 @@ class CategoricalCriticNetwork(nnx.Module):
         self.num_bins = num_bins
         self.vmin = vmin
         self.vmax = vmax
+
+        self.num_time_hid = num_time_hid
+        self.num_time_out = num_time_out
 
         self.use_skip = use_skip
 
@@ -435,7 +480,7 @@ class CategoricalCriticNetwork(nnx.Module):
             self.action_embedding = Identity()
 
         self.feature_module = FCNN(
-            in_features=obs_dim + action_dim,
+            in_features=obs_dim + action_dim + self.num_time_out,
             out_features=hidden_dim,
             hidden_dim=hidden_dim,
             hidden_activation=nnx.swish,
@@ -480,10 +525,36 @@ class CategoricalCriticNetwork(nnx.Module):
         self.zero_dist = nnx.Param(
             utils.hl_gauss(jnp.zeros((1,)), num_bins, vmin, vmax)
         )
+                # Initialize timestep parameters
+        self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
+        # Store timestep_coeff as a Variable (non-trainable parameter)
+        self.timestep_coeff = nnx.Variable(
+            jnp.linspace(start=0.1, stop=100, num=self.num_time_hid)[None]
+        )
 
-    def features(self, obs: jax.Array, action: jax.Array):
+        # Time encoder network
+        self.time_coder_state = nnx.Sequential(
+            nnx.Linear(self.num_time_hid * 2, self.num_time_hid, rngs=rngs),
+            nnx.gelu,
+            nnx.Linear(self.num_time_hid, self.num_time_out, rngs=rngs),
+        )
+
+    def get_fourier_features(self, timesteps):
+        sin_embed_cond = jnp.sin(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        cos_embed_cond = jnp.cos(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
+
+    def features(self, obs: jax.Array, action: jax.Array, time: jax.Array):
         action_embedding = self.action_embedding(action)
-        state = jnp.concatenate([obs, action_embedding], axis=-1)
+        time_emb = self.get_fourier_features(time)
+        if len(action.shape) == 1:
+            time_emb = time_emb[0]
+        t_net = self.time_coder_state(time_emb)
+        state = jnp.concatenate([obs, action_embedding, t_net], axis=-1)
         return self.feature_module(state)
 
     def critic_head(self, features: jax.Array) -> jax.Array:
@@ -492,13 +563,14 @@ class CategoricalCriticNetwork(nnx.Module):
     
     def from_dict_to_observation(self, obs_dict):
         orig_obs = obs_dict["orig_obs"]
-        tanh_prev_actions = obs_dict["tanh_actions"]
-        obs = jnp.concatenate([orig_obs, tanh_prev_actions], axis=-1)
-        return obs
+        normed_prev_actions = obs_dict["normed_actions"]
+        time = obs_dict["diff_time_step"]
+        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        return obs, time
 
     def critic_cat(self, obs_dict: jax.Array, action: jax.Array) -> jax.Array:
-        obs = self.from_dict_to_observation(obs_dict)
-        features = self.features(obs, action)
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, action, time)
         return self.critic_head(features)
 
     def critic(self, obs: jax.Array, action: jax.Array) -> jax.Array:
@@ -509,12 +581,12 @@ class CategoricalCriticNetwork(nnx.Module):
         return value
 
     def forward(self, obs_dict, action):
-        obs = self.from_dict_to_observation(obs_dict)
-
+        obs, time = self.from_dict_to_observation(obs_dict)
         action = jnp.tanh(action) # tanh is pulled  into observation
 
-        features = self.features(obs, action)
+        features = self.features(obs, action, time)
         value_cat = jax.nn.softmax(self.critic_head(features), axis=-1)
+
         value = value_cat.dot(
             jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
         )
@@ -523,6 +595,7 @@ class CategoricalCriticNetwork(nnx.Module):
         pred_features = preds[..., 1:]
         if self.use_skip:
             pred_features = pred_features + features
+        
         return features, pred_features, pred_rew, value
 
 
@@ -627,6 +700,12 @@ class DiffusionModel(nnx.Module):
         else:
             self.friction = nnx.Param(jnp.ones(1) * inverse_softplus(friction))
 
+    def get_prior_entropy(self):
+        dist = distrax.MultivariateNormalDiag(
+            self.prior_mean.value, jax.nn.softplus(self.prior_std.value)
+        )
+        return dist.entropy()
+
     def prior_sampler(self, key, n_samples):
         """Sample from the prior distribution.
         
@@ -692,8 +771,8 @@ class DiffusionModel(nnx.Module):
         """Forward model function."""
         if self.fwd_model is not None:
             orig_obs = obs_dict["orig_obs"]
-            tanh_prev_actions = obs_dict["tanh_actions"]
-            obs = jnp.concatenate([orig_obs, tanh_prev_actions], axis=-1)
+            normed_prev_actions = obs_dict["normed_actions"]
+            obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
             return self.fwd_model(x, obs, step)
         else:
             return jnp.zeros_like(x)
@@ -704,8 +783,8 @@ class DiffusionModel(nnx.Module):
         """Backward model function."""
         if self.bwd_model is not None:
             orig_obs = obs_dict["orig_obs"]
-            tanh_prev_actions = obs_dict["tanh_actions"]
-            obs = jnp.concatenate([orig_obs, tanh_prev_actions], axis=-1)
+            normed_prev_actions = obs_dict["normed_actions"]
+            obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
             return self.bwd_model(x, obs, step)
         else:
             return jnp.zeros_like(x)
@@ -728,6 +807,7 @@ class DMERLActor(nnx.Module):
         self.sde_integrator = sde_integrator
         self.ode_integrator = ode_integrator
         self.logratio = logratio
+        self.diff_steps = diffusion_model.diff_steps
 
         # Parameters
         self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
@@ -736,18 +816,29 @@ class DMERLActor(nnx.Module):
     def _sample_prior(self, key, n_samples = 1):
         key, key_gen = jax.random.split(key)
         init_x = self.diffusion_model.prior_sampler(key, n_samples)
-        out_dict = {"init_x": init_x,
+        out_dict = {"init_x": init_x[0],
                     "log_prior": self.diffusion_model.prior_log_prob(init_x)
                     }
         return out_dict, key
     
-    def vmap_sample_prior(self, keys, n_samples=1):
+    def vmap_sample_prior(self, keys, n_samples):
         in_axes = (0,) # keys
-        out_dict, keys = jax.vmap(self._sample_prior, in_axes=in_axes)(keys, n_samples)
-        return out_dict, keys
+        keys = jax.random.split(keys, num=n_samples)
+        out_dict, keys = jax.vmap(self._sample_prior, in_axes=in_axes)(keys)
+        return out_dict
+    
+    def get_prior_entropy(self):
+        return self.diffusion_model.get_prior_entropy()
 
     def _sample_next_step(self, key, current_x, step, obs):
         out_dict, key = integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
+        x_new = out_dict["x_new"]
+        gen_log_prob = out_dict["gen_log_prob"]
+        # print diff step, step gen log prob shape and distrax.Tanh().forward_log_det_jacobian(x_new).shape in ajx debug
+        #jax.debug.print("diff step: {d}, step: {s}, gen_log_prob shape: {g}, log_det_jacobian shape: {l}", d=self.diff_steps-1, s=step, g=gen_log_prob.shape, l=distrax.Tanh().forward_log_det_jacobian(x_new).shape)
+        #jax.debug.print("diff step: {d}, step: {s}, scaling: {scaling}", d=self.diff_steps-1, s=step, scaling = distrax.Tanh().forward_log_det_jacobian(x_new).sum())
+        gen_log_prob_new = jnp.where(self.diff_steps - 1 == step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+        out_dict["gen_log_prob"] = gen_log_prob_new
 
         return out_dict, key
     
@@ -755,15 +846,42 @@ class DMERLActor(nnx.Module):
         in_axes = (0, 0, 0, 0) # keys, current_x, step, obs
 
         current_x = obs["orig_actions"]
-        step = obs["diff_time_step"]
+        step = obs["diff_time_step"][...,0]
+        keys = jax.random.split(keys, num=obs["orig_obs"].shape[0]) ### TODO pay attention are keys correctly split?
         out_dict, keys = jax.vmap(self._sample_next_step, in_axes=in_axes)(keys, current_x, step, obs)
-        reverse_log_prob = out_dict["bwd_log_prob"]
-        forward_log_prob = out_dict["fwd_log_prob"]
-        actions = out_dict["x_new"]
-        return actions, reverse_log_prob, forward_log_prob, keys
+        x_new = out_dict["x_new"]
+        gen_log_prob = out_dict["gen_log_prob"]
+        dest_log_prob = out_dict["dest_log_prob"]
+        actions = x_new
+        return actions, gen_log_prob, dest_log_prob
+    
+    def sample_complete_loop(self, obs_dict , key):
+        batch_size = obs_dict["orig_obs"].shape[0]
+        key, key_gen = jax.random.split(key)
+        out_dict = self.vmap_sample_prior(key, batch_size)
+        init_x = out_dict["init_x"]
+        key, key_gen = jax.random.split(key_gen)
+
+        log_ratio = jnp.zeros((init_x.shape[0],), dtype=jnp.float32)
+        obs_dict["normed_actions"] = init_x
+        obs_dict["orig_actions"] = init_x
+        obs_dict["diff_time_step"] = jnp.zeros((init_x.shape[0],1), dtype=jnp.int32)
+
+        for i in range(self.diffusion_model.diff_steps):
+            step = jnp.array(i, dtype=jnp.int32)
+            actions, gen_log_prob, dest_log_prob = self.vmap_sample_next_step(obs_dict, key_gen)
+
+            log_ratio += gen_log_prob - dest_log_prob
+            x_new = actions
+            obs_dict["normed_actions"] = x_new
+            obs_dict["orig_actions"] = x_new
+            obs_dict["diff_time_step"] = obs_dict["diff_time_step"] + 1
+
+
+        return log_ratio
     
 
-    def _single_sde_sample(self, key, obs, stop_grad, ode, ode_coef):
+    def _single_sde_sample(self, key, obs_dict, stop_grad, ode, ode_coef):
         """
         Private helper for SDE sampling.
         This is the inlined logic from the old global `single_sample`.
@@ -777,14 +895,17 @@ class DMERLActor(nnx.Module):
         key, key_gen = jax.random.split(key_gen)
         aux = (init_x, jnp.zeros(1), key)
 
+        obs_dict["normed_actions"] = init_x
+        obs_dict["orig_actions"] = init_x
+        obs_dict["diff_time_step"] = jnp.zeros((init_x.shape[0],1), dtype=jnp.int32)
         # --- Hard-coded to self.sde_integrator ---
-        integrate = self.sde_integrator(obs, self.diffusion_model, stop_grad, ode, ode_coef)
+        integrate = self.sde_integrator(obs_dict    , self.diffusion_model, stop_grad, ode, ode_coef)
         
         aux, _ = jax.lax.scan(integrate, aux, jnp.arange(0, self.diffusion_model.diff_steps))
         final_x, log_ratio, _ = aux
 
         terminal_costs = self.diffusion_model.prior_log_prob(init_x)
-        running_cost = -(log_ratio )
+        running_cost = -(log_ratio  + distrax.Tanh().forward_log_det_jacobian(final_x).sum())
         stochastic_costs = jnp.zeros_like(running_cost)
 
         return final_x, running_cost, stochastic_costs, terminal_costs.reshape(running_cost.shape)
@@ -792,21 +913,20 @@ class DMERLActor(nnx.Module):
     def sample(
         self,
         key,
-        obs: jax.Array,
+        obs_dict: jax.Array,
         stop_grad: bool = False,
         ode: bool = False,
         ode_coef: float = 1.0,
     ) -> jax.Array:
         """Sample actions from the SDE diffusion model."""
-        keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
-
+        keys = jax.random.split(key, num=obs_dict["orig_obs"].shape[0])
         # Define the function to vmap
         def _single_sample_for_vmap(key, obs):
             # This function closes over self, stop_grad, ode, ode_coef
             return self._single_sde_sample(key, obs, stop_grad, ode, ode_coef)
         
         in_axes = (0, 0) # keys, obs
-        rnd_result = jax.vmap(_single_sample_for_vmap, in_axes=in_axes)(keys, obs)
+        rnd_result = jax.vmap(_single_sample_for_vmap, in_axes=in_axes)(keys, obs_dict)
         
         x_0, running_costs, stochastic_costs, terminal_costs = rnd_result
         return (x_0, running_costs, stochastic_costs, terminal_costs)
@@ -834,7 +954,7 @@ class DMERLActor(nnx.Module):
         final_x, log_ratio, log_reverse, log_forward, _ = aux
 
         terminal_costs = self.diffusion_model.prior_log_prob(init_x)
-        running_cost = -(log_ratio)
+        running_cost = -(log_ratio  + distrax.Tanh().forward_log_det_jacobian(final_x).sum() )
         stochastic_costs = jnp.zeros_like(running_cost)
 
         log_prob_dict = {
@@ -887,6 +1007,49 @@ class DMERLActor(nnx.Module):
         aux, _ = jax.lax.scan(integrate, aux, jnp.arange(0, self.diffusion_model.diff_steps))
         final_x, log_ratio, _ = aux
         return log_ratio
+    
+    
+    def fkl_div_one_step(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
+        """
+        Compute KL divergence using the ONE STEP integrator.
+        This method is designed to be vmapped externally (e.g., in actor_loss).
+        """
+        keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
+        
+        def _single_kl_for_vmap(key, obs):
+            # This function closes over self, target_diffusion_model, stop_grad
+            current_x = obs["orig_actions"]
+            step = obs["diff_time_step"]
+            return logratio_one_step(self.diffusion_model, target_diffusion_model.diffusion_model, current_x , step, obs, key, stop_grad=stop_grad)
+        
+
+        in_axes = (0, 0) # keys, obs
+        out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
+        old_gen_log_probs = out_dict["old_gen_log_prob"]
+        gen_log_probs = out_dict["gen_log_prob"]
+        old_gen_log_ratios = old_gen_log_probs - gen_log_probs
+        return old_gen_log_ratios
+    
+    def rkl_div_one_step(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
+        """
+        Compute KL divergence using the ONE STEP integrator.
+        This method is designed to be vmapped externally (e.g., in actor_loss).
+        """
+        keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
+        
+        def _single_kl_for_vmap(key, obs):
+            # This function closes over self, target_diffusion_model, stop_grad
+            current_x = obs["orig_actions"]
+            step = obs["diff_time_step"]
+            return logratio_one_step(target_diffusion_model.diffusion_model, self.diffusion_model, current_x , step, obs, key, stop_grad=stop_grad)
+        
+
+        in_axes = (0, 0) # keys, obs
+        out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
+        old_gen_log_probs = out_dict["old_gen_log_prob"]
+        gen_log_probs = out_dict["gen_log_prob"]
+        old_gen_log_ratios = old_gen_log_probs - gen_log_probs
+        return old_gen_log_ratios
 
     def kl_div(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, n_samples: int, stop_grad: bool = False) -> jax.Array:
         """

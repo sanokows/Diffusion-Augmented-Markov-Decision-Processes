@@ -19,6 +19,7 @@ import wandb
 from src.env_utils.jax_wrappers import (
     BraxGymnaxWrapper,
     ClipAction,
+    TanhClipAction,
     LogWrapper,
     MjxGymnaxWrapper,
     MjxDiffEnvWrapper,
@@ -109,6 +110,7 @@ class ReppoConfig(struct.PyTreeNode):
     reverse_kl: bool = False
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
+    use_lax_scan: bool = True
 
     # diffusion settings
     diffusion: Any = None # DictConfig
@@ -123,6 +125,60 @@ class SACTrainState(struct.PyTreeNode):
     last_env_state: EnvState
     last_obs: jax.Array
     last_critic_obs: jax.Array
+
+def maybe_lax_scan(
+    f: Callable,
+    init,
+    xs=None,
+    *,
+    length: int | None = None,
+    reverse: bool = False,
+    use_scan: bool = True,
+):
+    """Run jax.lax.scan or an equivalent Python loop when debugging."""
+    if use_scan:
+        return jax.lax.scan(f, init, xs, length=length, reverse=reverse)
+
+    if xs is None:
+        if length is None:
+            raise ValueError("length must be provided when xs is None.")
+        xs_sequence = [None] * length
+    else:
+        leaves, _ = jax.tree_util.tree_flatten(xs)
+        if not leaves:
+            raise ValueError("scan inputs must contain at least one leaf.")
+        first_shape = np.shape(leaves[0])
+        if len(first_shape) == 0:
+            raise ValueError("scan inputs must have a leading dimension.")
+        seq_length = int(first_shape[0])
+
+        def take_index(i):
+            return jax.tree.map(lambda arr, idx=i: arr[idx], xs)
+
+        xs_sequence = [take_index(i) for i in range(seq_length)]
+
+    if reverse:
+        xs_iter = reversed(xs_sequence)
+    else:
+        xs_iter = xs_sequence
+
+    carry = init
+    outputs = []
+    has_output = None
+    for x in xs_iter:
+        carry, y = f(carry, x)
+        if has_output is None:
+            has_output = y is not None
+        if has_output:
+            outputs.append(y)
+
+    if has_output:
+        if reverse:
+            outputs = list(reversed(outputs))
+        stacked = jax.tree.map(lambda *vals: jnp.stack(vals), *outputs)
+    else:
+        stacked = None
+    return carry, stacked
 
 def make_sde_eval_fn(
     env: Environment, max_episode_steps: int, reward_scale: float = 1.0
@@ -360,6 +416,8 @@ def make_init(
                 num_bins=cfg.num_bins,
                 vmin=cfg.vmin,
                 vmax=cfg.vmax,
+                num_time_hid = cfg.diffusion.score_model.num_time_hid,
+                num_time_out = cfg.diffusion.score_model.num_time_out,
                 use_norm=cfg.use_critic_norm,
                 encoder_layers=cfg.num_critic_encoder_layers,
                 use_simplical_embedding=cfg.use_simplical_embedding,
@@ -436,7 +494,7 @@ def make_init(
             randomize_steps_key,
             _env_state.info["steps"].shape,
             0,
-            cfg.max_episode_steps,
+            cfg.max_episode_steps * cfg.diffusion.diff_steps,
         ).astype(jnp.float32)
         env_state.set_env_state(_env_state)
 
@@ -478,15 +536,30 @@ def make_train_fn(
         adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
         cfg = cfg.replace(gamma=adjusted_gamma)
 
+        adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
+        cfg = cfg.replace(lmbda=adjusted_lambda)
+
+        adjusted_total_time_steps = cfg.total_time_steps * diff_steps
+        cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
+
+        # adjusted_num_steps = cfg.num_steps * diff_steps
+        # cfg = cfg.replace(num_steps=adjusted_num_steps)
+
+        # adjusted_num_mini_batches = cfg.num_mini_batches * diff_steps
+        # cfg = cfg.replace(num_mini_batches=adjusted_num_mini_batches)
+
+    
+
     env = LogWrapper(env, cfg.num_envs)
-    env = ClipAction(env)
+    env = TanhClipAction(env)
     # env = VecEnv(env, cfg.num_envs)
     if cfg.normalize_env:
         env = DiffNormalizeVec(env)
 
     # eval_fn = make_eval_fn(env, cfg.max_episode_steps, reward_scale=reward_scale)
-    sde_eval_fn = make_sde_eval_fn(env, cfg.max_episode_steps, reward_scale=reward_scale)
-    ode_eval_fn = make_ode_eval_fn(env, cfg.max_episode_steps, reward_scale=reward_scale)
+    eval_env_steps = cfg.max_episode_steps * cfg.diffusion.diff_steps
+    sde_eval_fn = make_sde_eval_fn(env, eval_env_steps, reward_scale=reward_scale)
+    ode_eval_fn = make_ode_eval_fn(env, eval_env_steps, reward_scale=reward_scale)
     action_size_target = (
         jnp.prod(jnp.array(env.action_space(env_params).shape)) * cfg.ent_target_mult
     )
@@ -513,24 +586,27 @@ def make_train_fn(
         def step_env(carry, _) -> tuple[tuple, Transition]:
             key, env_state, train_state, obs, critic_obs = carry
             key, act_key, step_key = jax.random.split(key, 3)
-            batched_action_key = jax.random.split(act_key, cfg.num_envs)
+
             step_key = jax.random.split(step_key, cfg.num_envs)
 
             # get policy action
-            action, reverse_log_prob, forward_log_prob, batched_action_key = actor_model.vmap_sample_next_step(obs, batched_action_key) 
+            action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(obs, act_key) 
             
             next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )            
-
             importance_weight = jnp.zeros((cfg.num_envs,))
 
             # compute next state embedding and value
-            next_action, next_reverse_log_prob, next_forward_log_prob, batched_action_key = actor_model.vmap_sample_next_step(next_obs, batched_action_key)
+            next_action, next_gen_log_prob, next_dest_log_prob = actor_model.vmap_sample_next_step(next_obs, act_key)
             next_action = jax.lax.stop_gradient(next_action) ### TODO ask if stop grad is necessary?
             # compute next state embedding and value
             next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
-            log_ratio = next_reverse_log_prob - next_forward_log_prob
+            log_ratio = next_gen_log_prob - next_dest_log_prob
+            log_ratio = jax.lax.stop_gradient(log_ratio)
+            ### print with jax debug the reward and the log ratio
+
+            #jax.debug.print("reward: {r}, log_ratio: {lr}", r=reward, lr=log_ratio.mean())
             soft_reward = (
                 reward
                 - cfg.gamma * log_ratio.squeeze() * actor_model.temperature()
@@ -556,7 +632,7 @@ def make_train_fn(
                 next_critic_obs,
             ), transition
 
-        rollout_state, transitions = jax.lax.scan(
+        rollout_state, transitions = maybe_lax_scan(
             f=step_env,
             init=(
                 key,
@@ -566,6 +642,7 @@ def make_train_fn(
                 train_state.last_critic_obs,
             ),
             length=cfg.num_steps,
+            use_scan=cfg.use_lax_scan,
         )
         _, last_env_state, train_state, last_obs, last_critic_obs = rollout_state
         train_state = train_state.replace(
@@ -600,7 +677,7 @@ def make_train_fn(
                 transition.importance_weight,
             ), lambda_return
 
-        _, target_values = jax.lax.scan(
+        _, target_values = maybe_lax_scan(
             compute_nstep_lambda,
             (
                 batch.value[-1],
@@ -609,6 +686,7 @@ def make_train_fn(
             ),
             batch,
             reverse=True,
+            use_scan=cfg.use_lax_scan,
         )
         # Reshape data to (num_steps * num_envs, ...)
         data = (batch, target_values)
@@ -676,6 +754,9 @@ def make_train_fn(
                     # log critic parameters norm
                     critic_pnorm = utils.tree_norm(params)
 
+                    ## print the critic loss
+                   # jax.debug.print("critic_loss: {cl}, aux_rew_loss: {arl}", cl=critic_loss, arl=aux_rew_loss.mean())
+
                     return loss, dict(
                         value_loss=critic_loss,
                         critic_update_loss=critic_update_loss,
@@ -683,7 +764,7 @@ def make_train_fn(
                         aux_loss=aux_loss,
                         rew_aux_loss= aux_rew_loss,
                         q=value.mean(),
-                        reward_mean=minibatch.reward.mean(),
+                        reward_mean=minibatch.reward.mean()*cfg.diffusion.diff_steps,
                         target_values=target_values.mean(),
                         critic_pnorm=critic_pnorm,
                     )
@@ -696,50 +777,63 @@ def make_train_fn(
                     actor_model = nnx.merge(train_state.actor.graphdef, params)
 
                     # SAC actor loss
-                    pred_action, pred_run_cost, pred_sto_cost, pred_terminal_cost = actor_model.sample(key, minibatch.obs, stop_grad=False)
+                    #key, subkey = jax.random.split(key)
+                    ### TODO chekc what happens with the key here
+                    pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(minibatch.obs, key)
+                    entropy_prior = actor_model.get_prior_entropy()
 
-                    # NOTE: DIME
-                    log_prob = (pred_run_cost +  pred_sto_cost + pred_terminal_cost) # (1024, )
-                    log_prob = log_prob.sum(-1)
+                    log_prob_ratio = gen_log_prob - dest_log_prob
 
                     value = critic_target_model.critic(
                         minibatch.critic_obs, pred_action
                     )
-                    # entropy = -log_prob
-                    entropy = -pred_run_cost.squeeze()
+
+                    entropy =  -cfg.diffusion.diff_steps*jnp.mean(log_prob_ratio, axis = 0) #+ entropy_prior
+                    entropy = jax.lax.stop_gradient(entropy)
+                    # log_w = actor_model.sample_complete_loop(minibatch.obs, key)
+                    # new_entropy = - jnp.mean(log_w)
+                    # jax.debug.print("entropy: {e}, entropy_prior: {ps}, dime_entropy: {de}, diff_steps: {ds}",
+                    #                  e=entropy.mean(), ps=entropy_prior, de=-cfg.diffusion.diff_steps*jnp.mean(log_prob_ratio, axis = 0), ds=cfg.diffusion.diff_steps)
+
 
                     # policy KL constraint
                     if cfg.reverse_kl:
-                        # throw not implemented error
-                        raise NotImplementedError("Reverse KL not implemented yet.")
-                    else:
                         keys = jax.random.split(key, cfg.kl_action_rep)
                         def compute_kl_single(k):
-                            return actor_model.kl_div_dime(k, minibatch.obs, actor_target_model, stop_grad=False)
+                            return actor_model.rkl_div_one_step(k, minibatch.obs, actor_target_model, stop_grad=False)
                         
                         kl_log_ratios = jax.vmap(compute_kl_single)(keys)  # (kl_action_rep, batch_size, 1)
                         kl_log_ratios = kl_log_ratios.mean(axis=0)  # Average over samples => (batch_size, 1)
 
-                        kl = kl_log_ratios.sum(-1)
+                        kl = cfg.diffusion.diff_steps*kl_log_ratios.sum(-1)
+                    else:
+                        keys = jax.random.split(key, cfg.kl_action_rep)
+                        def compute_kl_single(k):
+                            return actor_model.fkl_div_one_step(k, minibatch.obs, actor_target_model, stop_grad=False)
+                        
+                        kl_log_ratios = jax.vmap(compute_kl_single)(keys)  # (kl_action_rep, batch_size, 1)
+                        kl_log_ratios = kl_log_ratios.mean(axis=0)  # Average over samples => (batch_size, 1)
+
+                        kl = cfg.diffusion.diff_steps*kl_log_ratios.sum(-1)
 
                     lagrangian = actor_model.lagrangian()
 
                     if cfg.actor_kl_clip_mode == "full":
                         actor_loss = (
-                            log_prob * jax.lax.stop_gradient(actor_model.temperature())
+                            log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
                             - value
                             + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
                         )
                     elif cfg.actor_kl_clip_mode == "clipped":
                         actor_loss = jnp.where(
                             kl < cfg.kl_bound,
-                            log_prob * jax.lax.stop_gradient(actor_model.temperature())
+                            log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
                             - value,
                             kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
                         )
                     elif cfg.actor_kl_clip_mode == "value":
                         actor_loss = (
-                            log_prob * jax.lax.stop_gradient(actor_model.temperature())
+                            log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
                             - value
                         )
                     else:
@@ -775,6 +869,9 @@ def make_train_fn(
                     friction = actor_model.diffusion_model.friction.value
                     friction_detached = jax.lax.stop_gradient(friction)
 
+                    # print with jax debug the entropy and kl values,a ctor and critic loss
+
+                    #jax.debug.print("entropy: {e}, kl: {k}, actor_loss: {al}", e=entropy, k=kl.mean(), al=actor_loss.mean())
 
                     return loss, dict(
                         actor_loss=actor_loss,
@@ -786,9 +883,9 @@ def make_train_fn(
                         kl=kl.mean(),
                         lagrangian=lagrangian,
                         lagrangian_loss=lagrangian_loss,
-                        run_cost=pred_run_cost.mean(),
-                        sto_cost=pred_sto_cost.mean(),
-                        terminal_cost=pred_terminal_cost.mean(),
+                        run_cost=0.,
+                        sto_cost=0.,
+                        terminal_cost=0.,
                         entropy=entropy,
                         entropy_loss=target_entropy_loss,
                         target_values=target_values.mean(),
@@ -798,6 +895,7 @@ def make_train_fn(
 
                 critic_grad_fn = jax.value_and_grad(critic_loss_fn, has_aux=True)
                 output, critic_grads = critic_grad_fn(train_state.critic.params)
+                #jax.debug.print("critic loss: {loss}", loss=output[0])
                 critic_train_state = train_state.critic.apply_gradients(critic_grads)
                 train_state = train_state.replace(
                     critic=critic_train_state,
@@ -809,6 +907,7 @@ def make_train_fn(
 
                 actor_grad_fn = jax.value_and_grad(actor_loss, has_aux=True)
                 output, actor_grads = actor_grad_fn(train_state.actor.params)
+                #jax.debug.print("actor loss: {loss}", loss=output[0])
                 actor_train_state = train_state.actor.apply_gradients(actor_grads)
                 train_state = train_state.replace(
                     actor=actor_train_state,
@@ -834,8 +933,11 @@ def make_train_fn(
             )
 
             # Run model update for each mini-batch
-            train_state, metrics = jax.lax.scan(
-                minibatch_update, train_state, minibatch_idxs
+            train_state, metrics = maybe_lax_scan(
+                minibatch_update,
+                train_state,
+                minibatch_idxs,
+                use_scan=cfg.use_lax_scan,
             )
             # Compute mean metrics across mini-batches
             metrics = jax.tree.map(lambda x: x.mean(0), metrics)
@@ -843,10 +945,11 @@ def make_train_fn(
 
         # Update the model for a number of epochs
         key, train_key = jax.random.split(key)
-        (_, train_state), update_metrics = jax.lax.scan(
+        (_, train_state), update_metrics = maybe_lax_scan(
             f=update,
             init=(1, train_state),
             xs=jax.random.split(train_key, cfg.num_epochs),
+            use_scan=cfg.use_lax_scan,
         )
         # Get metrics from the last epoch
         update_metrics = jax.tree.map(lambda x: x[-1], update_metrics)
@@ -871,10 +974,11 @@ def make_train_fn(
             eval_interval = int(
                 (cfg.total_time_steps / (cfg.num_steps * cfg.num_envs)) // cfg.num_eval
             )
-            train_state, train_metrics = jax.lax.scan(
+            train_state, train_metrics = maybe_lax_scan(
                 f=train_step,
                 init=train_state,
                 xs=jax.random.split(train_key, eval_interval),
+                use_scan=cfg.use_lax_scan,
             )
             train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
             
@@ -940,7 +1044,12 @@ def make_train_fn(
             jax.random.split(init_key, num_seeds)
         )
         keys = jax.random.split(key, num_iterations)
-        state, metrics = jax.lax.scan(f=loop_body, init=train_state, xs=keys)
+        state, metrics = maybe_lax_scan(
+            f=loop_body,
+            init=train_state,
+            xs=keys,
+            use_scan=cfg.use_lax_scan,
+        )
         return state, metrics
 
     return train_fn
@@ -1001,8 +1110,22 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         eval_length = metrics["eval/episode_length"].mean()
+
+        lr_cfg = cfg.hyperparameters
+        actor_step = int(np.asarray(state.actor.step).max())
+        if lr_cfg.anneal_lr:
+            num_iterations = (
+                lr_cfg.total_time_steps // lr_cfg.num_steps // lr_cfg.num_envs
+            )
+            num_updates = max(
+                1, num_iterations * lr_cfg.num_epochs * lr_cfg.num_mini_batches
+            )
+            progress = min(actor_step / num_updates, 1.0)
+            current_lr = float((1.0 - progress) * lr_cfg.lr)
+        else:
+            current_lr = float(lr_cfg.lr)
         
-        log_msg = f"step={state.time_steps[0]} episode_return={episode_return:.3f}, episode_length={eval_length:.3f}"
+        log_msg = f"step={state.time_steps[0]} episode_return={episode_return:.3f}, episode_length={eval_length:.3f}, lr={current_lr:.6f}"
         
         # Log ODE metrics if available
         ode_metrics = {}
@@ -1021,6 +1144,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         log_data = {
             "eval/episode_return": episode_return,
             "eval/episode_length": eval_length,
+            "train/lr": current_lr,
             # performance metric: steps per second
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
@@ -1106,7 +1230,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     return (0.1 * sweep_metrics_array.mean() + sweep_metrics_array[:, -1].mean()).item()
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="reppo_dime")
+@hydra.main(version_base=None, config_path="../../config", config_name="reppo_dmerl")
 def main(cfg: DictConfig):
     cfg.hyperparameters = OmegaConf.merge(cfg.hyperparameters, cfg.experiment_overrides.hyperparameters)
     run(cfg, trial=None)

@@ -28,6 +28,7 @@ hyperparameters:
   num_mini_batches: 128
   num_envs: 1024
   num_epochs: 4
+  use_lax_scan: true
 
   # exploration settings (currently not touched)
   exploration_noise_max: 1.0

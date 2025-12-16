@@ -134,10 +134,20 @@ class MjxDiffEnvState:
         return self.replace(env_state=env_state)
 
 
+def build_obs_dict(obs, orig_actions, diff_time_step):
+    return {
+        "orig_obs": obs,
+        "orig_actions": orig_actions,
+        "normed_actions": jnp.tanh(orig_actions),
+        "diff_time_step": diff_time_step,
+    }
+
 class MjxDiffEnvWrapper(Wrapper):
     """Wraps MJX envs with diffusion metadata and long-horizon resets."""
 
-    def __init__(self, env: MjxGymnaxWrapper, num_diff_steps: int, diffusion_config: ConfigDict):
+    def __init__(self, env: MjxGymnaxWrapper, num_diff_steps: int, diffusion_config: ConfigDict, low = -0.999, high = 0.999):
+        self.low = low
+        self.high = high
         super().__init__(env)
         if num_diff_steps <= 0:
             raise ValueError("num_diff_steps must be positive.")
@@ -199,15 +209,10 @@ class MjxDiffEnvWrapper(Wrapper):
         return jnp.zeros(zeros_shape, dtype=jnp.float32)
 
     def _zero_time_array(self, obs_like):
-        return jnp.zeros(obs_like.shape[:-1], dtype=jnp.float32)
+        return jnp.zeros(obs_like.shape[:-1] + (1,), dtype=jnp.float32)
 
     def _build_obs(self, obs, orig_actions, diff_time_step):
-        return {
-            "orig_obs": obs,
-            "orig_actions": orig_actions,
-            "tanh_actions": jnp.tanh(orig_actions),
-            "diff_time_step": diff_time_step,
-        }
+        return build_obs_dict(obs, orig_actions, diff_time_step)
 
     def observation_space(self, params=None):
         actor_space = {
@@ -215,15 +220,15 @@ class MjxDiffEnvWrapper(Wrapper):
             "orig_actions": spaces.Box(
                 low=-jnp.inf, high=jnp.inf, shape=self._action_space.shape
             ),
-            "tanh_actions": spaces.Box(
+            "normed_actions": spaces.Box(
                 low=-1, high=1, shape=self._action_space.shape
             ),
-            "diff_time_step": spaces.Box(low=0.0, high=self.num_diff_steps, shape=()),
+            "diff_time_step": spaces.Box(low=0.0, high=self.num_diff_steps, shape=(1,)),
         }
         critic_space = {
             "orig_obs": self._critic_obs_space,
             "orig_actions": actor_space["orig_actions"],
-            "tanh_actions": actor_space["tanh_actions"],
+            "normed_actions": actor_space["normed_actions"],
             "diff_time_step": actor_space["diff_time_step"],
         }
         if hasattr(spaces, "Dict"):
@@ -239,12 +244,12 @@ class MjxDiffEnvWrapper(Wrapper):
             return space[key]
 
         actor_orig = _extract(actor_space, "orig_obs")
-        actor_tanh = _extract(actor_space, "tanh_actions")
+        actor_tanh = _extract(actor_space, "normed_actions")
         critic_orig = _extract(critic_space, "orig_obs")
-        critic_tanh = _extract(critic_space, "tanh_actions")
+        critic_tanh = _extract(critic_space, "normed_actions")
 
         obs_dim = actor_orig.shape[0] + actor_tanh.shape[0]
-        critic_dim = critic_orig.shape[0] + critic_tanh.shape[0]
+        critic_dim = critic_orig.shape[0] + critic_tanh.shape[0] 
         return obs_dim, critic_dim
 
     def action_space(self, params=None):
@@ -279,12 +284,19 @@ class MjxDiffEnvWrapper(Wrapper):
 
     def orig_env_and_reset_actions_step(self, args):
         key, state, action, diff_time_steps, steps_since_reset = args
+        scaled_action = jnp.tanh(action)
+        scaled_action = jnp.clip(scaled_action, self.low, self.high)
         obs, critic_obs, env_state, reward, done, info = self.env.step(
-            key, state.env_state, action
+            key, state.env_state, scaled_action
         )
+        # jax.debug.print("env reset? {d}", d=done)
+        # reset_mask = env_state.info.get("returned_episode", None)
+        # if reset_mask is not None:
+        #     jax.debug.print("returned_episode mask: {m}", m=reset_mask)
+        #print the reward with jax debug
+        #jax.debug.print("Reset step reward: {r}", r=reward)
         prior_actions, key = self.reset_actions(key, obs.shape[0])
         diff_time_steps = self.reset_diff_time_steps(obs.shape[0])
-        steps_since_reset = jnp.zeros_like(diff_time_steps)
         obs_dict = self._build_obs(obs, prior_actions, diff_time_steps)
         critic_obs_dict = self._build_obs(critic_obs, prior_actions, diff_time_steps)
 
@@ -322,9 +334,10 @@ class MjxDiffEnvWrapper(Wrapper):
         diff_time_step = state.diff_time_step + jnp.ones_like(state.diff_time_step)
         steps_since_reset = state.steps_since_reset + jnp.ones_like(state.steps_since_reset)
         reset_due = jnp.any(diff_time_step >= self.num_diff_steps)
+        #print reset due with jax debug and also diff_time_step
+        # jax.debug.print("Diff time step: {dts}, Reset due: {rd}", dts=diff_time_step, rd=reset_due)
 
-        (
-            obs_dict,
+        (   obs_dict,
             critic_obs_dict,
             env_state,
             reward,
@@ -339,8 +352,8 @@ class MjxDiffEnvWrapper(Wrapper):
             self.diff_env_step,
             operand=(key, state, action, diff_time_step, steps_since_reset),
         )
+        #jax.debug.print("selected reward: {r}", r=reward)
         info = env_state.info
-        print(info.keys(), "env step info diff wrapper")
         new_state = MjxDiffEnvState(
             env_state=env_state,
             obs=raw_obs,
@@ -382,7 +395,6 @@ class LogWrapper(Wrapper):
     @partial(jax.jit, static_argnums=(0,))
     def reset(self, key) -> Tuple[chex.Array, environment.EnvState]:
         obs, critic_obs, env_state = self.env.reset(key)
-        print("env reset info keys:", env_state.info.keys())
         state = LogEnvState(
             env_state=env_state,
             episode_returns=jnp.zeros((self.num_envs,)),
@@ -508,7 +520,19 @@ class ClipAction(Wrapper):
     def step(self, key, state, action):
         """TODO: In theory the below line should be the way to do this."""
         # action = jnp.clip(action, self.env.action_space.low, self.env.action_space.high)
-        action = jnp.clip(action, self.low, self.high)
+        #action = jnp.clip(action, self.low, self.high)
+        return self.env.step(key, state, action)
+    
+class TanhClipAction(Wrapper):
+    def __init__(self, env, low=-0.999, high=0.999):
+        super().__init__(env)
+        self.low = low
+        self.high = high
+
+    def step(self, key, state, action):
+        """TODO: In theory the below line should be the way to do this."""
+        # action = jnp.clip(action, self.env.action_space.low, self.env.action_space.high)
+        #action = jnp.clip(action, self.low, self.high)
         return self.env.step(key, state, action)
 
 

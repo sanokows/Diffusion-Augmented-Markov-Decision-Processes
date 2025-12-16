@@ -13,7 +13,7 @@ python -m src.jaxrl.reppo_dime env=humanoid_brax env.name=humanoid
 
 
 cd /home/it4i-sanokows/code/DIMEReppo
-python -m src.jaxrl.reppo_dime env.name=CheetahRun hyperparameters.num_eval=10 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=4
+python -m src.jaxrl.reppo_dime env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1
 
 
-python -m src.jaxrl.reppo_DMERL env.name=CheetahRun hyperparameters.num_eval=10 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=4
+python -m src.jaxrl.reppo_DMERL env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1
