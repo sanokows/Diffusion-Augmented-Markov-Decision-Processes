@@ -145,6 +145,28 @@ class ReppoDMERLTrainer:
         num_seeds: int = 1,
         reward_scale: float = 1.0,
     ) -> None:
+        diff_steps = getattr(cfg.diffusion, "diff_steps", None)
+        if diff_steps is not None and diff_steps > 0:
+            # rmax = cfg.vmax/10
+            # adjusted = 0.1*rmax*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
+            # cfg = cfg.replace(vmax=adjusted)
+
+            # rmin = cfg.vmin/10
+            # adjusted = 0.1*rmin*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
+            # cfg = cfg.replace(vmin=adjusted)
+
+
+            adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
+            cfg = cfg.replace(gamma=adjusted_gamma)
+
+            adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
+            cfg = cfg.replace(lmbda=adjusted_lambda)
+
+
+            adjusted_total_time_steps = cfg.total_time_steps * diff_steps
+            cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
+
+            pass
         self.cfg = cfg
         self.env_params = env_params
         self.log_callback = log_callback or (lambda *args: None)
@@ -159,29 +181,6 @@ class ReppoDMERLTrainer:
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
         self.ode_eval_fn = self._make_ode_eval_fn()
-
-        diff_steps = getattr(cfg.diffusion, "diff_steps", None)
-        if diff_steps is not None and diff_steps > 0:
-            rmax = cfg.vmax/10
-            adjusted = 0.1*rmax*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
-            cfg = cfg.replace(vmax=adjusted)
-
-            rmin = cfg.vmin/10
-            adjusted = 0.1*rmin*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
-            cfg = cfg.replace(vmin=adjusted)
-
-
-            adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
-            cfg = cfg.replace(gamma=adjusted_gamma)
-
-            adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
-            cfg = cfg.replace(lmbda=adjusted_lambda)
-
-
-            adjusted_total_time_steps = cfg.total_time_steps * diff_steps
-            cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
-
-            pass
 
     def _prepare_env(self, env: Environment) -> Environment:
         env = LogWrapper(env, self.cfg.num_envs)
@@ -798,6 +797,7 @@ class ReppoDMERLTrainer:
         num_iterations = num_train_steps // eval_interval + int(
             num_train_steps % eval_interval != 0
         )
+        print("Warning is num train steps correct?")
         key, init_key = jax.random.split(key)
         init_fn = self._make_init_fn()
         train_state = jax.vmap(init_fn)(jax.random.split(init_key, self.num_seeds))
