@@ -55,6 +55,8 @@ class MjxGymnaxWrapper(Environment):
             self.dict_obs = False
         else:
             self.dict_obs = True
+            raise ValueError("Dict observations not supported yet.")
+
         if asymmetric_observation:
             self.dict_obs_key = "privileged_state"
         else:
@@ -107,6 +109,8 @@ class MjxGymnaxWrapper(Environment):
         state = self.env.step(state, action)
         obs = state.obs if not self.dict_obs else state.obs["state"]
         critic_obs = state.obs if not self.dict_obs else state.obs[self.dict_obs_key]
+        #print the step of the current state
+        #jax.debug.print("Env step info={}", state.info["steps"])
         return (
             obs,
             critic_obs,
@@ -136,10 +140,10 @@ class MjxDiffEnvState:
 
 def build_obs_dict(obs, orig_actions, diff_time_step):
     return {
-        "orig_obs": obs,
-        "orig_actions": orig_actions,
-        "normed_actions": jnp.tanh(orig_actions),
-        "diff_time_step": diff_time_step,
+        "orig_obs": obs.copy(),
+        "orig_actions": orig_actions.copy(),
+        "normed_actions": orig_actions.copy(),
+        "diff_time_step": diff_time_step.copy(),
     }
 
 class MjxDiffEnvWrapper(Wrapper):
@@ -317,7 +321,8 @@ class MjxDiffEnvWrapper(Wrapper):
         obs_dict = self._build_obs(state.obs, action, diff_time_steps)
         critic_obs_dict = self._build_obs(state.critic_obs, action, diff_time_steps)
         reward = jnp.zeros((obs_dict["orig_obs"].shape[0],), dtype=jnp.float32)
-        done = state.done
+        # set done to false
+        done = jnp.zeros((obs_dict["orig_obs"].shape[0],), dtype=jnp.bool_)
         return (
             obs_dict,
             critic_obs_dict,
@@ -354,11 +359,12 @@ class MjxDiffEnvWrapper(Wrapper):
         )
         #jax.debug.print("selected reward: {r}", r=reward)
         info = env_state.info
+        #jax.debug.print("Step info={}", info)
         new_state = MjxDiffEnvState(
             env_state=env_state,
             obs=raw_obs,
             critic_obs=raw_critic_obs,
-            done=done,
+            done=done > 0.5,
             info=info,
             diff_time_step=new_diff_time,
             steps_since_reset=new_steps_since_reset,
@@ -435,6 +441,7 @@ class LogWrapper(Wrapper):
         )
         info["timestep"] = state.timestep
         info["returned_episode"] = done
+        ##print episode_return and episone_lengths with jax.debug
         state = LogEnvState(
             env_state=env_state,
             episode_returns=new_episode_return * (1 - done),
@@ -520,7 +527,7 @@ class ClipAction(Wrapper):
     def step(self, key, state, action):
         """TODO: In theory the below line should be the way to do this."""
         # action = jnp.clip(action, self.env.action_space.low, self.env.action_space.high)
-        #action = jnp.clip(action, self.low, self.high)
+        action = jnp.clip(action, self.low, self.high)
         return self.env.step(key, state, action)
     
 class TanhClipAction(Wrapper):

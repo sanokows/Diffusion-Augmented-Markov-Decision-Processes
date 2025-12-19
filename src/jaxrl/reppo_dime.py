@@ -81,6 +81,8 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    action_clip_value: float = 1.0
+    env_action_clip_value: float = 1.0
     eval_interval: int = 10
     num_eval: int = 25
     max_episode_steps: int = 1000
@@ -475,7 +477,7 @@ def make_train_fn(
         reward_scale: Reward scaling
     """
     env = LogWrapper(env, cfg.num_envs)
-    env = ClipAction(env)
+    env = ClipAction(env, low=-cfg.env_action_clip_value, high=cfg.env_action_clip_value)
     # env = VecEnv(env, cfg.num_envs)
     if cfg.normalize_env:
         env = NormalizeVec(env)
@@ -519,7 +521,7 @@ def make_train_fn(
             )
 
             # compute importance weights
-            action = jnp.clip(action, -0.999, 0.999)
+            action = jnp.clip(action, -cfg.action_clip_value, cfg.action_clip_value)
             importance_weight = jnp.zeros((cfg.num_envs,))
 
             # compute next state embedding and value
@@ -709,7 +711,7 @@ def make_train_fn(
                     )
                     # entropy = -log_prob
                     entropy = -pred_run_cost.squeeze()
-                    jax.debug.print("entropy: {e}, pred_sto_cost: {ps}, pred_terminal_cost = {pt}", e=entropy.mean(), ps=pred_sto_cost.mean(), pt=pred_terminal_cost.mean())
+                    #jax.debug.print("entropy: {e}, pred_sto_cost: {ps}, pred_terminal_cost = {pt}", e=entropy.mean(), ps=pred_sto_cost.mean(), pt=pred_terminal_cost.mean())
 
                     # policy KL constraint
                     if cfg.reverse_kl:

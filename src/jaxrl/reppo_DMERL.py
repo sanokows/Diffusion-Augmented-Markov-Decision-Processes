@@ -18,7 +18,6 @@ from omegaconf import DictConfig, OmegaConf
 import wandb
 from src.env_utils.jax_wrappers import (
     BraxGymnaxWrapper,
-    ClipAction,
     TanhClipAction,
     LogWrapper,
     MjxGymnaxWrapper,
@@ -83,6 +82,8 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    action_clip_value: float = 1.0
+    env_action_clip_value: float = 1.0
     eval_interval: int = 10
     num_eval: int = 25
     max_episode_steps: int = 1000
@@ -218,6 +219,7 @@ def make_sde_eval_fn(
         init_key = jax.random.split(init_key, env.num_envs)
         obs, _, env_state = env.reset(init_key, norm_state)
         
+        jax.debug.print("max episode steps for sde evaluation: {}", max_episode_steps)
         key, env_key = jax.random.split(key)
         _, infos = jax.lax.scan(
             f=step_env,
@@ -287,6 +289,7 @@ def make_ode_eval_fn(
         init_key = jax.random.split(init_key, env.num_envs)
         obs, _, env_state = env.reset(init_key, norm_state)
         
+        jax.debug.print("max episode steps for ode evaluation: {}", max_episode_steps)
         key, env_key = jax.random.split(key)
         _, infos = jax.lax.scan(
             f=step_env,
@@ -395,6 +398,7 @@ def make_init(
             ent_start=cfg.ent_start,
             sde_integrator=sde_integrator,
             ode_integrator=ode_integrator,
+            action_clip_value=cfg.action_clip_value,
         )
 
         actor_target_networks = DMERLActor(
@@ -447,6 +451,7 @@ def make_init(
             num_updates = num_iterations * cfg.num_epochs * cfg.num_mini_batches
             lr = optax.linear_schedule(cfg.lr, 0, num_updates)
 
+        print(f"Using learning rate: {lr}")
         if cfg.max_grad_norm is not None:
             actor_optimizer = optax.chain(
                 optax.clip_by_global_norm(cfg.max_grad_norm),
@@ -488,13 +493,15 @@ def make_init(
         obs, critic_obs, env_state = env.reset(key=env_key, params=env_params)
 
         # randomize initial time step to prevent all envs stepping in tandem
+        jax.debug.print("Randomizing initial steps with max {}", cfg.max_episode_steps * cfg.diffusion.diff_steps)
         _env_state = env_state.unwrapped()
+        jax.debug.print("_env_state.info[\"steps\"].shape: {}", _env_state.info["steps"].shape)
         key, randomize_steps_key = jax.random.split(key)
         _env_state.info["steps"] = jax.random.randint(
             randomize_steps_key,
             _env_state.info["steps"].shape,
             0,
-            cfg.max_episode_steps * cfg.diffusion.diff_steps,
+            cfg.max_episode_steps,# * cfg.diffusion.diff_steps,
         ).astype(jnp.float32)
         env_state.set_env_state(_env_state)
 
@@ -533,22 +540,25 @@ def make_train_fn(
     """
     diff_steps = getattr(cfg.diffusion, "diff_steps", None)
     if diff_steps is not None and diff_steps > 0:
-        adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
-        cfg = cfg.replace(gamma=adjusted_gamma)
+        #   adjusted = cfg.vmax * (1.0 / diff_steps)
+        #   cfg = cfg.replace(vmax=adjusted)
 
-        adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
-        cfg = cfg.replace(lmbda=adjusted_lambda)
+        #   adjusted = cfg.vmin * (1.0 / diff_steps)
+        #   cfg = cfg.replace(vmin=adjusted)
 
-        adjusted_total_time_steps = cfg.total_time_steps * diff_steps
-        cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
+    #     adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
+    #     cfg = cfg.replace(gamma=adjusted_gamma)
+
+    #     adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
+    #     cfg = cfg.replace(lmbda=adjusted_lambda)
+
+    #     # adjusted_total_time_steps = cfg.total_time_steps * diff_steps
+    #     # cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
 
         # adjusted_num_steps = cfg.num_steps * diff_steps
         # cfg = cfg.replace(num_steps=adjusted_num_steps)
+        pass
 
-        # adjusted_num_mini_batches = cfg.num_mini_batches * diff_steps
-        # cfg = cfg.replace(num_mini_batches=adjusted_num_mini_batches)
-
-    
 
     env = LogWrapper(env, cfg.num_envs)
     env = TanhClipAction(env)
@@ -557,7 +567,7 @@ def make_train_fn(
         env = DiffNormalizeVec(env)
 
     # eval_fn = make_eval_fn(env, cfg.max_episode_steps, reward_scale=reward_scale)
-    eval_env_steps = cfg.max_episode_steps * cfg.diffusion.diff_steps
+    eval_env_steps = cfg.max_episode_steps #* cfg.diffusion.diff_steps
     sde_eval_fn = make_sde_eval_fn(env, eval_env_steps, reward_scale=reward_scale)
     ode_eval_fn = make_ode_eval_fn(env, eval_env_steps, reward_scale=reward_scale)
     action_size_target = (
@@ -591,6 +601,7 @@ def make_train_fn(
 
             # get policy action
             action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(obs, act_key) 
+            action = jax.lax.stop_gradient(action) ### stop grad because it is then used in next_obs
             
             next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
                 step_key, env_state, action
@@ -598,19 +609,22 @@ def make_train_fn(
             importance_weight = jnp.zeros((cfg.num_envs,))
 
             # compute next state embedding and value
-            next_action, next_gen_log_prob, next_dest_log_prob = actor_model.vmap_sample_next_step(next_obs, act_key)
-            next_action = jax.lax.stop_gradient(next_action) ### TODO ask if stop grad is necessary?
+            key, next_act_key = jax.random.split(key)
+            next_action, next_gen_log_prob, next_dest_log_prob = actor_model.vmap_sample_next_step(next_obs, next_act_key)
+            next_action = jax.lax.stop_gradient(next_action) 
             # compute next state embedding and value
             next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
             log_ratio = next_gen_log_prob - next_dest_log_prob
             log_ratio = jax.lax.stop_gradient(log_ratio)
             ### print with jax debug the reward and the log ratio
 
-            #jax.debug.print("reward: {r}, log_ratio: {lr}", r=reward, lr=log_ratio.mean())
             soft_reward = (
                 reward
                 - cfg.gamma * log_ratio.squeeze() * actor_model.temperature()
             )
+            # print truncated, done and obs
+            # jax.debug.print("truncated: {t}, done: {d}", t=next_env_state.truncated, d=done)
+            # jax.debug.print("obs: {o}", o=obs)
             transition = Transition(
                 obs=obs,
                 critic_obs=critic_obs,
@@ -632,6 +646,7 @@ def make_train_fn(
                 next_critic_obs,
             ), transition
 
+        jax.debug.print("Collecting rollout of {} steps", cfg.num_steps)
         rollout_state, transitions = maybe_lax_scan(
             f=step_env,
             init=(
@@ -756,7 +771,7 @@ def make_train_fn(
 
                     ## print the critic loss
                    # jax.debug.print("critic_loss: {cl}, aux_rew_loss: {arl}", cl=critic_loss, arl=aux_rew_loss.mean())
-
+                    #jax.debug.print("minibatch.reward: {cl}, mean: {mean}, scaled_mean: {scaled_mean}",  cl=minibatch.reward.shape, mean=minibatch.reward.mean(), scaled_mean = minibatch.reward.mean()*cfg.diffusion.diff_steps)
                     return loss, dict(
                         value_loss=critic_loss,
                         critic_update_loss=critic_update_loss,
@@ -764,7 +779,7 @@ def make_train_fn(
                         aux_loss=aux_loss,
                         rew_aux_loss= aux_rew_loss,
                         q=value.mean(),
-                        reward_mean=minibatch.reward.mean()*cfg.diffusion.diff_steps,
+                        reward_mean=minibatch.reward.mean(),
                         target_values=target_values.mean(),
                         critic_pnorm=critic_pnorm,
                     )
@@ -805,7 +820,7 @@ def make_train_fn(
                         kl_log_ratios = jax.vmap(compute_kl_single)(keys)  # (kl_action_rep, batch_size, 1)
                         kl_log_ratios = kl_log_ratios.mean(axis=0)  # Average over samples => (batch_size, 1)
 
-                        kl = cfg.diffusion.diff_steps*kl_log_ratios.mean(-1)
+                        kl = cfg.diffusion.diff_steps*kl_log_ratios.sum(-1)
                     else:
                         keys = jax.random.split(key, cfg.kl_action_rep)
                         def compute_kl_single(k):
@@ -814,10 +829,13 @@ def make_train_fn(
                         kl_log_ratios = jax.vmap(compute_kl_single)(keys)  # (kl_action_rep, batch_size, 1)
                         kl_log_ratios = kl_log_ratios.mean(axis=0)  # Average over samples => (batch_size, 1)
 
-                        kl = cfg.diffusion.diff_steps*kl_log_ratios.mean(-1)
+                        kl = cfg.diffusion.diff_steps*kl_log_ratios.sum(-1)
 
                     lagrangian = actor_model.lagrangian()
 
+                    # print log prob ratio and kl shape
+                    #jax.debug.print("log_prob_ratio: {lpr}, kl: {k}", lpr=log_prob_ratio.shape, k=kl.shape)
+                    #jax.debug.print("log_prob_ratio: {lpr}, kl: {k}", lpr=log_prob_ratio, k=kl)
                     if cfg.actor_kl_clip_mode == "full":
                         actor_loss = (
                             log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
@@ -879,7 +897,7 @@ def make_train_fn(
                         temp=actor_model.temperature(),
                         abs_batch_action=jnp.abs(minibatch.action).mean(),
                         abs_pred_action=jnp.abs(pred_action).mean(),
-                        reward_mean=minibatch.reward.mean(),
+                        reward_mean=minibatch.reward.mean()*cfg.diffusion.diff_steps,
                         kl=kl.mean(),
                         lagrangian=lagrangian,
                         lagrangian_loss=lagrangian_loss,
@@ -932,6 +950,8 @@ def make_train_fn(
                 indices,
             )
 
+            #jax.debug.print("Learning step {step}", step=train_state.iteration)
+            jax.debug.print("n_minibatch {n}, mini_batch_size {size}", n=cfg.num_mini_batches, size=mini_batch_size)
             # Run model update for each mini-batch
             train_state, metrics = maybe_lax_scan(
                 minibatch_update,
@@ -1044,6 +1064,10 @@ def make_train_fn(
             jax.random.split(init_key, num_seeds)
         )
         keys = jax.random.split(key, num_iterations)
+
+        jax.debug.print("Starting training for {n} iterations", n=num_iterations)
+        jax.debug.print("num_train_steps {n}", n=num_train_steps)
+
         state, metrics = maybe_lax_scan(
             f=loop_body,
             init=train_state,
@@ -1175,7 +1199,8 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             asymmetric_observation=cfg.env.get("asymmetric_observation", False),
         )
         diff_cfg = cfg.hyperparameters.diffusion
-        env = MjxDiffEnvWrapper(env, num_diff_steps = diff_cfg.diff_steps, diffusion_config=diff_cfg)
+        env_action_clip_value = cfg.hyperparameters.env_action_clip_value
+        env = MjxDiffEnvWrapper(env, num_diff_steps = diff_cfg.diff_steps, diffusion_config=diff_cfg, low= -env_action_clip_value, high=env_action_clip_value)
     else:
         raise ValueError(f"Unknown environment type: {cfg.env.type}")
 

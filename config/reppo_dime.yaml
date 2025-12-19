@@ -17,7 +17,8 @@ hyperparameters:
   anneal_lr: false
   max_grad_norm: 0.5
   polyak: 1.0 # maybe ablate ?
-
+  env_action_clip_value: 0.999
+  action_clip_value: 0.999
   # problem discount settings (need tuning)
   gamma: 0.99
   lmbda: 0.95

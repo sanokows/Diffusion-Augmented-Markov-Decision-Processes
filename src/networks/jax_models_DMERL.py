@@ -369,12 +369,16 @@ class CriticNetwork(nnx.Module):
         encoder_layers: int = 1,
         head_layers: int = 1,
         pred_layers: int = 1,
+        num_time_hid: int = 32,
+        num_time_out: int = 16,
         use_skip=False,
         *,
         rngs: nnx.Rngs,
     ):
+        self.num_time_hid = num_time_hid
+        self.num_time_out = num_time_out
         self.feature_module = FCNN(
-            in_features=obs_dim + action_dim,
+            in_features=obs_dim + action_dim + self.num_time_out,
             out_features=hidden_dim,
             hidden_dim=hidden_dim,
             hidden_activation=nnx.swish,
@@ -416,23 +420,59 @@ class CriticNetwork(nnx.Module):
             rngs=rngs,
         )
 
-    def features(self, obs: jax.Array, action: jax.Array):
-        state = jnp.concatenate([obs, action], axis=-1)
+        self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
+        # Store timestep_coeff as a Variable (non-trainable parameter)
+        self.timestep_coeff = nnx.Variable(
+            jnp.linspace(start=0.1, stop=100, num=self.num_time_hid)[None]
+        )
+
+        # Time encoder network
+        self.time_coder_state = nnx.Sequential(
+            nnx.Linear(self.num_time_hid * 2, self.num_time_hid, rngs=rngs),
+            nnx.gelu,
+            nnx.Linear(self.num_time_hid, self.num_time_out, rngs=rngs),
+        )
+
+    def from_dict_to_observation(self, obs_dict):
+        orig_obs = obs_dict["orig_obs"]
+        normed_prev_actions = obs_dict["normed_actions"]
+        time = obs_dict["diff_time_step"]
+        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        return obs, time
+
+    def get_fourier_features(self, timesteps):
+        sin_embed_cond = jnp.sin(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        cos_embed_cond = jnp.cos(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
+
+    def features(self, obs: jax.Array, action: jax.Array, time: jax.Array):
+        time_emb = self.get_fourier_features(time)
+        if len(action.shape) == 1:
+            time_emb = time_emb[0]
+        t_net = self.time_coder_state(time_emb)
+        state = jnp.concatenate([obs, action, t_net], axis=-1)
         return self.feature_module(state)
 
     def critic_head(self, features: jax.Array) -> jax.Array:
         return self.critic_module(features)
 
-    def critic(self, obs: jax.Array, action: jax.Array) -> jax.Array:
-        features = self.features(obs, action)
+    def critic(self, obs_dict: jax.Array, action: jax.Array) -> jax.Array:
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, action, time)
         return self.critic_head(features)
 
-    def critic_cat(self, obs: jax.Array, action: jax.Array) -> jax.Array:
-        features = self.features(obs, action)
+    def critic_cat(self, obs_dict: jax.Array, action: jax.Array) -> jax.Array:
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, action, time)
         return self.critic_head(features)
 
-    def forward(self, obs, action):
-        features = self.features(obs, action)
+    def forward(self, obs_dict, action):
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, action, time)
         value = self.critic_head(features)
         pred = self.pred_module(features)
         pred_rew = pred[..., :1]
@@ -582,7 +622,7 @@ class CategoricalCriticNetwork(nnx.Module):
 
     def forward(self, obs_dict, action):
         obs, time = self.from_dict_to_observation(obs_dict)
-        action = jnp.tanh(action) # tanh is pulled  into observation
+        #action = jnp.tanh(action) # tanh is pulled  into observation
 
         features = self.features(obs, action, time)
         value_cat = jax.nn.softmax(self.critic_head(features), axis=-1)
@@ -800,7 +840,9 @@ class DMERLActor(nnx.Module):
         logratio: callable,
         kl_start: float = 0.1,
         ent_start: float = 0.1,
+        action_clip_value: float = 1.0,
     ):
+        self.action_clip_value = action_clip_value
         self.action_dim = action_dim
         self.observation_dim = observation_dim
         self.diffusion_model = diffusion_model
@@ -837,7 +879,12 @@ class DMERLActor(nnx.Module):
         # print diff step, step gen log prob shape and distrax.Tanh().forward_log_det_jacobian(x_new).shape in ajx debug
         #jax.debug.print("diff step: {d}, step: {s}, gen_log_prob shape: {g}, log_det_jacobian shape: {l}", d=self.diff_steps-1, s=step, g=gen_log_prob.shape, l=distrax.Tanh().forward_log_det_jacobian(x_new).shape)
         #jax.debug.print("diff step: {d}, step: {s}, scaling: {scaling}", d=self.diff_steps-1, s=step, scaling = distrax.Tanh().forward_log_det_jacobian(x_new).sum())
-        gen_log_prob_new = jnp.where(self.diff_steps - 1 == step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+        is_last_step = self.diff_steps - 1 == step
+        gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+        # Clip logits so tanh(action) always respects action_clip_value on the final step.
+        clip_limit = jnp.arctanh(jnp.asarray(self.action_clip_value, dtype=x_new.dtype))
+        clipped_x_new = jnp.clip(x_new, -clip_limit, clip_limit)
+        out_dict["x_new"] = jnp.where(is_last_step, clipped_x_new, x_new)
         out_dict["gen_log_prob"] = gen_log_prob_new
 
         return out_dict, key
@@ -1031,7 +1078,7 @@ class DMERLActor(nnx.Module):
         p_log_probs = out_dict["p_log_prob"]
         q_log_probs = out_dict["q_log_prob"]
         log_ratios = p_log_probs - q_log_probs
-        return log_ratios
+        return log_ratios[..., None]
     
     def rkl_div_one_step(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
         """
@@ -1054,7 +1101,7 @@ class DMERLActor(nnx.Module):
         p_log_probs = out_dict["p_log_prob"]
         q_log_probs = out_dict["q_log_prob"]
         log_ratios = p_log_probs - q_log_probs
-        return log_ratios
+        return log_ratios[..., None]
 
     def kl_div(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, n_samples: int, stop_grad: bool = False) -> jax.Array:
         """

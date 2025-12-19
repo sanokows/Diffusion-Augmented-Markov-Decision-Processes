@@ -1,7 +1,7 @@
 defaults:
   - env: mjx_dmc
   - platform: torch
-  - experiment_overrides: default
+  - experiment_overrides: dmerl_default
   - _self_
 
 hyperparameters:
@@ -13,19 +13,21 @@ hyperparameters:
   num_eval: 20
 
   # optimization settings (seem very stable)
-  lr: 5e-5
+  lr: 1e-4
   anneal_lr: false
   max_grad_norm: 0.5
   polyak: 1.0 # maybe ablate ?
+  env_action_clip_value: 0.999
+  action_clip_value: 1.0
 
   # problem discount settings (need tuning)
   gamma: 0.99
-  lmbda: 0.90
+  lmbda: 0.95
   lmbda_min: 0.50 # irrelevant if no exploration noise is added
 
   # batch settings (need tuning for MJX humanoid)
   num_steps: 128
-  num_mini_batches: 128
+  num_mini_batches: 512
   num_envs: 1024
   num_epochs: 4
   use_lax_scan: true
@@ -60,10 +62,10 @@ hyperparameters:
   kl_start: 0.01
   kl_bound: 0.1 # switched to tighter bounds for MJX
   reduce_kl: true
-  reverse_kl: true # previous default "false"
+  reverse_kl: false # previous default "false"
   kl_action_rep: 4
   update_kl_lagrangian: true
-  actor_kl_clip_mode: "full" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
+  actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
   ## entropy settings
   ent_start: 0.01
   ent_target_mult: 4.

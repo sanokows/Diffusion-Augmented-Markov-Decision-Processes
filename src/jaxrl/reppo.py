@@ -76,6 +76,8 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    action_clip_value: float = 1.0
+    env_action_clip_value: float = 1.0
     eval_interval: int = 10
     num_eval: int = 25
     max_episode_steps: int = 1000
@@ -322,7 +324,7 @@ def make_train_fn(
     reward_scale: float = 1.0,
 ):
     env = LogWrapper(env, cfg.num_envs)
-    env = ClipAction(env)
+    env = ClipAction(env, low=-cfg.env_action_clip_value, high=cfg.env_action_clip_value)
     # env = VecEnv(env, cfg.num_envs)
     if cfg.normalize_env:
         env = NormalizeVec(env)
@@ -365,7 +367,7 @@ def make_train_fn(
             )
 
             # compute importance weights
-            action = jnp.clip(action, -0.999, 0.999)
+            action = jnp.clip(action, -cfg.action_clip_value, cfg.action_clip_value)
             raw_importance_weight = jnp.nan_to_num(
                 og_pi.log_prob(action).sum(-1) - pi.log_prob(action).sum(-1),
                 nan=jnp.log(cfg.lmbda_min),
@@ -560,7 +562,7 @@ def make_train_fn(
                         pi_action, pi_act_log_prob = pi.sample_and_log_prob(
                             sample_shape=(16,), seed=key
                         )
-                        pi_action = jnp.clip(pi_action, -1 + 1e-4, 1 - 1e-4)
+                        pi_action = jnp.clip(pi_action, -cfg.action_clip_value, cfg.action_clip_value)
 
                         old_pi = actor_target_model.actor(minibatch.obs)
 
@@ -571,7 +573,7 @@ def make_train_fn(
                         old_pi_action, old_pi_act_log_prob = actor_target_model.actor(
                             minibatch.obs
                         ).sample_and_log_prob(sample_shape=(16,), seed=key)
-                        old_pi_action = jnp.clip(old_pi_action, -1 + 1e-4, 1 - 1e-4)
+                        old_pi_action = jnp.clip(old_pi_action, -cfg.action_clip_value, cfg.action_clip_value)
 
                         old_pi_act_log_prob = old_pi_act_log_prob.sum(-1).mean(0)
                         pi_act_log_prob = pi.log_prob(old_pi_action).sum(-1).mean(0)
