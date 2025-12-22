@@ -134,10 +134,13 @@ def actor_loss_fn(params, updated_state, step_key, minibatch, target_vals, actio
 
         target_entropy = action_size_target + entropy
         target_entropy_loss = (
-            actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
+             actor_model.temperature()
+            * jax.lax.stop_gradient(target_entropy)
         ).mean()
-        lagrangian_loss = -lagrangian * jax.lax.stop_gradient(kl - cfg.kl_bound)
-        lagrangian_loss = lagrangian_loss.mean()
+        lagrangian_loss = (
+            -lagrangian
+            * jax.lax.stop_gradient(kl - cfg.kl_bound)
+        ).mean()
         loss = jnp.mean(actor_loss_val)
         if cfg.update_entropy_lagrangian:
             loss += target_entropy_loss
@@ -154,6 +157,7 @@ def actor_loss_fn(params, updated_state, step_key, minibatch, target_vals, actio
             abs_batch_action=jnp.abs(minibatch.action).mean(),
             abs_pred_action=jnp.abs(pred_action).mean(),
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
+            energy_mean = -minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
             kl=kl.mean(),
             lagrangian=lagrangian,
             lagrangian_loss=lagrangian_loss,

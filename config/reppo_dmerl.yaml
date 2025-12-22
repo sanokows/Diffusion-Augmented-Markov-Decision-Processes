@@ -14,6 +14,10 @@ hyperparameters:
 
   # optimization settings (seem very stable)
   lr: 1e-4
+  lr_decay_factor: 0.1
+  weight_decay: 0.0
+  temperature_lr: 1e-5
+  lagrangian_lr: 1e-5
   anneal_lr: false
   max_grad_norm: 0.5
   polyak: 1.0 # maybe ablate ?
@@ -27,7 +31,7 @@ hyperparameters:
 
   # batch settings (need tuning for MJX humanoid)
   num_steps: 128
-  num_mini_batches: 512
+  num_mini_batches: 256
   num_envs: 1024
   num_epochs: 4
   use_lax_scan: true
@@ -70,6 +74,9 @@ hyperparameters:
   ent_start: 0.01
   ent_target_mult: 4.
   update_entropy_lagrangian: true
+  # scale the effective learning rates for temperature and KL lagrangian updates
+  temperature_lr_mult: 1.0
+  lagrangian_lr_mult: 1.0
   ## auxiliary loss settings
   aux_loss_mult: 0.0
 

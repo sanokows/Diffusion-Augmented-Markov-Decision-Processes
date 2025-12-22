@@ -1,6 +1,11 @@
-hyperparameters:
-  lr: 3e-5
-  hl_gauss: false
-  reverse_kl: true # previous default "false"
-  actor_kl_clip_mode: "full" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
+hyperparameters: 
+  weight_decay: 0.000001
+  anneal_lr: true
+  lr_decay_factor: 0.1
+  #lr: 3e-5
+  #hl_gauss: true
+  #reverse_kl: false # previous default "false"
+  #actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
+  #ent_target_mult: 4
+  #num_bins: 302
   ## entropy settings

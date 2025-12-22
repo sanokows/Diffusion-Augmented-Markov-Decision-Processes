@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 import typing
 from functools import partial
@@ -6,11 +7,15 @@ from typing import Any, Callable
 
 import hydra
 import jax
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import optuna
 from flax import nnx, struct
 from flax.struct import PyTreeNode
+from flax.traverse_util import flatten_dict, unflatten_dict
 from gymnax.environments.environment import Environment, EnvParams, EnvState
 from jax import numpy as jnp
 from jax.random import PRNGKey
@@ -70,6 +75,7 @@ class Transition(struct.PyTreeNode):
 
 class ReppoConfig(struct.PyTreeNode):
     lr: float
+    lr_decay_factor: float
     gamma: float
     total_time_steps: int
     num_steps: int
@@ -88,6 +94,11 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    weight_decay: float = 0.0
+    temperature_lr: float | None = None
+    lagrangian_lr: float | None = None
+    temperature_lr_mult: float = 1.0
+    lagrangian_lr_mult: float = 1.0
     action_clip_value: float = 1.0
     env_action_clip_value: float = 1.0
     eval_interval: int = 10
@@ -145,15 +156,19 @@ class ReppoDMERLTrainer:
         num_seeds: int = 1,
         reward_scale: float = 1.0,
     ) -> None:
+        # print vmin and vmax
+        print(f"Initial vmin: {cfg.vmin}, vmax: {cfg.vmax}")
+        #raise NotImplementedError("DMERL reward scaling not implemented.")
         diff_steps = getattr(cfg.diffusion, "diff_steps", None)
         if diff_steps is not None and diff_steps > 0:
-            # rmax = cfg.vmax/10
-            # adjusted = 0.1*rmax*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
-            # cfg = cfg.replace(vmax=adjusted)
+            # rmax = 15#cfg.vmax/2
+            # #adjusted = 0.1*rmax*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
+            # cfg = cfg.replace(vmax=rmax)
 
-            # rmin = cfg.vmin/10
-            # adjusted = 0.1*rmin*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
-            # cfg = cfg.replace(vmin=adjusted)
+            # rmin = -200. #cfg.vmax/2
+            # #adjusted = 0.1*rmin*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
+            # cfg = cfg.replace(vmin=rmin)
+            # print(f"overwrite vmin: {cfg.vmin}, vmax: {cfg.vmax}")
 
 
             adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
@@ -162,9 +177,20 @@ class ReppoDMERLTrainer:
             adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
             cfg = cfg.replace(lmbda=adjusted_lambda)
 
+            temp_lr_multi = cfg.temperature_lr_mult
+            lagrangian_lr_mult = cfg.lagrangian_lr_mult
+            if cfg.temperature_lr is None:
+                temp_lr_multi = temp_lr_multi
+            if cfg.lagrangian_lr is None:
+                lagrangian_lr_mult = lagrangian_lr_mult
+            cfg = cfg.replace(
+                temperature_lr_mult=temp_lr_multi,
+                lagrangian_lr_mult=lagrangian_lr_mult,
+            )
 
-            adjusted_total_time_steps = cfg.total_time_steps * diff_steps
-            cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
+
+            # adjusted_total_time_steps = cfg.total_time_steps * diff_steps
+            # cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
 
             pass
         self.cfg = cfg
@@ -176,7 +202,7 @@ class ReppoDMERLTrainer:
         self.eval_env = copy.deepcopy(self.env)
         self.eval_env_steps = cfg.max_episode_steps*self.cfg.diffusion.diff_steps
         self.num_collection_steps = cfg.num_steps * self.cfg.diffusion.diff_steps
-        self.num_minibatches = cfg.num_mini_batches*self.cfg.diffusion.diff_steps//2
+        self.num_minibatches = cfg.num_mini_batches*self.cfg.diffusion.diff_steps
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
@@ -435,29 +461,72 @@ class ReppoDMERLTrainer:
             else:
                 num_iterations = cfg.total_time_steps // cfg.num_steps // cfg.num_envs
                 num_updates = num_iterations * cfg.num_epochs * self.num_minibatches
-                lr = optax.linear_schedule(cfg.lr, 0, num_updates)
+                min_lr = cfg.lr * cfg.lr_decay_factor
+                lr = optax.linear_schedule(cfg.lr, min_lr, num_updates)
 
+            def _scale_lr(lr_val, mult: float):
+                if callable(lr_val):
+                    return lambda step: lr_val(step) * mult
+                return lr_val * mult
+
+            def _adam_with_decay(lr_val, weight_decay: float = 0.):
+                tx = optax.adam(lr_val)
+                if cfg.weight_decay and cfg.weight_decay > 0.0:
+                    tx = optax.chain(optax.add_decayed_weights(weight_decay), tx)
+                return tx
+
+            critic_optimizer = _adam_with_decay(lr, weight_decay=cfg.weight_decay)
+            if cfg.max_grad_norm is not None:
+                critic_optimizer = optax.chain(
+                    optax.clip_by_global_norm(cfg.max_grad_norm), critic_optimizer
+                )
+
+            def _resolve_special_lr(direct_lr, mult: float):
+                if direct_lr is not None:
+                    return direct_lr
+                return _scale_lr(lr, mult)
+
+            def _label_actor_params(params):
+                flat = flatten_dict(params)  # tuple keys to avoid char-splitting
+                labels = {}
+                for k in flat.keys():
+                    leaf_name = k[-1]
+                    if "log_temperature" in leaf_name:
+                        labels[k] = "temperature"
+                    elif "lagrangian" in leaf_name:
+                        labels[k] = "lagrangian"
+                    else:
+                        labels[k] = "default"
+                return unflatten_dict(labels)
+
+            actor_param_tree = nnx.to_pure_dict(nnx.state(actor_networks))
+            actor_labels = _label_actor_params(actor_param_tree)
+            temperature_lr = _resolve_special_lr(
+                cfg.temperature_lr, cfg.temperature_lr_mult
+            )
+            lagrangian_lr = _resolve_special_lr(
+                cfg.lagrangian_lr, cfg.lagrangian_lr_mult
+            )
+
+            actor_tx_cfg = {
+                "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
+                "temperature": _adam_with_decay(temperature_lr, weight_decay=0.0),
+                "lagrangian": _adam_with_decay(lagrangian_lr, weight_decay=0.0),
+            }
+            actor_optimizer = optax.multi_transform(actor_tx_cfg, actor_labels)
             if cfg.max_grad_norm is not None:
                 actor_optimizer = optax.chain(
-                    optax.clip_by_global_norm(cfg.max_grad_norm),
-                    optax.adam(lr),
+                    optax.clip_by_global_norm(cfg.max_grad_norm), actor_optimizer
                 )
-                critic_optimizer = optax.chain(
-                    optax.clip_by_global_norm(cfg.max_grad_norm),
-                    optax.adam(lr),
-                )
-            else:
-                actor_optimizer = optax.adam(lr)
-                critic_optimizer = optax.adam(lr)
 
             actor_trainstate = nnx.TrainState.create(
                 graphdef=nnx.graphdef(actor_networks),
-                params=nnx.state(actor_networks),
+                params=actor_param_tree,
                 tx=actor_optimizer,
             )
             actor_target_trainstate = nnx.TrainState.create(
                 graphdef=nnx.graphdef(actor_target_networks),
-                params=nnx.state(actor_target_networks),
+                params=nnx.to_pure_dict(nnx.state(actor_target_networks)),
                 tx=optax.set_to_zero(),
             )
             critic_trainstate = nnx.TrainState.create(
@@ -544,7 +613,7 @@ class ReppoDMERLTrainer:
             last_env_state=last_env_state,
             last_obs=last_obs,
             last_critic_obs=last_critic_obs,
-            time_steps=train_state.time_steps + self.num_collection_steps * cfg.num_envs,
+            time_steps=train_state.time_steps + self.num_collection_steps * cfg.num_envs//self.cfg.diffusion.diff_steps,
         )
         return transitions, train_state
 
@@ -620,6 +689,21 @@ class ReppoDMERLTrainer:
             batch,
             reverse=True,
         )
+        # print min max and mean values of target_values for debugging
+        jax.debug.print("target_values stats - min: {min}, max: {max}, mean: {mean}",
+                        min=jnp.min(target_values),
+                        max=jnp.max(target_values),
+                        mean=jnp.mean(target_values))
+
+        target_vals_flat = target_values.reshape(-1)
+        target_val_mean = jnp.mean(target_vals_flat)
+        target_val_min = jnp.min(target_vals_flat)
+        target_val_max = jnp.max(target_vals_flat)
+        target_val_hist_counts, target_val_hist_edges = jnp.histogram(
+            target_vals_flat,
+            bins=cfg.num_bins,
+            range=(cfg.vmin, cfg.vmax),
+        )
         # Flatten rollout data to (num_steps * num_envs, ...) for easier indexing.
         data = (batch, target_values)
         data = jax.tree.map(
@@ -650,6 +734,11 @@ class ReppoDMERLTrainer:
             xs=jax.random.split(train_key, cfg.num_epochs)
         )
         update_metrics = jax.tree.map(lambda x: x[-1], update_metrics)
+        update_metrics["target_value_hist_counts"] = target_val_hist_counts
+        update_metrics["target_value_hist_edges"] = target_val_hist_edges
+        update_metrics["target_value_mean"] = target_val_mean
+        update_metrics["target_value_min"] = target_val_min
+        update_metrics["target_value_max"] = target_val_max
         return train_state, update_metrics
 
     def _run_epoch_update(
@@ -877,7 +966,8 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 1, num_iterations * lr_cfg.num_epochs * lr_cfg.num_mini_batches
             )
             progress = min(actor_step / num_updates, 1.0)
-            current_lr = float((1.0 - progress) * lr_cfg.lr)
+            min_lr = lr_cfg.lr * lr_cfg.lr_decay_factor
+            current_lr = float((1.0 - progress) * lr_cfg.lr + progress * min_lr)
         else:
             current_lr = float(lr_cfg.lr)
 
@@ -894,16 +984,41 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         log_msg += f" sps={sps:.2f}"
         logging.info(log_msg)
 
+        train_metrics = utils.filter_prefix("train", metrics)
+        target_hist_counts = train_metrics.pop("train/target_value_hist_counts", None)
+        target_hist_edges = train_metrics.pop("train/target_value_hist_edges", None)
+
         log_data = {
             "eval/episode_return": episode_return,
             "eval/episode_length": eval_length,
             "train/lr": current_lr,
             "sps": sps,
-            **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
+            **jax.tree.map(jnp.mean, train_metrics),
         }
         for key_name, value in metrics.items():
             if key_name.startswith("eval/"):
                 log_data[key_name] = value.mean() if hasattr(value, "mean") else value
+        if target_hist_counts is not None and target_hist_edges is not None:
+            counts = np.asarray(target_hist_counts)
+            edges = np.asarray(target_hist_edges)
+            if counts.ndim > 1:
+                counts = counts.sum(axis=0)
+            if edges.ndim > 1:
+                edges = edges[0]
+            fig, ax = plt.subplots()
+            ax.bar(
+                edges[:-1],
+                counts,
+                width=np.diff(edges),
+                align="edge",
+                edgecolor="black",
+            )
+            ax.set_title("Target Value Histogram")
+            ax.set_xlabel("Target value")
+            ax.set_ylabel("Count")
+            log_data["train/target_value_histogram"] = wandb.Image(fig)
+            
+            plt.close(fig)
         wandb.log(log_data, step=state.time_steps[0])
 
     if cfg.env.type == "brax":

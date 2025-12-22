@@ -9,6 +9,7 @@ import sys
 import jax
 import jax.numpy as jnp
 import numpy as np
+import mujoco
 from ml_collections import ConfigDict
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -38,6 +39,23 @@ def create_diffusion_config(diff_steps: int) -> ConfigDict:
     cfg.diff_steps = diff_steps
     cfg.init_std = 3.0
     return cfg
+
+
+def _unwrap_to_mjx_state(state_like):
+    """Peels nested wrapper states until reaching mjx_env.State with .data."""
+    current = state_like
+    while hasattr(current, "env_state"):
+        current = current.env_state
+    return current
+
+
+def get_torso_com(state_like, torso_id: int):
+    """Returns torso COM (world frame) for the first env in a possibly batched state."""
+    base_state = _unwrap_to_mjx_state(state_like)
+    com = base_state.data.subtree_com
+    if com.ndim == 3:  # batched
+        com = com[0]
+    return com[torso_id]
 
 
 def main() -> None:
@@ -72,6 +90,7 @@ def main() -> None:
     args = parser.parse_args()
 
     base_env = MjxGymnaxWrapper(args.env_name, episode_length=args.episode_length)
+    torso_id = mujoco.mj_name2id(base_env.env.mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso")
     total_steps = args.total_steps
     if args.use_diff_wrapper:
         diff_cfg = create_diffusion_config(args.diff_steps)
@@ -107,21 +126,22 @@ def main() -> None:
             key, prev_state = carry
             key, action_key, env_key = jax.random.split(key, 3)
             action = jax.random.uniform(
-                action_key, action_shape_in, minval=-1.0, maxval=1.0
+                action_key, action_shape_in, minval=-0.0, maxval=1.0
             )
-            action = jnp.zeros_like(action)  # use zero actions for debugging
+            #action = jnp.zeros_like(action)  # use zero actions for debugging
             env_subkeys = jax.random.split(env_key, num_envs)
             obs_dict, critic_obs_dict, next_state, reward, done, info = env.step(env_subkeys, prev_state, action)
 
             done_flag = jnp.reshape(done, (-1,))[0]
             # print the reward and obs dict
-            jax.debug.print("Step {} truncated={}", step_idx, state.truncated)
-            #jax.debug.print("Step {} state done={}", step_idx, state.done)
-            jax.debug.print("Step {} reward={}", step_idx, reward)
-            jax.debug.print("Step {} action={}", step_idx, action) 
-            jax.debug.print("scan step {} done={}", step_idx, done_flag)
-            jax.debug.print("Step {} next_obs={}", step_idx, obs_dict) 
-            jax.debug.print("Step {} info={}", step_idx, info) 
+            # jax.debug.print("Step {} truncated={}", step_idx, state.truncated)
+            # #jax.debug.print("Step {} state done={}", step_idx, state.done)
+            # jax.debug.print("Step {} reward={}", step_idx, reward)
+            # jax.debug.print("Step {} action={}", step_idx, action) 
+            # jax.debug.print("scan step {} done={}", step_idx, done_flag)
+            # jax.debug.print("Step {} next_obs={}", step_idx, obs_dict) 
+            # jax.debug.print("Step {} info={}", step_idx, info) 
+            jax.debug.print("Step {} torso COM={}", step_idx, get_torso_com(prev_state, torso_id))
  
             return (key, next_state), None
 

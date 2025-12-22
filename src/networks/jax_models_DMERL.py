@@ -588,8 +588,12 @@ class CategoricalCriticNetwork(nnx.Module):
         )
         return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
 
+    def compute_action_embedding(self, action: jax.Array) -> jax.Array:
+        tanh_action = action#jnp.tanh(action)
+        return self.action_embedding(tanh_action)
+
     def features(self, obs: jax.Array, action: jax.Array, time: jax.Array):
-        action_embedding = self.action_embedding(action)
+        action_embedding = self.compute_action_embedding(action)
         time_emb = self.get_fourier_features(time)
         if len(action.shape) == 1:
             time_emb = time_emb[0]
@@ -882,9 +886,10 @@ class DMERLActor(nnx.Module):
         is_last_step = self.diff_steps - 1 == step
         gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
         # Clip logits so tanh(action) always respects action_clip_value on the final step.
-        clip_limit = jnp.arctanh(jnp.asarray(self.action_clip_value, dtype=x_new.dtype))
-        clipped_x_new = jnp.clip(x_new, -clip_limit, clip_limit)
-        out_dict["x_new"] = jnp.where(is_last_step, clipped_x_new, x_new)
+        # clip_limit = jnp.arctanh(jnp.asarray(self.action_clip_value, dtype=x_new.dtype))
+        # clipped_x_new = jnp.clip(x_new, -clip_limit, clip_limit)
+        # out_dict["x_new"] = jnp.where(is_last_step, clipped_x_new, x_new)
+        out_dict["x_new"] = x_new
         out_dict["gen_log_prob"] = gen_log_prob_new
 
         return out_dict, key
@@ -910,6 +915,7 @@ class DMERLActor(nnx.Module):
         key, key_gen = jax.random.split(key_gen)
 
         log_ratio = jnp.zeros((init_x.shape[0],), dtype=jnp.float32)
+        raise ValueError("update reading of dict") 
         obs_dict["normed_actions"] = init_x
         obs_dict["orig_actions"] = init_x
         obs_dict["diff_time_step"] = jnp.zeros((init_x.shape[0],1), dtype=jnp.int32)
@@ -945,6 +951,7 @@ class DMERLActor(nnx.Module):
         obs_dict["normed_actions"] = init_x
         obs_dict["orig_actions"] = init_x
         obs_dict["diff_time_step"] = jnp.zeros((init_x.shape[0],1), dtype=jnp.int32)
+        raise ValueError("update reading of dict") 
         # --- Hard-coded to self.sde_integrator ---
         integrate = self.sde_integrator(obs_dict    , self.diffusion_model, stop_grad, ode, ode_coef)
         

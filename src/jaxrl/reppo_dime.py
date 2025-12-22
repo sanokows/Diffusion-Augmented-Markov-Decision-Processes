@@ -615,6 +615,12 @@ def make_train_fn(
             reverse=True,
         )
         # Reshape data to (num_steps * num_envs, ...)
+        # print min max and mean values of target_values for debugging
+        jax.debug.print("target_values stats - min: {min}, max: {max}, mean: {mean}",
+                        min=jnp.min(target_values),
+                        max=jnp.max(target_values),
+                        mean=jnp.mean(target_values))
+        
         data = (batch, target_values)
         data = jax.tree.map(
             lambda x: x.reshape((cfg.num_steps * cfg.num_envs, *x.shape[2:])), data
