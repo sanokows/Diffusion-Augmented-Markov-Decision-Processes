@@ -658,8 +658,12 @@ class NormalizeVec(Wrapper):
 class DiffNormalizeVecObsEnvState:
     mean: jnp.ndarray
     var: jnp.ndarray
+    action_mean: jnp.ndarray
+    action_var: jnp.ndarray
     critic_mean: jnp.ndarray
     critic_var: jnp.ndarray
+    critic_action_mean: jnp.ndarray
+    critic_action_var: jnp.ndarray
     count: float
     env_state: environment.EnvState
     truncated: float
@@ -694,44 +698,83 @@ class DiffNormalizeVec(Wrapper):
 
         return new_mean, new_var
 
-    def _replace_orig_obs(self, obs_dict, new_obs):
+    def _normalize_obs_dict(
+        self,
+        obs_dict,
+        obs_mean,
+        obs_var,
+        action_mean,
+        action_var,
+    ):
         updated = dict(obs_dict)
-        updated["orig_obs"] = new_obs
+        updated["orig_obs"] = (obs_dict["orig_obs"] - obs_mean) / jnp.sqrt(
+            obs_var + 1e-2
+        )
+        if "normed_actions" in obs_dict:
+            updated["normed_actions"] = (
+                obs_dict["normed_actions"] - action_mean
+            ) / jnp.sqrt(action_var + 1e-2)
         return updated
 
     def reset(self, key, params=None):
         obs, critic_obs, env_state = self.env.reset(key)
         orig_obs = obs["orig_obs"]
         critic_orig_obs = critic_obs["orig_obs"]
+        actor_actions = obs.get("normed_actions", None)
+        critic_actions = critic_obs.get("normed_actions", None)
         if params is not None:
             mean = params.mean
             var = params.var
+            action_mean = params.action_mean
+            action_var = params.action_var
             critic_mean = params.critic_mean
             critic_var = params.critic_var
+            critic_action_mean = params.critic_action_mean
+            critic_action_var = params.critic_action_var
             count = params.count
         else:
             mean = jnp.mean(orig_obs, axis=0)
             var = jnp.var(orig_obs, axis=0)
+            if actor_actions is not None:
+                action_mean = jnp.mean(actor_actions, axis=0)
+                action_var = jnp.var(actor_actions, axis=0)
+            else:
+                action_mean = jnp.array(0.0)
+                action_var = jnp.array(1.0)
             critic_mean = jnp.mean(critic_orig_obs, axis=0)
             critic_var = jnp.var(critic_orig_obs, axis=0)
+            if critic_actions is not None:
+                critic_action_mean = jnp.mean(critic_actions, axis=0)
+                critic_action_var = jnp.var(critic_actions, axis=0)
+            else:
+                critic_action_mean = jnp.array(0.0)
+                critic_action_var = jnp.array(1.0)
             count = orig_obs.shape[0]
         state = DiffNormalizeVecObsEnvState(
             mean=mean,
             var=var,
+            action_mean=action_mean,
+            action_var=action_var,
             critic_mean=critic_mean,
             critic_var=critic_var,
+            critic_action_mean=critic_action_mean,
+            critic_action_var=critic_action_var,
             count=count,
             env_state=env_state,
             truncated=env_state.truncated,
             info=env_state.info,
         )
-        norm_actor_obs = (orig_obs - state.mean) / jnp.sqrt(state.var + 1e-2)
-        norm_critic_obs = (critic_orig_obs - state.critic_mean) / jnp.sqrt(
-            state.critic_var + 1e-2
-        )
         return (
-            self._replace_orig_obs(obs, norm_actor_obs),
-            self._replace_orig_obs(critic_obs, norm_critic_obs),
+            self._normalize_obs_dict(
+                obs, state.mean, state.var, state.action_mean, state.action_var
+            ),
+            self._normalize_obs_dict(
+                critic_obs,
+                state.critic_mean,
+                state.critic_var,
+                state.critic_action_mean,
+                state.critic_action_var,
+            ),
             state,
         )
 
@@ -741,6 +784,8 @@ class DiffNormalizeVec(Wrapper):
         )
         orig_obs = obs["orig_obs"]
         critic_orig_obs = critic_obs["orig_obs"]
+        actor_actions = obs.get("normed_actions", None)
+        critic_actions = critic_obs.get("normed_actions", None)
 
         new_mean, new_var = self._compute_stats(
             state.mean, state.var, state.count, orig_obs
@@ -748,44 +793,54 @@ class DiffNormalizeVec(Wrapper):
         new_critic_mean, new_critic_var = self._compute_stats(
             state.critic_mean, state.critic_var, state.count, critic_orig_obs
         )
+        if actor_actions is not None:
+            new_action_mean, new_action_var = self._compute_stats(
+                state.action_mean, state.action_var, state.count, actor_actions
+            )
+        else:
+            new_action_mean, new_action_var = state.action_mean, state.action_var
+        if critic_actions is not None:
+            new_critic_action_mean, new_critic_action_var = self._compute_stats(
+                state.critic_action_mean,
+                state.critic_action_var,
+                state.count,
+                critic_actions,
+            )
+        else:
+            new_critic_action_mean, new_critic_action_var = (
+                state.critic_action_mean,
+                state.critic_action_var,
+            )
         new_count = state.count + orig_obs.shape[0]
 
         state = DiffNormalizeVecObsEnvState(
             mean=new_mean,
             var=new_var,
+            action_mean=new_action_mean,
+            action_var=new_action_var,
             critic_mean=new_critic_mean,
             critic_var=new_critic_var,
+            critic_action_mean=new_critic_action_mean,
+            critic_action_var=new_critic_action_var,
             count=new_count,
             env_state=env_state,
             truncated=env_state.truncated,
             info=env_state.info,
         )
 
-        norm_actor_obs = (orig_obs - state.mean) / jnp.sqrt(state.var + 1e-2)
-        norm_critic_obs = (critic_orig_obs - state.critic_mean) / jnp.sqrt(
-            state.critic_var + 1e-2
-        )
-
         return (
-            self._replace_orig_obs(obs, norm_actor_obs),
-            self._replace_orig_obs(critic_obs, norm_critic_obs),
+            self._normalize_obs_dict(
+                obs, state.mean, state.var, state.action_mean, state.action_var
+            ),
+            self._normalize_obs_dict(
+                critic_obs,
+                state.critic_mean,
+                state.critic_var,
+                state.critic_action_mean,
+                state.critic_action_var,
+            ),
             state,
             reward,
             done,
             info,
         )
-    def _compute_stats(self, mean, var, count, obs):
-        batch_mean = jnp.mean(obs, axis=0)
-        batch_var = jnp.var(obs, axis=0)
-        batch_count = obs.shape[0]
-
-        delta = batch_mean - mean
-        tot_count = count + batch_count
-
-        new_mean = mean + delta * batch_count / tot_count
-        m_a = var * count
-        m_b = batch_var * batch_count
-        M2 = m_a + m_b + jnp.square(delta) * count * batch_count / tot_count
-        new_var = M2 / tot_count
-
-        return new_mean, new_var

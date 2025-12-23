@@ -1,7 +1,6 @@
 hyperparameters: 
-  weight_decay: 0.000001
   anneal_lr: true
-  lr_decay_factor: 0.1
+  #lr_decay_factor: 0.05
   #lr: 3e-5
   #hl_gauss: true
   #reverse_kl: false # previous default "false"

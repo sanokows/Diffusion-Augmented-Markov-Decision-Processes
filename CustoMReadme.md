@@ -14,24 +14,25 @@ python -m src.jaxrl.reppo_dime env=humanoid_brax env.name=humanoid
 python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=0.999
 
 ###break it
-python -m src.jaxrl.reppo_dime env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=0.999
 python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=0.999
 
 
 cd /home/it4i-sanokows/code/DIMEReppo
 python -m src.jaxrl.reppo_dime env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=1.
 
-
-python -m src.jaxrl.reppo_DMERL env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 
-
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40  hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full   hyperparameters.temperature_lr_mult=0.3 hyperparameters.lagrangian_lr_mult=0.3 hyperparameters.ent_target_mult=5 hyperparameters.num_bins=151
-
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40  hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full   hyperparameters.temperature_lr=1e-5 hyperparameters.lagrangian_lr=1e-5 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.995 hyperparameters.lmbda=0.96
-
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.hl_gauss=false hyperparameters.lr=1e-5 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full
+#best run no critic weight decay
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full hyperparameters.temperature_lr=1e-5 hyperparameters.lagrangian_lr=1e-5 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.98 hyperparameters.lmbda=0.93 hyperparameters.weight_decay=1e-6
 
 
-### TODO fix logging and hope that code works then
+### tests
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full hyperparameters.temperature_lr=1e-5 hyperparameters.lagrangian_lr=1e-5 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.97 hyperparameters.lmbda=0.90 hyperparameters.weight_decay=1e-6
+
+###  works as well
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=5e-4 hyperparameters.vmin=-40 hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full hyperparameters.temperature_lr=1e-5 hyperparameters.lagrangian_lr=1e-5 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.97 hyperparameters.lmbda=0.90 hyperparameters.weight_decay=0. hyperparameters.lr_decay_factor=1.
+
+### good run without weight decay
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=5e-4 hyperparameters.vmin=-40 hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full hyperparameters.temperature_lr=1e-5 hyperparameters.lagrangian_lr=1e-5 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.97 hyperparameters.weight_decay=0. hyperparameters.lr_decay_factor=1. hyperparameters.num_steps=128
+
 ### TODO check if diffusion is initialized so that it maps to prior
 
 

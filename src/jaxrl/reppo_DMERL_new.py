@@ -32,7 +32,7 @@ from src.env_utils.jax_wrappers import (
     DiffNormalizeVec,
 )
 from src.jaxrl import utils
-from src.jaxrl.reppo_helpers.learning import critic_loss_fn
+from src.jaxrl.reppo_helpers.learning_DiffReppo import critic_loss_fn
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
     CategoricalCriticNetwork,
@@ -171,11 +171,11 @@ class ReppoDMERLTrainer:
             # print(f"overwrite vmin: {cfg.vmin}, vmax: {cfg.vmax}")
 
 
-            adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
-            cfg = cfg.replace(gamma=adjusted_gamma)
+            # adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
+            # cfg = cfg.replace(gamma=adjusted_gamma)
 
-            adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
-            cfg = cfg.replace(lmbda=adjusted_lambda)
+            # adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
+            # cfg = cfg.replace(lmbda=adjusted_lambda)
 
             temp_lr_multi = cfg.temperature_lr_mult
             lagrangian_lr_mult = cfg.lagrangian_lr_mult
@@ -475,7 +475,7 @@ class ReppoDMERLTrainer:
                     tx = optax.chain(optax.add_decayed_weights(weight_decay), tx)
                 return tx
 
-            critic_optimizer = _adam_with_decay(lr, weight_decay=cfg.weight_decay)
+            critic_optimizer = _adam_with_decay(lr, weight_decay=0.0)
             if cfg.max_grad_norm is not None:
                 critic_optimizer = optax.chain(
                     optax.clip_by_global_norm(cfg.max_grad_norm), critic_optimizer
@@ -534,6 +534,20 @@ class ReppoDMERLTrainer:
                 params=nnx.state(critic_networks),
                 tx=critic_optimizer,
             )
+
+            params_actor = jax.tree.map(lambda x: x[0], actor_trainstate.params)
+            params_critic = jax.tree.map(lambda x: x[0], critic_trainstate.params)
+            print(params_actor)
+            jax.debug.print("Actor params: {params}", params=params_actor)
+            print(params_critic)
+            jax.debug.print("Critic params: {params}", params=params_critic)
+            jax.debug.print("Actor norm: {params}", params=jax.tree.map(lambda x: jnp.linalg.norm(x), actor_trainstate.params))
+            print(jax.tree.map(lambda x: jnp.linalg.norm(x), actor_trainstate.params))
+            print(jax.tree.map(lambda x: jnp.linalg.norm(x), critic_trainstate.params))
+            jax.debug.print("Critic norm: {params}", params=jax.tree.map(lambda x: jnp.linalg.norm(x), critic_trainstate.params))
+            # jax.debug.callback(lambda p: _host_print_layer_norms("actor", p), params_actor)
+            # jax.debug.callback(lambda p: _host_print_layer_norms("critic", p), params_critic)
+            #raise ValueError("Layer norms printed for debugging; remove after inspection.")
 
             key, env_key = jax.random.split(key)
             env_key = jax.random.split(env_key, cfg.num_envs)
@@ -696,11 +710,18 @@ class ReppoDMERLTrainer:
                         mean=jnp.mean(target_values))
 
         target_vals_flat = target_values.reshape(-1)
-        target_val_mean = jnp.mean(target_vals_flat)
-        target_val_min = jnp.min(target_vals_flat)
-        target_val_max = jnp.max(target_vals_flat)
-        target_val_hist_counts, target_val_hist_edges = jnp.histogram(
+        target_vals_finite = jnp.nan_to_num(
             target_vals_flat,
+            nan=0.0,
+            posinf=cfg.vmax,
+            neginf=cfg.vmin,
+        )
+        target_vals_finite = jnp.clip(target_vals_finite, cfg.vmin, cfg.vmax)
+        target_val_mean = jnp.mean(target_vals_finite)
+        target_val_min = jnp.min(target_vals_finite)
+        target_val_max = jnp.max(target_vals_finite)
+        target_val_hist_counts, target_val_hist_edges = jnp.histogram(
+            target_vals_finite,
             bins=cfg.num_bins,
             range=(cfg.vmin, cfg.vmax),
         )
@@ -734,6 +755,9 @@ class ReppoDMERLTrainer:
             xs=jax.random.split(train_key, cfg.num_epochs)
         )
         update_metrics = jax.tree.map(lambda x: x[-1], update_metrics)
+        update_metrics["target_value_nonfinite"] = jnp.sum(
+            ~jnp.isfinite(target_vals_flat)
+        )
         update_metrics["target_value_hist_counts"] = target_val_hist_counts
         update_metrics["target_value_hist_edges"] = target_val_hist_edges
         update_metrics["target_value_mean"] = target_val_mean
@@ -890,6 +914,31 @@ class ReppoDMERLTrainer:
         key, init_key = jax.random.split(key)
         init_fn = self._make_init_fn()
         train_state = jax.vmap(init_fn)(jax.random.split(init_key, self.num_seeds))
+
+        actor_init_norm = utils.tree_norm(train_state.actor.params)
+        critic_init_norm = utils.tree_norm(train_state.critic.params)
+        # count parameters per-network (take first seed to avoid double-counting vmapped params)
+        actor_param_count = utils.count_params(jax.tree.map(lambda x: x[0], train_state.actor.params))
+        critic_param_count = utils.count_params(jax.tree.map(lambda x: x[0], train_state.critic.params))
+
+        def _log_init_norms(actor_norm, critic_norm, actor_count, critic_count):
+            wandb.log(
+                {
+                    "norm_init/actor": float(np.asarray(actor_norm).mean()),
+                    "norm_init/critic": float(np.asarray(critic_norm).mean()),
+                    "norm_init/actor_params": int(actor_count),
+                    "norm_init/critic_params": int(critic_count),
+                },
+                step=0,
+            )
+
+        jax.debug.callback(
+            _log_init_norms,
+            actor_init_norm,
+            critic_init_norm,
+            actor_param_count,
+            critic_param_count,
+        )
         keys = jax.random.split(key, num_iterations)
         state, metrics = jax.lax.scan(
             f=self._loop_body,
@@ -963,7 +1012,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 lr_cfg.total_time_steps // lr_cfg.num_steps // lr_cfg.num_envs
             )
             num_updates = max(
-                1, num_iterations * lr_cfg.num_epochs * lr_cfg.num_mini_batches
+                1, num_iterations * lr_cfg.num_epochs * lr_cfg.num_mini_batches*lr_cfg.diffusion.diff_steps
             )
             progress = min(actor_step / num_updates, 1.0)
             min_lr = lr_cfg.lr * lr_cfg.lr_decay_factor
@@ -999,13 +1048,18 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             if key_name.startswith("eval/"):
                 log_data[key_name] = value.mean() if hasattr(value, "mean") else value
         if target_hist_counts is not None and target_hist_edges is not None:
-            counts = np.asarray(target_hist_counts)
-            edges = np.asarray(target_hist_edges)
+            # Convert JAX arrays to NumPy before plotting to ensure wandb.Image
+            # receives a fully rendered Matplotlib figure.
+            counts = np.asarray(jax.device_get(target_hist_counts))
+            edges = np.asarray(jax.device_get(target_hist_edges))
             if counts.ndim > 1:
                 counts = counts.sum(axis=0)
             if edges.ndim > 1:
                 edges = edges[0]
-            fig, ax = plt.subplots()
+
+            counts = np.nan_to_num(counts, nan=0.0)
+            edges = np.nan_to_num(edges, nan=0.0, posinf=cfg.hyperparameters.vmax, neginf=cfg.hyperparameters.vmin)
+            fig, ax = plt.subplots(figsize=(8, 4))
             ax.bar(
                 edges[:-1],
                 counts,
@@ -1016,9 +1070,33 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             ax.set_title("Target Value Histogram")
             ax.set_xlabel("Target value")
             ax.set_ylabel("Count")
+            fig.tight_layout()
             log_data["train/target_value_histogram"] = wandb.Image(fig)
-            
             plt.close(fig)
+
+        # compute the effective learning rate of the actor and the critic
+        actor_gnorm = log_data.get("train/actor_gnorm", 0.0)
+        actor_pnorm = log_data.get("train/actor_pnorm", 0.0)
+        critic_gnorm = log_data.get("train/critic_gnorm", 0.0)
+        critic_pnorm = log_data.get("train/critic_pnorm", 0.0)
+
+        actor_effective_lr = (
+            current_lr * (actor_gnorm / (actor_pnorm + 1e-10))
+            if actor_pnorm > 0
+            else 0.0
+        )
+        critic_effective_lr = (
+            current_lr * (critic_gnorm / (critic_pnorm + 1e-10))
+            if critic_pnorm > 0
+            else 0.0
+        )
+        log_data["norm/actor_effective_lr"] = actor_effective_lr
+        log_data["norm/critic_effective_lr"] = critic_effective_lr
+        log_data["norm/actor_pnorm"] = actor_pnorm
+        log_data["norm/critic_pnorm"] = critic_pnorm
+        log_data["norm/actor_gnorm"] = actor_gnorm
+        log_data["norm/critic_gnorm"] = critic_gnorm
+
         wandb.log(log_data, step=state.time_steps[0])
 
     if cfg.env.type == "brax":
@@ -1050,6 +1128,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         num_seeds=cfg.num_seeds,
         reward_scale=1.0 / cfg.env.reward_scaling,
     )
+
     train_fn = trainer.build_train_fn()
 
     for i in range(completed_trials, cfg.num_trials):

@@ -569,7 +569,7 @@ class CategoricalCriticNetwork(nnx.Module):
         self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
         # Store timestep_coeff as a Variable (non-trainable parameter)
         self.timestep_coeff = nnx.Variable(
-            jnp.linspace(start=0.1, stop=100, num=self.num_time_hid)[None]
+            jnp.linspace(start=0.1, stop=10, num=self.num_time_hid)[None]
         )
 
         # Time encoder network

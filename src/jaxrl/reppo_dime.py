@@ -950,6 +950,31 @@ def make_train_fn(
         train_state = jax.vmap(make_init(cfg, env, env_params))(
             jax.random.split(init_key, num_seeds)
         )
+
+        actor_init_norm = utils.tree_norm(train_state.actor.params)
+        critic_init_norm = utils.tree_norm(train_state.critic.params)
+        # count parameters per-network using first seed to avoid vmapped duplication
+        actor_param_count = utils.count_params(jax.tree.map(lambda x: x[0], train_state.actor.params))
+        critic_param_count = utils.count_params(jax.tree.map(lambda x: x[0], train_state.critic.params))
+
+        def _log_init_norms(actor_norm, critic_norm, actor_count, critic_count):
+            wandb.log(
+                {
+                    "norm_init/actor": float(np.asarray(actor_norm).mean()),
+                    "norm_init/critic": float(np.asarray(critic_norm).mean()),
+                    "norm_init/actor_params": int(actor_count),
+                    "norm_init/critic_params": int(critic_count),
+                },
+                step=0,
+            )
+
+        jax.debug.callback(
+            _log_init_norms,
+            actor_init_norm,
+            critic_init_norm,
+            actor_param_count,
+            critic_param_count,
+        )
         keys = jax.random.split(key, num_iterations)
         state, metrics = jax.lax.scan(f=loop_body, init=train_state, xs=keys)
         return state, metrics
@@ -1041,6 +1066,29 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         for key, value in metrics.items():
             if key.startswith("eval/"):
                 log_data[key] = value.mean() if hasattr(value, 'mean') else value
+
+        actor_gnorm = log_data.get("train/actor_gnorm", 0.0)
+        actor_pnorm = log_data.get("train/actor_pnorm", 0.0)
+        critic_gnorm = log_data.get("train/critic_gnorm", 0.0)
+        critic_pnorm = log_data.get("train/critic_pnorm", 0.0)
+
+        lr_cfg = cfg.hyperparameters
+        actor_effective_lr = (
+            lr_cfg.lr * (actor_gnorm / (actor_pnorm + 1e-10))
+            if actor_pnorm > 0
+            else 0.0
+        )
+        critic_effective_lr = (
+            lr_cfg.lr * (critic_gnorm / (critic_pnorm + 1e-10))
+            if critic_pnorm > 0
+            else 0.0
+        )
+        log_data["norm/actor_effective_lr"] = actor_effective_lr
+        log_data["norm/critic_effective_lr"] = critic_effective_lr
+        log_data["norm/actor_pnorm"] = actor_pnorm
+        log_data["norm/critic_pnorm"] = critic_pnorm
+        log_data["norm/actor_gnorm"] = actor_gnorm
+        log_data["norm/critic_gnorm"] = critic_gnorm
 
         wandb.log(log_data, step=state.time_steps[0])
 

@@ -14,14 +14,14 @@ hyperparameters:
 
   # optimization settings (seem very stable)
   lr: 1e-4
-  lr_decay_factor: 0.1
+  lr_decay_factor: 1.
   weight_decay: 0.0
   temperature_lr: 1e-5
   lagrangian_lr: 1e-5
   anneal_lr: false
   max_grad_norm: 0.5
   polyak: 1.0 # maybe ablate ?
-  env_action_clip_value: 0.999
+  env_action_clip_value: 1.0
   action_clip_value: 1.0
 
   # problem discount settings (need tuning)
