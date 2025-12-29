@@ -144,7 +144,7 @@ tags: ["experimental"]
 wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
-  project: "dime_benchmark_rerun"
+  project: "dime_${env.name}"
 
 hydra:
   job:

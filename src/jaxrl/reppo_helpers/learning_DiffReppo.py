@@ -94,6 +94,7 @@ def actor_loss_fn(params, updated_state, step_key, minibatch, target_vals, actio
         )
         entropy_prior = actor_model.get_prior_entropy()
         log_prob_ratio = gen_log_prob - dest_log_prob
+        
         value = critic_target_model.critic(minibatch.critic_obs, pred_action)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
         entropy = jax.lax.stop_gradient(entropy)

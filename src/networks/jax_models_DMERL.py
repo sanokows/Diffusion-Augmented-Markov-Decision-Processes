@@ -50,6 +50,37 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     }
     return out_dict, key_gen
 
+def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, stop_grad=False):
+    step = step.astype(jnp.float32)
+    x = curr_x
+
+    # Compute SDE components
+    dt = diffusion_model.delta_t_fn(step)
+    sigma_square = 1. / diffusion_model.friction_fn(step)
+    eta = dt * sigma_square
+    scale = jnp.sqrt(2 * eta)
+
+    # Forward kernel
+    drift = diffusion_model.drift_fn(step, x)
+    # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+    fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+    # x_new = fwd_mean if ode else sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
+    x_new = actions
+
+    # Backward kernel
+    drift_new = diffusion_model.drift_fn(step + 1, x_new)
+    bwd_mean = x_new + eta * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
+
+    # Evaluate kernels
+    fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
+    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
+
+    out_dict = {
+        "gen_log_prob": fwd_log_prob, 
+        "dest_log_prob": bwd_log_prob,
+    }
+    return out_dict
+
 def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, obs, key, stop_grad=True, kl_action_rep=1):
     step = step.astype(jnp.float32)
     x = curr_x
@@ -569,7 +600,7 @@ class CategoricalCriticNetwork(nnx.Module):
         self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
         # Store timestep_coeff as a Variable (non-trainable parameter)
         self.timestep_coeff = nnx.Variable(
-            jnp.linspace(start=0.1, stop=10, num=self.num_time_hid)[None]
+            jnp.linspace(start=0.1, stop=50, num=self.num_time_hid)[None]
         )
 
         # Time encoder network
@@ -667,6 +698,128 @@ class ValueNetwork(nnx.Module):
     def __call__(self, obs: jax.Array) -> jax.Array:
         return self.value_module(obs).squeeze(-1)
 
+class DiffValueNetwork(nnx.Module):
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        hidden_dim: int = 512,
+        project_discrete_action: bool = False,
+        use_norm: bool = True,
+        use_encoder_norm: bool = False,
+        use_simplical_embedding: bool = False,
+        encoder_layers: int = 1,
+        head_layers: int = 1,
+        pred_layers: int = 1,
+        num_time_hid: int = 32,
+        num_time_out: int = 16,
+        use_skip=False,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        self.num_time_hid = num_time_hid
+        self.num_time_out = num_time_out
+        self.feature_module = FCNN(
+            in_features=obs_dim  + self.num_time_out,
+            out_features=hidden_dim,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=utils.multi_softmax if use_simplical_embedding else None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            layers=encoder_layers,
+            hidden_skip=use_skip,
+            output_skip=use_skip,
+            rngs=rngs,
+        )
+        self.critic_module = FCNN(
+            in_features=hidden_dim,
+            out_features=1,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            input_skip=use_skip,
+            input_activation=not use_simplical_embedding,
+            hidden_skip=use_skip,
+            layers=head_layers,
+            rngs=rngs,
+        )
+        self.pred_module = FCNN(
+            in_features=hidden_dim,
+            out_features=hidden_dim + 1,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=utils.multi_softmax if use_simplical_embedding else None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            output_skip=False,
+            input_activation=not use_simplical_embedding,
+            layers=pred_layers,
+            rngs=rngs,
+        )
+
+        self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
+        # Store timestep_coeff as a Variable (non-trainable parameter)
+        self.timestep_coeff = nnx.Variable(
+            jnp.linspace(start=0.1, stop=100, num=self.num_time_hid)[None]
+        )
+
+        # Time encoder network
+        self.time_coder_state = nnx.Sequential(
+            nnx.Linear(self.num_time_hid * 2, self.num_time_hid, rngs=rngs),
+            nnx.gelu,
+            nnx.Linear(self.num_time_hid, self.num_time_out, rngs=rngs),
+        )
+
+    def from_dict_to_observation(self, obs_dict):
+        orig_obs = obs_dict["orig_obs"]
+        normed_prev_actions = obs_dict["normed_actions"]
+        time = obs_dict["diff_time_step"]
+        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        return obs, time
+
+    def get_fourier_features(self, timesteps):
+        sin_embed_cond = jnp.sin(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        cos_embed_cond = jnp.cos(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
+
+    def features(self, obs: jax.Array, time: jax.Array):
+        time_emb = self.get_fourier_features(time)
+        if len(obs.shape) == 1:
+            time_emb = time_emb[0]
+        t_net = self.time_coder_state(time_emb)
+        state = jnp.concatenate([obs, t_net], axis=-1)
+        return self.feature_module(state)
+
+    def critic_head(self, features: jax.Array) -> jax.Array:
+        return self.critic_module(features)
+
+    def critic(self, obs_dict: jax.Array) -> jax.Array:
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, time)
+        return self.critic_head(features)
+
+    def critic_cat(self, obs_dict: jax.Array) -> jax.Array:
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, time)
+        return self.critic_head(features)
+
+    def forward(self, obs_dict):
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, time)
+        value = self.critic_head(features)
+        pred = self.pred_module(features)
+        pred_rew = pred[..., :1]
+        pred_features = pred[..., 1:]
+        return features, pred_features, pred_rew, value.squeeze(-1)
 
 
 class GumbleSoftmaxDistribution(distrax.Distribution):
@@ -845,6 +998,10 @@ class DMERLActor(nnx.Module):
         kl_start: float = 0.1,
         ent_start: float = 0.1,
         action_clip_value: float = 1.0,
+        use_temp_lagrangian_mlp: bool = False,
+        temp_lagrangian_hidden: int = 32,
+        *,
+        rngs: nnx.Rngs | None = None,
     ):
         self.action_clip_value = action_clip_value
         self.action_dim = action_dim
@@ -855,9 +1012,38 @@ class DMERLActor(nnx.Module):
         self.logratio = logratio
         self.diff_steps = diffusion_model.diff_steps
 
-        # Parameters
-        self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
-        self.log_temperature = nnx.Param(jnp.ones(1) * math.log(ent_start))
+        self.use_temp_lagrangian_mlp = use_temp_lagrangian_mlp
+        if self.use_temp_lagrangian_mlp:
+            if rngs is None:
+                raise ValueError(
+                    "rngs must be provided when use_temp_lagrangian_mlp=True."
+                )
+            seed_dim = 4
+            self.temperature_seed = nnx.Param(jnp.zeros((1, seed_dim)))
+            self.lagrangian_seed = nnx.Param(jnp.zeros((1, seed_dim)))
+            self.temperature_bias = nnx.Param(jnp.ones(1) * math.log(ent_start))
+            self.lagrangian_bias = nnx.Param(jnp.ones(1) * math.log(kl_start))
+            self.temperature_mlp = FCNN(
+                in_features=seed_dim,
+                out_features=1,
+                hidden_dim=temp_lagrangian_hidden,
+                use_norm=False,
+                output_activation=None,
+                layers=2,
+                rngs=rngs,
+            )
+            self.lagrangian_mlp = FCNN(
+                in_features=seed_dim,
+                out_features=1,
+                hidden_dim=temp_lagrangian_hidden,
+                use_norm=False,
+                output_activation=None,
+                layers=2,
+                rngs=rngs,
+            )
+        else:
+            self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
+            self.log_temperature = nnx.Param(jnp.ones(1) * math.log(ent_start))
 
     def _sample_prior(self, key, n_samples = 1):
         key, key_gen = jax.random.split(key)
@@ -875,14 +1061,29 @@ class DMERLActor(nnx.Module):
     
     def get_prior_entropy(self):
         return self.diffusion_model.get_prior_entropy()
+    
+    def _eval_log_prob(self, current_x, step, obs, actions):
+        out_dict = evaluate_one_step_log_prob(self.diffusion_model, current_x, step, obs, actions, stop_grad=False)
+        gen_log_prob = out_dict["gen_log_prob"]
+        is_last_step = self.diff_steps - 1 == step
+        gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(actions).sum(), gen_log_prob)
+        out_dict["gen_log_prob"] = gen_log_prob_new
+        return out_dict
+    
+    def vmap_eval_log_prob(self, obs, actions):
+        in_axes = (0, 0, 0, 0) # keys, current_x, step, obs
+
+        current_x = obs["orig_actions"]
+        step = obs["diff_time_step"][...,0]
+        out_dict = jax.vmap(self._eval_log_prob, in_axes=in_axes)( current_x, step, obs, actions)
+        gen_log_prob = out_dict["gen_log_prob"]
+        dest_log_prob = out_dict["dest_log_prob"]
+        return gen_log_prob, dest_log_prob
 
     def _sample_next_step(self, key, current_x, step, obs):
         out_dict, key = integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
         x_new = out_dict["x_new"]
         gen_log_prob = out_dict["gen_log_prob"]
-        # print diff step, step gen log prob shape and distrax.Tanh().forward_log_det_jacobian(x_new).shape in ajx debug
-        #jax.debug.print("diff step: {d}, step: {s}, gen_log_prob shape: {g}, log_det_jacobian shape: {l}", d=self.diff_steps-1, s=step, g=gen_log_prob.shape, l=distrax.Tanh().forward_log_det_jacobian(x_new).shape)
-        #jax.debug.print("diff step: {d}, step: {s}, scaling: {scaling}", d=self.diff_steps-1, s=step, scaling = distrax.Tanh().forward_log_det_jacobian(x_new).sum())
         is_last_step = self.diff_steps - 1 == step
         gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
         # Clip logits so tanh(action) always respects action_clip_value on the final step.
@@ -1162,7 +1363,17 @@ class DMERLActor(nnx.Module):
         return log_ratios
 
     def temperature(self) -> jax.Array:
-        return jnp.exp(self.log_temperature.value)
+        if self.use_temp_lagrangian_mlp:
+            log_temp = self.temperature_mlp(self.temperature_seed.value).squeeze()
+            log_temp = log_temp + self.temperature_bias.value
+        else:
+            log_temp = self.log_temperature.value
+        return jnp.exp(log_temp)
 
     def lagrangian(self) -> jax.Array:
-        return jnp.exp(self.log_lagrangian.value)
+        if self.use_temp_lagrangian_mlp:
+            log_lagrangian = self.lagrangian_mlp(self.lagrangian_seed.value).squeeze()
+            log_lagrangian = log_lagrangian + self.lagrangian_bias.value
+        else:
+            log_lagrangian = self.log_lagrangian.value
+        return jnp.exp(log_lagrangian)

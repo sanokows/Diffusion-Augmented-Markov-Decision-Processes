@@ -516,6 +516,7 @@ class SACActorNetworks(nnx.Module):
         layers: int = 2,
         min_std: float = 0.1,
         use_skip: bool = False,
+        train_mode: str = "reparam",
         *,
         rngs: nnx.Rngs,
     ):
@@ -537,13 +538,32 @@ class SACActorNetworks(nnx.Module):
         self.temperature_log_param = nnx.Param(jnp.ones(1) * start_value)
         self.lagrangian_log_param = nnx.Param(jnp.ones(1) * kl_start_value)
         self.min_std = min_std
+        if train_mode not in ("reparam", "WPO"):
+            raise ValueError(f"Unknown train_mode: {train_mode}")
+        self.train_mode = train_mode
+
+    def _compute_mean_std(
+        self, obs: jax.Array, scale: float | jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        loc = self.actor_module(obs)
+        mean, log_std = jnp.split(loc, 2, axis=-1)
+        std = (jnp.exp(log_std) + self.min_std) * scale
+
+        if self.train_mode == "WPO":
+            var = std ** 2
+            mean_sg = jax.lax.stop_gradient(mean)
+            varsg = jax.lax.stop_gradient(var)
+            mean = mean_sg + (mean - mean_sg) * (varsg)
+            var = varsg + (var - varsg) * varsg * 0.5
+            #var = jnp.clip(var, a_min=1e-8)  # guard against negative/denormals
+            std = jnp.sqrt(var)
+
+        return mean, std
 
     def actor(
         self, obs: jax.Array, scale: float | jax.Array = 1.0
     ) -> distrax.Distribution:
-        loc = self.actor_module(obs)
-        loc, log_std = jnp.split(loc, 2, axis=-1)
-        std = (jnp.exp(log_std) + self.min_std) * scale
+        loc, std = self._compute_mean_std(obs, scale)
         pi = distrax.Transformed(
             distrax.Normal(loc=loc, scale=std),
             distrax.Tanh()
@@ -551,8 +571,7 @@ class SACActorNetworks(nnx.Module):
         return pi
 
     def det_action(self, obs: jax.Array) -> jax.Array:
-        loc = self.actor_module(obs)
-        loc, _ = jnp.split(loc, 2, axis=-1)
+        loc, _ = self._compute_mean_std(obs, 1.0)
         return jnp.tanh(loc)
 
     def temperature(self) -> jax.Array:
@@ -562,8 +581,7 @@ class SACActorNetworks(nnx.Module):
         return jnp.exp(self.lagrangian_log_param.value)
 
     def __call__(self, obs: jax.Array) -> jax.Array:
-        loc = self.actor_module(obs)
-        loc, std = jnp.split(loc, 2, axis=-1)
+        loc, std = self._compute_mean_std(obs, 1.0)
         return jnp.tanh(loc), std, self.temperature(), self.lagrangian()
 
 

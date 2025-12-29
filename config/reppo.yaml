@@ -19,6 +19,7 @@ hyperparameters:
   polyak: 1.0 # maybe ablate ?
   env_action_clip_value: 0.999
   action_clip_value: 0.999
+  train_mode: "reparam"
 
   # problem discount settings (need tuning)
   gamma: 0.99
@@ -98,7 +99,7 @@ tags: ["experimental"]
 wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
-  project: "dime_benchmark_rerun"
+  project: "dime_${env.name}"
 
 hydra:
   job:

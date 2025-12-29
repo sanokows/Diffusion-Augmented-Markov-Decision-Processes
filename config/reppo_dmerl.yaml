@@ -18,6 +18,7 @@ hyperparameters:
   weight_decay: 0.0
   temperature_lr: 1e-5
   lagrangian_lr: 1e-5
+  temp_lagrangian_optim: "adam"
   anneal_lr: false
   max_grad_norm: 0.5
   polyak: 1.0 # maybe ablate ?
@@ -74,6 +75,9 @@ hyperparameters:
   ent_start: 0.01
   ent_target_mult: 4.
   update_entropy_lagrangian: true
+  # optionally learn temperature/kl multipliers with a tiny MLP
+  use_temp_lagrangian_mlp: false
+  temp_lagrangian_hidden: 32
   # scale the effective learning rates for temperature and KL lagrangian updates
   temperature_lr_mult: 1.0
   lagrangian_lr_mult: 1.0
@@ -152,7 +156,7 @@ tags: ["experimental"]
 wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
-  project: "dime_benchmark_rerun"
+  project: "dime_${env.name}"
 
 hydra:
   job:

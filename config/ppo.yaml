@@ -1,5 +1,5 @@
 defaults:
-  - env: brax
+  - env: mjx_dmc
   - _self_
 
 hyperparameters:
@@ -29,5 +29,5 @@ checkpoint_dir: null
 trials: 8 
 wandb:
   mode: "online" # set to online to activate wandb
-  entity: "leh2rng"
-  project: "online_sac"
+  entity: ""
+  project: "dime_benchmark_rerun"

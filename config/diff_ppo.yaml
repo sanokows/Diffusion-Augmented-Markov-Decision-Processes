@@ -1,0 +1,85 @@
+defaults:
+  - env: mjx_dmc
+  - _self_
+
+hyperparameters:
+  lr: 1e-4
+  gamma: 0.999
+  lmbda: 0.97
+  clip_ratio: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.00
+  total_time_steps: 50_000_000
+  num_steps: 64
+  num_mini_batches: 32
+  num_envs: 2048
+  num_epochs: 16
+  max_grad_norm: 0.5
+  normalize_advantages: True
+  normalize_env: True
+  anneal_lr: False
+  num_eval: 20
+  max_episode_steps: 1000
+  env_action_clip_value: 1.0
+
+  # critic architecture settings (need to be increased for MJX humanoid)
+  critic_hidden_dim: 512
+  use_critic_norm: true
+  num_critic_encoder_layers: 2
+  num_critic_head_layers: 2
+  num_critic_pred_layers: 2
+  use_simplical_embedding: False
+  use_critic_skip: False
+
+  diffusion:
+    name: "dis"
+    diff_steps: 8
+    init_std: 2.5
+    friction: 1.0
+    integrator: "EM"
+
+    learn_forward: true
+    learn_backward: false
+    learn_prior: false
+    learn_betas: false
+    learn_friction: false
+    learn_mass_matrix: false
+
+    dt: 0.125
+    learn_dt: false
+    per_step_dt: false
+    per_dim_friction: true
+    use_step_size_scheduler: false
+
+    score_model:
+      use_path_gradient: false
+      use_target_score: false
+      num_layers: 4
+      num_hid: 256
+      num_time_hid: 32
+      num_time_out: 16
+      outer_clip: 1e4
+      inner_clip: 1e2
+      weight_init: 1e-8
+      bias_init: 0.
+      layer_norm: false
+      layer_norm_type: "LayerNorm"
+
+    dt_schedule:
+      _target_: src.networks.diffusion.schedulers.get_cosine_schedule
+      total_steps: ${hyperparameters.diffusion.diff_steps}
+      min: 0.001
+      s: 0.008
+      pow: 2
+
+name: "ppo"
+tags: ["ppo_baseline_retuned"]
+seed: 0
+num_seeds: 1
+tune: false
+checkpoint_dir: null
+trials: 8 
+wandb:
+  mode: "online" # set to online to activate wandb
+  entity: ""
+  project: "dime_benchmark_rerun"

@@ -32,7 +32,7 @@ from src.env_utils.jax_wrappers import (
     DiffNormalizeVec,
 )
 from src.jaxrl import utils
-from src.jaxrl.reppo_helpers.learning_DiffReppo import critic_loss_fn
+from src.jaxrl.reppo_helpers.learning_DiffReppo import critic_loss_fn, train_step_env, compute_nstep_lambda_step, critic_loss_fn, actor_loss_fn
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
     CategoricalCriticNetwork,
@@ -42,9 +42,6 @@ from src.networks.jax_models_DMERL import (
     sde_integrator,
     ode_integrator,
     logratio_DIME as logratio,
-)
-from src.jaxrl.reppo_helpers import (
-    compute_nstep_lambda_step, critic_loss_fn, actor_loss_fn,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -73,6 +70,17 @@ class Transition(struct.PyTreeNode):
     info: dict[str, jax.Array]
 
 
+def _timestep_coeff_norm(params):
+    # Support both nnx modules and already-pure param dicts.
+    pure_params = nnx.to_pure_dict(params) if not isinstance(params, dict) else params
+    flat = flatten_dict(pure_params)
+    for k, v in flat.items():
+        if k[-1] == "timestep_coeff":
+            coeff = v[0] if isinstance(v, tuple) else v
+            return jnp.linalg.norm(coeff)
+    return jnp.array(0.0)
+
+
 class ReppoConfig(struct.PyTreeNode):
     lr: float
     lr_decay_factor: float
@@ -99,7 +107,10 @@ class ReppoConfig(struct.PyTreeNode):
     lagrangian_lr: float | None = None
     temperature_lr_mult: float = 1.0
     lagrangian_lr_mult: float = 1.0
+    temp_lagrangian_optim: str = "sgd"
     action_clip_value: float = 1.0
+    use_temp_lagrangian_mlp: bool = False
+    temp_lagrangian_hidden: int = 32
     env_action_clip_value: float = 1.0
     eval_interval: int = 10
     num_eval: int = 25
@@ -142,6 +153,40 @@ class SACTrainState(struct.PyTreeNode):
     last_env_state: EnvState
     last_obs: jax.Array
     last_critic_obs: jax.Array
+
+
+def randomize_env_steps(
+    key: jax.random.PRNGKey, env_state: EnvState, max_episode_steps: int
+) -> tuple[jax.random.PRNGKey, EnvState]:
+    """Fully unwrap env state, randomize step counter, and rewrap."""
+    _env_state = env_state
+    unwrap_idx = 0
+    env_state_list = [_env_state]
+    while hasattr(_env_state, "unwrapped"):
+        print("unwrap[{}] type: {}", unwrap_idx, type(_env_state).__name__)
+        _env_state = _env_state.unwrapped()
+        env_state_list.append(_env_state)
+        unwrap_idx += 1
+    print("final unwrapped type: {}", type(_env_state).__name__)
+
+    key, randomize_steps_key = jax.random.split(key)
+    _env_state.info["steps"] = jax.random.randint(
+        randomize_steps_key,
+        _env_state.info["steps"].shape,
+        0,
+        max_episode_steps,
+    ).astype(jnp.float32)
+
+    rewrapped_state = _env_state
+    for list_env_state in reversed(env_state_list[:-1]):
+        print(
+            "rewrapped {} to type: {}",
+            type(list_env_state).__name__,
+            type(rewrapped_state).__name__,
+        )
+        rewrapped_state = list_env_state.set_env_state(rewrapped_state)
+
+    return key, rewrapped_state
 
 
 class ReppoDMERLTrainer:
@@ -342,6 +387,7 @@ class ReppoDMERLTrainer:
 
         def init(key: jax.random.PRNGKey) -> SACTrainState:
             key, model_key = jax.random.split(key)
+            model_key, actor_key, actor_target_key = jax.random.split(model_key, 3)
             obs_dim, critic_obs_dim = env.get_obs_space_sizes()
             action_dim = env.action_space(env_params).shape[0]
             dt_schedule = hydra.utils.call(cfg.diffusion.dt_schedule)
@@ -412,6 +458,9 @@ class ReppoDMERLTrainer:
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
                 action_clip_value=cfg.action_clip_value,
+                use_temp_lagrangian_mlp=cfg.use_temp_lagrangian_mlp,
+                temp_lagrangian_hidden=cfg.temp_lagrangian_hidden,
+                rngs=nnx.Rngs(actor_key),
             )
             actor_target_networks = DMERLActor(
                 action_dim=action_dim,
@@ -422,6 +471,9 @@ class ReppoDMERLTrainer:
                 ent_start=cfg.ent_start,
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
+                use_temp_lagrangian_mlp=cfg.use_temp_lagrangian_mlp,
+                temp_lagrangian_hidden=cfg.temp_lagrangian_hidden,
+                rngs=nnx.Rngs(actor_target_key),
             )
 
             if cfg.hl_gauss:
@@ -469,13 +521,41 @@ class ReppoDMERLTrainer:
                     return lambda step: lr_val(step) * mult
                 return lr_val * mult
 
-            def _adam_with_decay(lr_val, weight_decay: float = 0.):
-                tx = optax.adam(lr_val)
-                if cfg.weight_decay and cfg.weight_decay > 0.0:
-                    tx = optax.chain(optax.add_decayed_weights(weight_decay), tx)
+            def _adam_with_decay(lr_val, weight_decay: float = 0., decay_mask=None, optim = optax.adam):
+                tx = optim(lr_val)
+                if weight_decay is not None and weight_decay > 0.0:
+                    tx = optax.chain(
+                        optax.add_decayed_weights(weight_decay, mask=decay_mask), tx
+                    )
                 return tx
 
-            critic_optimizer = _adam_with_decay(lr, weight_decay=0.0)
+            def _select_special_optimizer(name: str):
+                name = name.lower()
+                if name == "adam":
+                    return optax.adam
+                if name == "sgd":
+                    return optax.sgd
+                raise ValueError(f"Unknown temp/lagrangian optimizer '{name}', expected 'adam' or 'sgd'.")
+
+            def _label_critic_params(params):
+                flat = flatten_dict(params)
+                labels = {}
+                for k in flat.keys():
+                    leaf_name = k[-1]
+                    if leaf_name in ("timestep_phase", "timestep_coeff"):
+                        labels[k] = "no_decay"
+                    else:
+                        labels[k] = "default"
+                return unflatten_dict(labels)
+
+            critic_param_tree = nnx.to_pure_dict(nnx.state(critic_networks))
+            critic_labels = _label_critic_params(critic_param_tree)
+
+            critic_tx_cfg = {
+                "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
+                "no_decay": _adam_with_decay(lr, weight_decay=0.0),
+            }
+            critic_optimizer = optax.multi_transform(critic_tx_cfg, critic_labels)
             if cfg.max_grad_norm is not None:
                 critic_optimizer = optax.chain(
                     optax.clip_by_global_norm(cfg.max_grad_norm), critic_optimizer
@@ -491,7 +571,9 @@ class ReppoDMERLTrainer:
                 labels = {}
                 for k in flat.keys():
                     leaf_name = k[-1]
-                    if "log_temperature" in leaf_name:
+                    if leaf_name in ("timestep_phase", "timestep_coeff"):
+                        labels[k] = "no_decay"
+                    elif "temperature" in leaf_name:
                         labels[k] = "temperature"
                     elif "lagrangian" in leaf_name:
                         labels[k] = "lagrangian"
@@ -507,11 +589,13 @@ class ReppoDMERLTrainer:
             lagrangian_lr = _resolve_special_lr(
                 cfg.lagrangian_lr, cfg.lagrangian_lr_mult
             )
+            special_optimizer = _select_special_optimizer(cfg.temp_lagrangian_optim)
 
             actor_tx_cfg = {
                 "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
-                "temperature": _adam_with_decay(temperature_lr, weight_decay=0.0),
-                "lagrangian": _adam_with_decay(lagrangian_lr, weight_decay=0.0),
+                "temperature": _adam_with_decay(temperature_lr, weight_decay=0.0, optim=special_optimizer),
+                "lagrangian": _adam_with_decay(lagrangian_lr, weight_decay=0.0, optim=special_optimizer),
+                "no_decay": _adam_with_decay(lr, weight_decay=0.0),
             }
             actor_optimizer = optax.multi_transform(actor_tx_cfg, actor_labels)
             if cfg.max_grad_norm is not None:
@@ -531,7 +615,7 @@ class ReppoDMERLTrainer:
             )
             critic_trainstate = nnx.TrainState.create(
                 graphdef=nnx.graphdef(critic_networks),
-                params=nnx.state(critic_networks),
+                params=critic_param_tree,
                 tx=critic_optimizer,
             )
 
@@ -554,28 +638,9 @@ class ReppoDMERLTrainer:
             obs, critic_obs, env_state = env.reset(key=env_key, params=env_params)
 
             # Fully unwrap to the base env state (e.g., MjxGymnaxWrapper state) for step randomization.
-            _env_state = env_state
-            unwrap_idx = 0
-            env_state_list = [_env_state]
-            while hasattr(_env_state, "unwrapped"):
-                print("unwrap[{}] type: {}", unwrap_idx, type(_env_state).__name__)
-                _env_state = _env_state.unwrapped()
-                env_state_list.append(_env_state)
-                unwrap_idx += 1
-            print("final unwrapped type: {}", type(_env_state).__name__)
-
-            key, randomize_steps_key = jax.random.split(key)
-            _env_state.info["steps"] = jax.random.randint(
-                randomize_steps_key,
-                _env_state.info["steps"].shape,
-                0,
-                cfg.max_episode_steps,
-            ).astype(jnp.float32)
-
-            for list_env_state in reversed(env_state_list[:-1]):
-                print("rewrapped {} to type: {}", type(list_env_state).__name__, type(_env_state).__name__)
-                list_env_state.set_env_state(_env_state)
-                _env_state = list_env_state
+            key, env_state = randomize_env_steps(
+                key, env_state, cfg.max_episode_steps
+            )
 
             return SACTrainState(
                 actor=actor_trainstate,
@@ -610,7 +675,7 @@ class ReppoDMERLTrainer:
             axis=0,
         )
 
-        step_env = lambda carry, _: self.train_step_env(actor_model, critic_model, carry, _)
+        step_env = lambda carry, _: train_step_env(Transition, cfg, self.env, actor_model, critic_model, carry, _)
         rollout_state, transitions = jax.lax.scan(
             f=step_env,
             init=(
@@ -627,7 +692,7 @@ class ReppoDMERLTrainer:
             last_env_state=last_env_state,
             last_obs=last_obs,
             last_critic_obs=last_critic_obs,
-            time_steps=train_state.time_steps + self.num_collection_steps * cfg.num_envs//self.cfg.diffusion.diff_steps,
+            time_steps=train_state.time_steps + (self.num_collection_steps * cfg.num_envs)//self.cfg.diffusion.diff_steps,
         )
         return transitions, train_state
 
@@ -716,14 +781,12 @@ class ReppoDMERLTrainer:
             posinf=cfg.vmax,
             neginf=cfg.vmin,
         )
-        target_vals_finite = jnp.clip(target_vals_finite, cfg.vmin, cfg.vmax)
         target_val_mean = jnp.mean(target_vals_finite)
         target_val_min = jnp.min(target_vals_finite)
         target_val_max = jnp.max(target_vals_finite)
         target_val_hist_counts, target_val_hist_edges = jnp.histogram(
             target_vals_finite,
             bins=cfg.num_bins,
-            range=(cfg.vmin, cfg.vmax),
         )
         # Flatten rollout data to (num_steps * num_envs, ...) for easier indexing.
         data = (batch, target_values)
@@ -821,6 +884,9 @@ class ReppoDMERLTrainer:
         updated_state = train_state.replace(critic=critic_train_state)
         critic_metrics = critic_output[1]
         critic_metrics["critic_gnorm"] = utils.tree_norm(critic_grads)
+        critic_metrics["timestep_coeff_norm"] = _timestep_coeff_norm(
+            critic_train_state.params
+        )
 
         actor_loss_fn_ = lambda p: actor_loss_fn(p, updated_state, step_key, minibatch, target_vals, action_size_target, cfg, actor_target_model)
 
@@ -830,6 +896,9 @@ class ReppoDMERLTrainer:
         updated_state = updated_state.replace(actor=actor_train_state)
         actor_metrics = actor_output[1]
         actor_metrics["actor_gnorm"] = utils.tree_norm(actor_grads)
+        actor_metrics["actor_timestep_coeff_norm"] = _timestep_coeff_norm(
+            actor_train_state.params
+        )
 
         metrics = {**critic_metrics, **actor_metrics}
         return updated_state, metrics
@@ -992,6 +1061,14 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
     metric_history = []
 
+    def _move_metrics_to_norm(log_data: dict[str, Any], keys: list[str]) -> None:
+        """Move selected metrics into the norm/ namespace to avoid duplicate logging."""
+        for key in keys:
+            if key in log_data:
+                value = log_data.pop(key)
+                suffix = key.split("/", 1)[1] if "/" in key else key
+                log_data[f"norm/{suffix}"] = value
+
     def log_callback(state, metrics):
         metrics["sys_time"] = time.perf_counter()
         if len(metric_history) > 0:
@@ -1050,15 +1127,13 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         if target_hist_counts is not None and target_hist_edges is not None:
             # Convert JAX arrays to NumPy before plotting to ensure wandb.Image
             # receives a fully rendered Matplotlib figure.
-            counts = np.asarray(jax.device_get(target_hist_counts))
-            edges = np.asarray(jax.device_get(target_hist_edges))
+            counts = np.asarray((target_hist_counts))
+            edges = np.asarray((target_hist_edges))
             if counts.ndim > 1:
                 counts = counts.sum(axis=0)
             if edges.ndim > 1:
                 edges = edges[0]
 
-            counts = np.nan_to_num(counts, nan=0.0)
-            edges = np.nan_to_num(edges, nan=0.0, posinf=cfg.hyperparameters.vmax, neginf=cfg.hyperparameters.vmin)
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.bar(
                 edges[:-1],
@@ -1071,7 +1146,10 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             ax.set_xlabel("Target value")
             ax.set_ylabel("Count")
             fig.tight_layout()
-            log_data["train/target_value_histogram"] = wandb.Image(fig)
+            log_data["figures/target_value_histogram"] = wandb.Image(fig)
+            # save the figure to a file for debugging. path should be same folder as the script
+            path = os.path.join(os.getcwd(), "target_value_histogram.png")
+            fig.savefig(path)
             plt.close(fig)
 
         # compute the effective learning rate of the actor and the critic
@@ -1092,12 +1170,19 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         )
         log_data["norm/actor_effective_lr"] = actor_effective_lr
         log_data["norm/critic_effective_lr"] = critic_effective_lr
-        log_data["norm/actor_pnorm"] = actor_pnorm
-        log_data["norm/critic_pnorm"] = critic_pnorm
-        log_data["norm/actor_gnorm"] = actor_gnorm
-        log_data["norm/critic_gnorm"] = critic_gnorm
+        _move_metrics_to_norm(
+            log_data,
+            [
+                "train/actor_pnorm",
+                "train/critic_pnorm",
+                "train/actor_gnorm",
+                "train/critic_gnorm",
+                "train/timestep_coeff_norm",
+                "train/actor_timestep_coeff_norm",
+            ],
+        )
 
-        wandb.log(log_data, step=state.time_steps[0])
+        wandb.log(log_data, step=int(state.time_steps[0]))
 
     if cfg.env.type == "brax":
         raise ValueError("Wrappers are not implemented yet")

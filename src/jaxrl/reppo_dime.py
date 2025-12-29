@@ -158,6 +158,9 @@ def make_sde_eval_fn(
             obs, _, env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )
+            # print actions and rewards for debugging
+            # jax.debug.print("eval/actions: {a}", a=jnp.mean(action))
+            # jax.debug.print("eval/rewards: {r}", r=jnp.mean(reward))
             return (key, env_state, obs), info
 
         key, init_key = jax.random.split(key)
@@ -1035,6 +1038,10 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             sps = 0
 
         metric_history.append(metrics)
+        #please also print the actions and the rewards at every step
+        print("metrics[\"eval/actions\"]", metrics.get("eval/actions", "N/A"))
+        print("metrics[\"eval/rewards\"]", metrics.get("eval/rewards", "N/A"))
+        print("metrics[\"eval/episode_return\"]",metrics["eval/episode_return"])
         episode_return = metrics["eval/episode_return"].mean()
         eval_length = metrics["eval/episode_length"].mean()
         

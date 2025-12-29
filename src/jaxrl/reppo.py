@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 import typing
 from typing import Callable
@@ -31,7 +32,20 @@ from src.networks.jax_models import (
     SACActorNetworks,
 )
 
+if os.environ.get("JAX_DEBUG_NANS", "").lower() not in ("", "0", "false"):
+    jax.config.update("jax_debug_nans", True)
+
 logging.basicConfig(level=logging.INFO)
+
+
+def _assert_all_finite(name: str, array: jax.Array):
+    """Host-side check that raises immediately when NaNs/Infs appear in JIT."""
+
+    def _callback(x):
+        if not np.isfinite(x).all():
+            raise FloatingPointError(f"{name} contains NaN or Inf")
+
+    jax.debug.callback(_callback, array)
 
 
 class Policy(typing.Protocol):
@@ -106,6 +120,7 @@ class ReppoConfig(struct.PyTreeNode):
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
     use_lax_scan: bool = True
+    train_mode: str = "reparam"
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -199,6 +214,7 @@ def make_init(
             use_norm=cfg.use_actor_norm,
             layers=cfg.num_actor_layers,
             use_skip=cfg.use_actor_skip,
+            train_mode=cfg.train_mode,
             rngs=nnx.Rngs(model_key),
         )
         actor_target_networks = SACActorNetworks(
@@ -210,6 +226,7 @@ def make_init(
             use_norm=cfg.use_actor_norm,
             layers=cfg.num_actor_layers,
             use_skip=cfg.use_actor_skip,
+            train_mode=cfg.train_mode,
             rngs=nnx.Rngs(model_key),
         )
 
@@ -524,6 +541,11 @@ def make_train_fn(
                         (1.0 - minibatch.truncated)
                         * (critic_update_loss + cfg.aux_loss_mult * aux_loss)
                     )
+                    _assert_all_finite("critic_loss", loss)
+                    _assert_all_finite(
+                        "critic_update_loss", jnp.mean(critic_update_loss)
+                    )
+                    _assert_all_finite("critic_aux_loss", jnp.mean(aux_loss))
 
                     # log critic parameters norm
                     critic_pnorm = utils.tree_norm(params)
@@ -562,18 +584,28 @@ def make_train_fn(
                         pi_action, pi_act_log_prob = pi.sample_and_log_prob(
                             sample_shape=(16,), seed=key
                         )
-                        pi_action = jnp.clip(pi_action, -cfg.action_clip_value, cfg.action_clip_value)
+                        pi_action = jnp.clip(
+                            pi_action,
+                            -cfg.action_clip_value,
+                            cfg.action_clip_value,
+                        )
 
                         old_pi = actor_target_model.actor(minibatch.obs)
 
-                        old_pi_act_log_prob = old_pi.log_prob(pi_action).sum(-1).mean(0)
+                        old_pi_act_log_prob = old_pi.log_prob(pi_action).sum(-1).mean(
+                            0
+                        )
                         pi_act_log_prob = pi_act_log_prob.sum(-1).mean(0)
                         kl = pi_act_log_prob - old_pi_act_log_prob
                     else:
                         old_pi_action, old_pi_act_log_prob = actor_target_model.actor(
                             minibatch.obs
                         ).sample_and_log_prob(sample_shape=(16,), seed=key)
-                        old_pi_action = jnp.clip(old_pi_action, -cfg.action_clip_value, cfg.action_clip_value)
+                        old_pi_action = jnp.clip(
+                            old_pi_action,
+                            -cfg.action_clip_value,
+                            cfg.action_clip_value,
+                        )
 
                         old_pi_act_log_prob = old_pi_act_log_prob.sum(-1).mean(0)
                         pi_act_log_prob = pi.log_prob(old_pi_action).sum(-1).mean(0)
@@ -609,8 +641,7 @@ def make_train_fn(
                     # SAC target entropy loss
                     target_entropy = action_size_target + entropy
                     target_entropy_loss = (
-                        temperature
-                        * jax.lax.stop_gradient(target_entropy)
+                        temperature * jax.lax.stop_gradient(target_entropy)
                     )
 
                     # Lagrangian constraint (follows temperature update)
@@ -624,6 +655,9 @@ def make_train_fn(
                         loss += jnp.mean(target_entropy_loss)
                     if cfg.update_kl_lagrangian:
                         loss += jnp.mean(lagrangian_loss)
+                    _assert_all_finite("actor_loss", loss)
+                    _assert_all_finite("actor_entropy", jnp.mean(entropy))
+                    _assert_all_finite("actor_kl", jnp.mean(kl))
 
                     # log actor parameters norm
                     actor_pnorm = utils.tree_norm(params)
@@ -644,6 +678,183 @@ def make_train_fn(
                         actor_pnorm=actor_pnorm,
                     )
 
+                def actor_loss_WPO(params):
+                    critic_target_model = nnx.merge(
+                        train_state.critic.graphdef,
+                        train_state.critic.params,
+                    )
+                    actor_model = nnx.merge(train_state.actor.graphdef, params)
+
+                    # SAC actor loss
+                    pi = actor_model.actor(minibatch.obs)
+                    pred_action, log_prob = pi.sample_and_log_prob(seed=key)
+                    pred_action = jnp.clip(
+                        pred_action, -cfg.action_clip_value, cfg.action_clip_value
+                    )
+                    value = critic_target_model.critic(
+                        minibatch.critic_obs, pred_action
+                    )
+
+                    def single_q(obs, act):
+                        return critic_target_model.critic(obs[None], act[None]).squeeze()
+
+                    def single_log_prob(obs, act):
+                        return actor_model.actor(obs[None]).log_prob(act[None]).sum()
+
+                    stop_pred_action = jax.lax.stop_gradient(pred_action)
+                    q_action_grad = jax.vmap(
+                        jax.grad(single_q, argnums=1)
+                    )(minibatch.critic_obs, stop_pred_action)
+                    stop_q_action_grad = jax.lax.stop_gradient(q_action_grad)
+                    log_prob_action_grad = jax.vmap(
+                        jax.grad(single_log_prob, argnums=1)
+                    )(minibatch.obs, stop_pred_action)
+
+                    # Emit scalar summaries so jax.debug.print triggers inside jit/grad
+                    # jax.debug.print(
+                    #     "q_action_grad mean={mean} max={mx} nan={nan}",
+                    #     mean=jnp.nanmean(q_action_grad),
+                    #     mx=jnp.nanmax(q_action_grad),
+                    #     nan=jnp.any(jnp.isnan(q_action_grad)),
+                    # )
+                    # jax.debug.print(
+                    #     "log_prob_action_grad mean={mean} max={mx} nan={nan}",
+                    #     mean=jnp.nanmean(log_prob_action_grad),
+                    #     mx=jnp.nanmax(log_prob_action_grad),
+                    #     nan=jnp.any(jnp.isnan(log_prob_action_grad)),
+                    # )
+                    # jax.debug.print(
+                    #     "value mean={mean} max={mx} min={mn} nan={nan}",
+                    #     mean=jnp.nanmean(value),
+                    #     mx=jnp.nanmax(value),
+                    #     mn=jnp.nanmin(value),
+                    #     nan=jnp.any(jnp.isnan(value)),
+                    # )
+                    # jax.debug.print(
+                    #     "pred_action mean={mean} max={mx} min={mn} nan={nan}",
+                    #     mean=jnp.nanmean(pred_action),
+                    #     mx=jnp.nanmax(pred_action),
+                    #     mn=jnp.nanmin(pred_action),
+                    #     nan=jnp.any(jnp.isnan(pred_action)),
+                    # )
+                    # jax.debug.print(
+                    #     "log_prob mean={mean} max={mx} min={mn} nan={nan}",
+                    #     mean=jnp.nanmean(log_prob),
+                    #     mx=jnp.nanmax(log_prob),
+                    #     mn=jnp.nanmin(log_prob),
+                    #     nan=jnp.any(jnp.isnan(log_prob)),
+                    # )
+
+                    log_prob = log_prob.sum(-1)
+                    entropy = -log_prob
+
+                    # policy KL constraint
+                    if cfg.reverse_kl:
+                        pi_action, pi_act_log_prob = pi.sample_and_log_prob(
+                            sample_shape=(16,), seed=key
+                        )
+                        pi_action = jnp.clip(
+                            pi_action,
+                            -cfg.action_clip_value,
+                            cfg.action_clip_value,
+                        )
+
+                        old_pi = actor_target_model.actor(minibatch.obs)
+
+                        old_pi_act_log_prob = old_pi.log_prob(pi_action).sum(-1).mean(0)
+                        pi_act_log_prob = pi_act_log_prob.sum(-1).mean(0)
+                        kl = pi_act_log_prob - old_pi_act_log_prob
+                    else:
+                        old_pi_action, old_pi_act_log_prob = actor_target_model.actor(
+                            minibatch.obs
+                        ).sample_and_log_prob(sample_shape=(16,), seed=key)
+                        old_pi_action = jnp.clip(old_pi_action, -cfg.action_clip_value, cfg.action_clip_value)
+
+                        old_pi_act_log_prob = old_pi_act_log_prob.sum(-1).mean(0)
+                        pi_act_log_prob = pi.log_prob(old_pi_action).sum(-1).mean(0)
+
+                        kl = old_pi_act_log_prob - pi_act_log_prob
+
+                    temperature = actor_model.temperature()
+                    lagrangian = actor_model.lagrangian()
+
+                    actor_Q_loss = jnp.sum(
+                        (jax.lax.stop_gradient(log_prob_action_grad * temperature - stop_q_action_grad))
+                        * log_prob_action_grad,
+                        axis=-1,
+                    )
+                    # jax.debug.print(
+                    #     "actor_Q_loss mean={mean} max={mx} min={mn} nan={nan}",
+                    #     mean=jnp.nanmean(actor_Q_loss),
+                    #     mx=jnp.nanmax(actor_Q_loss),
+                    #     mn=jnp.nanmin(actor_Q_loss),
+                    #     nan=jnp.any(jnp.isnan(actor_Q_loss)),
+                    # )
+
+                    if cfg.actor_kl_clip_mode == "full":
+                        actor_loss = (
+                            actor_Q_loss
+                            + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
+                        )
+                    elif cfg.actor_kl_clip_mode == "clipped":
+                        actor_loss = jnp.where(
+                            kl < cfg.kl_bound,
+                            actor_Q_loss,
+                            kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
+                        )
+                    elif cfg.actor_kl_clip_mode == "value":
+                        actor_loss = actor_Q_loss - value
+                    else:
+                        raise ValueError(
+                            f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}"
+                        )
+
+                    # SAC target entropy loss
+                    target_entropy = action_size_target + entropy
+                    target_entropy_loss = (
+                        temperature * jax.lax.stop_gradient(target_entropy)
+                    )
+
+                    # Lagrangian constraint (follows temperature update)
+                    lagrangian_loss = -lagrangian * jax.lax.stop_gradient(
+                        kl - cfg.kl_bound
+                    )
+
+                    # total loss
+                    loss = jnp.mean(actor_loss)
+                    if cfg.update_entropy_lagrangian:
+                        loss += jnp.mean(target_entropy_loss)
+                    if cfg.update_kl_lagrangian:
+                        loss += jnp.mean(lagrangian_loss)
+
+                    # _assert_all_finite("q_action_grad mean", q_action_grad)
+                    # _assert_all_finite("log_prob_action_grad mean", log_prob_action_grad)
+                    # _assert_all_finite("actor_WPO_loss", loss)
+                    # _assert_all_finite("actor_WPO_entropy", jnp.mean(entropy))
+                    # _assert_all_finite("actor_WPO_kl", jnp.mean(kl))
+                    # _assert_all_finite("actor_Q_loss", jnp.mean(actor_Q_loss))
+
+                    # log actor parameters norm
+                    actor_pnorm = utils.tree_norm(params)
+
+                    return loss, dict(
+                        actor_loss=actor_loss,
+                        loss=loss,
+                        temp=actor_model.temperature(),
+                        abs_batch_action=jnp.abs(minibatch.action).mean(),
+                        abs_pred_action=jnp.abs(pred_action).mean(),
+                        reward_mean=minibatch.reward.mean(),
+                        kl=kl.mean(),
+                        lagrangian=lagrangian,
+                        lagrangian_loss=lagrangian_loss,
+                        entropy=entropy,
+                        entropy_loss=target_entropy_loss,
+                        target_values=target_values.mean(),
+                        actor_pnorm=actor_pnorm,
+                        q_action_grad=q_action_grad,
+                        policy_action_grad=log_prob_action_grad,
+                    )
+
                 critic_grad_fn = jax.value_and_grad(critic_loss_fn, has_aux=True)
                 output, critic_grads = critic_grad_fn(train_state.critic.params)
                 critic_train_state = train_state.critic.apply_gradients(critic_grads)
@@ -655,7 +866,10 @@ def make_train_fn(
                 critic_gnorm = utils.tree_norm(critic_grads)
                 critic_metrics["critic_gnorm"] = critic_gnorm
 
-                actor_grad_fn = jax.value_and_grad(actor_loss, has_aux=True)
+                actor_loss_fn = (
+                    actor_loss_WPO if cfg.train_mode == "WPO" else actor_loss
+                )
+                actor_grad_fn = jax.value_and_grad(actor_loss_fn, has_aux=True)
                 output, actor_grads = actor_grad_fn(train_state.actor.params)
                 actor_train_state = train_state.actor.apply_gradients(actor_grads)
                 train_state = train_state.replace(
