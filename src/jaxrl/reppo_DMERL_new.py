@@ -108,6 +108,8 @@ class ReppoConfig(struct.PyTreeNode):
     temperature_lr_mult: float = 1.0
     lagrangian_lr_mult: float = 1.0
     temp_lagrangian_optim: str = "sgd"
+    temp_lagrangian_adam_gamma1: float = 0.9
+    temp_lagrangian_adam_gamma2: float = 0.999
     action_clip_value: float = 1.0
     use_temp_lagrangian_mlp: bool = False
     temp_lagrangian_hidden: int = 32
@@ -142,6 +144,8 @@ class ReppoConfig(struct.PyTreeNode):
     use_lax_scan: bool = True
     diffusion: Any = None
     ode_coefs: list | None = None
+    project_unit_ball: bool = True
+    project_only_if_exceeds: bool = True
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -206,21 +210,10 @@ class ReppoDMERLTrainer:
         #raise NotImplementedError("DMERL reward scaling not implemented.")
         diff_steps = getattr(cfg.diffusion, "diff_steps", None)
         if diff_steps is not None and diff_steps > 0:
-            # rmax = 15#cfg.vmax/2
-            # #adjusted = 0.1*rmax*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
-            # cfg = cfg.replace(vmax=rmax)
+           ### adjust the gamma1 and gamma2 for temp lagrangian optimizers based in num_minibacthes
+            temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1 ** (cfg.num_mini_batches/128)
+            temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2 ** (cfg.num_mini_batches/128)
 
-            # rmin = -200. #cfg.vmax/2
-            # #adjusted = 0.1*rmin*cfg.gamma ** (diff_steps - 1)/(1 - cfg.gamma ** diff_steps)
-            # cfg = cfg.replace(vmin=rmin)
-            # print(f"overwrite vmin: {cfg.vmin}, vmax: {cfg.vmax}")
-
-
-            # adjusted_gamma = cfg.gamma ** (1.0 / diff_steps)
-            # cfg = cfg.replace(gamma=adjusted_gamma)
-
-            # adjusted_lambda = cfg.lmbda ** (1.0 / diff_steps)
-            # cfg = cfg.replace(lmbda=adjusted_lambda)
 
             temp_lr_multi = cfg.temperature_lr_mult
             lagrangian_lr_mult = cfg.lagrangian_lr_mult
@@ -231,6 +224,8 @@ class ReppoDMERLTrainer:
             cfg = cfg.replace(
                 temperature_lr_mult=temp_lr_multi,
                 lagrangian_lr_mult=lagrangian_lr_mult,
+                temp_lagrangian_adam_gamma1=temp_lagrangian_adam_gamma1,
+                temp_lagrangian_adam_gamma2=temp_lagrangian_adam_gamma2,
             )
 
 
@@ -532,17 +527,61 @@ class ReppoDMERLTrainer:
             def _select_special_optimizer(name: str):
                 name = name.lower()
                 if name == "adam":
-                    return optax.adam
+                    return partial(
+                        optax.adam,
+                        b1=cfg.temp_lagrangian_adam_gamma1,
+                        b2=cfg.temp_lagrangian_adam_gamma2,
+                    )
                 if name == "sgd":
                     return optax.sgd
                 raise ValueError(f"Unknown temp/lagrangian optimizer '{name}', expected 'adam' or 'sgd'.")
 
+            def _layernorm_projection_prefixes(flat_params):
+                prefixes = set()
+                for k in flat_params.keys():
+                    for idx, name in enumerate(k):
+                        if name == "layers" and idx + 1 < len(k) and k[idx + 1] == 1:
+                            prefixes.add(k[: idx + 1])
+                return prefixes
+
+            def _is_projection_candidate(key, norm_prefixes):
+                for idx, name in enumerate(key):
+                    if name == "layers" and idx + 1 < len(key):
+                        if key[idx + 1] == 0 and key[: idx + 1] in norm_prefixes:
+                            return True
+                return False
+
+            def _unit_ball_projection(only_if_exceeds: bool = True):
+                def init_fn(params):
+                    return optax.EmptyState()
+
+                def update_fn(updates, state, params=None):
+                    if params is None:
+                        raise ValueError("Params must be provided for projection.")
+
+                    def project(u, p):
+                        new_p = p + u
+                        norm = jnp.linalg.norm(new_p)
+                        if only_if_exceeds:
+                            new_p = jnp.where(norm > 1.0, new_p / (norm + 1e-8), new_p)
+                        else:
+                            new_p = new_p / (norm + 1e-8)
+                        return new_p - p
+
+                    projected_updates = jax.tree.map(project, updates, params)
+                    return projected_updates, state
+
+                return optax.GradientTransformation(init_fn, update_fn)
+
             def _label_critic_params(params):
                 flat = flatten_dict(params)
+                norm_prefixes = _layernorm_projection_prefixes(flat)
                 labels = {}
                 for k in flat.keys():
                     leaf_name = k[-1]
-                    if leaf_name in ("timestep_phase", "timestep_coeff"):
+                    if cfg.project_unit_ball and _is_projection_candidate(k, norm_prefixes):
+                        labels[k] = "projected"
+                    elif leaf_name in ("timestep_phase", "timestep_coeff"):
                         labels[k] = "no_decay"
                     else:
                         labels[k] = "default"
@@ -553,6 +592,10 @@ class ReppoDMERLTrainer:
 
             critic_tx_cfg = {
                 "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
+                "projected": optax.chain(
+                    _adam_with_decay(lr, weight_decay=0.0),
+                    _unit_ball_projection(cfg.project_only_if_exceeds),
+                ),
                 "no_decay": _adam_with_decay(lr, weight_decay=0.0),
             }
             critic_optimizer = optax.multi_transform(critic_tx_cfg, critic_labels)
@@ -568,10 +611,13 @@ class ReppoDMERLTrainer:
 
             def _label_actor_params(params):
                 flat = flatten_dict(params)  # tuple keys to avoid char-splitting
+                norm_prefixes = _layernorm_projection_prefixes(flat)
                 labels = {}
                 for k in flat.keys():
                     leaf_name = k[-1]
-                    if leaf_name in ("timestep_phase", "timestep_coeff"):
+                    if cfg.project_unit_ball and _is_projection_candidate(k, norm_prefixes):
+                        labels[k] = "projected"
+                    elif leaf_name in ("timestep_phase", "timestep_coeff"):
                         labels[k] = "no_decay"
                     elif "temperature" in leaf_name:
                         labels[k] = "temperature"
@@ -592,7 +638,11 @@ class ReppoDMERLTrainer:
             special_optimizer = _select_special_optimizer(cfg.temp_lagrangian_optim)
 
             actor_tx_cfg = {
-                "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
+                "default": _adam_with_decay(lr, weight_decay=0.0),
+                "projected": optax.chain(
+                    _adam_with_decay(lr, weight_decay=0.0),
+                    _unit_ball_projection(cfg.project_only_if_exceeds),
+                ),
                 "temperature": _adam_with_decay(temperature_lr, weight_decay=0.0, optim=special_optimizer),
                 "lagrangian": _adam_with_decay(lagrangian_lr, weight_decay=0.0, optim=special_optimizer),
                 "no_decay": _adam_with_decay(lr, weight_decay=0.0),

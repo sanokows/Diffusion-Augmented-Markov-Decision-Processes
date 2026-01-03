@@ -96,6 +96,8 @@ def actor_loss_fn(params, updated_state, step_key, minibatch, target_vals, actio
         log_prob_ratio = gen_log_prob - dest_log_prob
         
         value = critic_target_model.critic(minibatch.critic_obs, pred_action)
+        #print the shape of log_prob_ratio
+        #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
         entropy = jax.lax.stop_gradient(entropy)
         # print the entropy in jax debug mode also print the target entropy and the temperature

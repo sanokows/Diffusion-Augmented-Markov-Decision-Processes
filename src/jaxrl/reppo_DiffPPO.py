@@ -5,6 +5,7 @@ import typing
 from typing import Callable, Optional
 
 import distrax
+import numpy as np
 import hydra
 import jax
 import optax
@@ -41,6 +42,23 @@ from src.jaxrl.reppo_DMERL_new import randomize_env_steps
 
 
 logging.basicConfig(level=logging.INFO)
+
+
+def require(cfg, key):
+    if cfg is None:
+        raise KeyError(f"Missing required config key '{key}'")
+    if isinstance(cfg, dict):
+        if key in cfg:
+            return cfg[key]
+        raise KeyError(f"Missing required config key '{key}'")
+    if hasattr(cfg, key):
+        return getattr(cfg, key)
+    if hasattr(cfg, "__getitem__"):
+        try:
+            return cfg[key]
+        except Exception as exc:
+            raise KeyError(f"Missing required config key '{key}'") from exc
+    raise KeyError(f"Missing required config key '{key}'")
 
 
 class Policy(typing.Protocol):
@@ -83,7 +101,13 @@ class PPOConfig(struct.PyTreeNode):
     action_clip_value: float = 1.0
     kl_start: float = 0.1
     ent_start: float = 0.1
+    ent_target_mult: float = 0.5
+    update_entropy_lagrangian: bool = False
+    temp_lagrangian_adam_gamma1: float = 0.9
+    temp_lagrangian_adam_gamma2: float = 0.999
     weight_decay: float = 0.0
+    use_temp_lagrangian_mlp: bool = False
+    temp_lagrangian_hidden: int = 64
 
 
 class Transition(struct.PyTreeNode):
@@ -120,57 +144,46 @@ class PPONetworks(nnx.Module):
         *,
         rngs: nnx.Rngs,
     ):
-        def _get(cfg, key, default):
-            if cfg is None:
-                return default
-            if isinstance(cfg, dict):
-                return cfg.get(key, default)
-            if hasattr(cfg, key):
-                return getattr(cfg, key)
-            if hasattr(cfg, "get"):
-                return cfg.get(key, default)
-            return default
-
-        diff_cfg = cfg.diffusion if cfg is not None and hasattr(cfg, "diffusion") else None
-        score_cfg = _get(diff_cfg, "score_model", {})
+        diff_cfg = require(cfg, "diffusion")
+        score_cfg = require(diff_cfg, "score_model")
         forward_model = None
-        if _get(diff_cfg, "learn_forward", False):
+        if require(diff_cfg, "learn_forward"):
             forward_model = ControlNetwork(
                 action_dim=action_dim,
                 observation_dim=obs_dim,
-                num_layers=_get(score_cfg, "num_layers", 2),
-                num_hid=_get(score_cfg, "num_hid", 64),
-                num_time_hid=_get(score_cfg, "num_time_hid", 32),
-                num_time_out=_get(score_cfg, "num_time_out", 16),
-                outer_clip=_get(score_cfg, "outer_clip", 1e4),
-                inner_clip=_get(score_cfg, "inner_clip", 1e2),
-                weight_init=_get(score_cfg, "weight_init", 1e-8),
-                bias_init=_get(score_cfg, "bias_init", 0.0),
-                layer_norm=_get(score_cfg, "layer_norm", False),
-                layer_norm_type=_get(score_cfg, "layer_norm_type", "LayerNorm"),
+                num_layers=require(score_cfg, "num_layers"),
+                num_hid=require(score_cfg, "num_hid"),
+                num_time_hid=require(score_cfg, "num_time_hid"),
+                num_time_out=require(score_cfg, "num_time_out"),
+                outer_clip=require(score_cfg, "outer_clip"),
+                inner_clip=require(score_cfg, "inner_clip"),
+                weight_init=require(score_cfg, "weight_init"),
+                bias_init=require(score_cfg, "bias_init"),
+                layer_norm=require(score_cfg, "layer_norm"),
+                layer_norm_type=require(score_cfg, "layer_norm_type"),
                 rngs=rngs,
             )
 
         backward_model = None
-        if _get(diff_cfg, "learn_backward", False):
+        if require(diff_cfg, "learn_backward"):
             backward_model = ControlNetwork(
                 action_dim=action_dim,
                 observation_dim=obs_dim,
-                num_layers=_get(score_cfg, "num_layers", 2),
-                num_hid=_get(score_cfg, "num_hid", 64),
-                num_time_hid=_get(score_cfg, "num_time_hid", 32),
-                num_time_out=_get(score_cfg, "num_time_out", 16),
-                outer_clip=_get(score_cfg, "outer_clip", 1e4),
-                inner_clip=_get(score_cfg, "inner_clip", 1e2),
-                weight_init=_get(score_cfg, "weight_init", 1e-8),
-                bias_init=_get(score_cfg, "bias_init", 0.0),
-                layer_norm=_get(score_cfg, "layer_norm", False),
-                layer_norm_type=_get(score_cfg, "layer_norm_type", "LayerNorm"),
+                num_layers=require(score_cfg, "num_layers"),
+                num_hid=require(score_cfg, "num_hid"),
+                num_time_hid=require(score_cfg, "num_time_hid"),
+                num_time_out=require(score_cfg, "num_time_out"),
+                outer_clip=require(score_cfg, "outer_clip"),
+                inner_clip=require(score_cfg, "inner_clip"),
+                weight_init=require(score_cfg, "weight_init"),
+                bias_init=require(score_cfg, "bias_init"),
+                layer_norm=require(score_cfg, "layer_norm"),
+                layer_norm_type=require(score_cfg, "layer_norm_type"),
                 rngs=rngs,
             )
 
-        if _get(diff_cfg, "use_step_size_scheduler", False):
-            dt_schedule_cfg = _get(diff_cfg, "dt_schedule", None)
+        if require(diff_cfg, "use_step_size_scheduler"):
+            dt_schedule_cfg = require(diff_cfg, "dt_schedule")
             dt_schedule = (
                 hydra.utils.instantiate(dt_schedule_cfg)
                 if dt_schedule_cfg is not None
@@ -184,22 +197,22 @@ class PPONetworks(nnx.Module):
             observation_dim=obs_dim,
             fwd_model=forward_model,
             bwd_model=backward_model,
-            diff_steps=_get(diff_cfg, "diff_steps", 1),
-            init_std=_get(diff_cfg, "init_std", 2.5),
-            friction=_get(diff_cfg, "friction", 1.0),
-            per_dim_friction=_get(diff_cfg, "per_dim_friction", True),
-            dt=_get(diff_cfg, "dt", 0.01),
-            learn_dt=_get(diff_cfg, "learn_dt", False),
-            per_step_dt=_get(diff_cfg, "per_step_dt", False),
-            learn_prior=_get(diff_cfg, "learn_prior", False),
-            learn_betas=_get(diff_cfg, "learn_betas", False),
-            learn_friction=_get(diff_cfg, "learn_friction", True),
-            learn_mass_matrix=_get(diff_cfg, "learn_mass_matrix", False),
+            diff_steps=require(diff_cfg, "diff_steps"),
+            init_std=require(diff_cfg, "init_std"),
+            friction=require(diff_cfg, "friction"),
+            per_dim_friction=require(diff_cfg, "per_dim_friction"),
+            dt=require(diff_cfg, "dt"),
+            learn_dt=require(diff_cfg, "learn_dt"),
+            per_step_dt=require(diff_cfg, "per_step_dt"),
+            learn_prior=require(diff_cfg, "learn_prior"),
+            learn_betas=require(diff_cfg, "learn_betas"),
+            learn_friction=require(diff_cfg, "learn_friction"),
+            learn_mass_matrix=require(diff_cfg, "learn_mass_matrix"),
             dt_schedule=dt_schedule,
             rngs=rngs,
         )
 
-        critic_hidden_dim = getattr(cfg, "critic_hidden_dim", hidden_dim) if cfg is not None else hidden_dim
+        critic_hidden_dim = require(cfg, "critic_hidden_dim")
         self.actor_module = DMERLActor(
             action_dim=action_dim,
             observation_dim=obs_dim,
@@ -207,25 +220,25 @@ class PPONetworks(nnx.Module):
             sde_integrator=sde_integrator,
             ode_integrator=ode_integrator,
             logratio=logratio,
-            kl_start=getattr(cfg, "kl_start", 0.1) if cfg is not None else 0.1,
-            ent_start=getattr(cfg, "ent_start", 0.1) if cfg is not None else 0.1,
-            action_clip_value=getattr(cfg, "action_clip_value", 1.0) if cfg is not None else 1.0,
-            use_temp_lagrangian_mlp=getattr(cfg, "use_temp_lagrangian_mlp", False) if cfg is not None else False,
-            temp_lagrangian_hidden=getattr(cfg, "temp_lagrangian_hidden", 32) if cfg is not None else 32,
+            kl_start=require(cfg, "kl_start"),
+            ent_start=require(cfg, "ent_start"),
+            action_clip_value=require(cfg, "action_clip_value"),
+            use_temp_lagrangian_mlp=require(cfg, "use_temp_lagrangian_mlp"),
+            temp_lagrangian_hidden=require(cfg, "temp_lagrangian_hidden"),
             rngs=rngs,
         )
         self.critic_module = DiffValueNetwork(
             obs_dim=critic_obs_dim,
             action_dim=action_dim,
             hidden_dim=critic_hidden_dim,
-            num_time_hid=_get(score_cfg, "num_time_hid", 32),
-            num_time_out=_get(score_cfg, "num_time_out", 16),
-            use_norm=getattr(cfg, "use_critic_norm", True) if cfg is not None else True,
-            encoder_layers=getattr(cfg, "num_critic_encoder_layers", 1) if cfg is not None else 1,
-            head_layers=getattr(cfg, "num_critic_head_layers", 1) if cfg is not None else 1,
-            pred_layers=getattr(cfg, "num_critic_pred_layers", 1) if cfg is not None else 1,
-            use_simplical_embedding=getattr(cfg, "use_simplical_embedding", False) if cfg is not None else False,
-            use_skip=getattr(cfg, "use_critic_skip", False) if cfg is not None else False,
+            num_time_hid=require(score_cfg, "num_time_hid"),
+            num_time_out=require(score_cfg, "num_time_out"),
+            use_norm=require(cfg, "use_critic_norm"),
+            encoder_layers=require(cfg, "num_critic_encoder_layers"),
+            head_layers=require(cfg, "num_critic_head_layers"),
+            pred_layers=require(cfg, "num_critic_pred_layers"),
+            use_simplical_embedding=require(cfg, "use_simplical_embedding"),
+            use_skip=require(cfg, "use_critic_skip"),
             rngs=rngs,
         )
 
@@ -255,19 +268,11 @@ class ReppoPPOTrainer:
         self.num_seeds = num_seeds
         self.log_callback = log_callback or (lambda *args: None)
         self.env = self._prepare_env(env)
-        def _get_diff(key, default):
-            diff_cfg = cfg.diffusion
-            if diff_cfg is None:
-                return default
-            if isinstance(diff_cfg, dict):
-                return diff_cfg.get(key, default)
-            if hasattr(diff_cfg, key):
-                return getattr(diff_cfg, key)
-            if hasattr(diff_cfg, "get"):
-                return diff_cfg.get(key, default)
-            return default
+        action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
+        self.action_size_target = action_shape * cfg.ent_target_mult
+        diff_cfg = require(cfg, "diffusion")
 
-        self.diffusion_steps = _get_diff("diff_steps", 1)
+        self.diffusion_steps = require(diff_cfg, "diff_steps")
         self.eval_env_steps = cfg.max_episode_steps * self.diffusion_steps
         self.num_collection_steps = cfg.num_steps * self.diffusion_steps
         self.num_minibatches = cfg.num_mini_batches * self.diffusion_steps
@@ -361,7 +366,7 @@ class ReppoPPOTrainer:
                 obs_dim=obs_dim,
                 critic_obs_dim=critic_obs_dim,
                 action_dim=env.action_space(env_params).shape[0],
-                hidden_dim=getattr(cfg, "critic_hidden_dim", 64),
+                hidden_dim=require(cfg, "critic_hidden_dim"),
                 cfg=cfg,
                 rngs=nnx.Rngs(model_key),
             )
@@ -472,10 +477,19 @@ class ReppoPPOTrainer:
             next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )
-            soft_reward = (
-                reward
-                - log_ratio.squeeze() * self.cfg.entropy_coef
-            )
+            if cfg.update_entropy_lagrangian:
+                temperature = model.actor_module.temperature()
+                entropy_scale = temperature
+                soft_reward = (
+                    reward
+                    - cfg.gamma * log_ratio.squeeze() * entropy_scale
+                )
+            else:
+                entropy_scale = cfg.entropy_coef
+                soft_reward = (
+                    reward
+                    - log_ratio.squeeze() * entropy_scale
+                )
             transition = Transition(
                 obs=obs,
                 critic_obs=critic_obs,
@@ -570,10 +584,10 @@ class ReppoPPOTrainer:
                 def loss_fn(params):
                     model = nnx.merge(train_state.graphdef, params)
 
-                    
                     gen_log_prob, dest_log_prob = model.actor_log_prob_step(minibatch.obs, minibatch.action)
                     value = model.critic(minibatch.critic_obs)
 
+                    log_ratio = gen_log_prob - dest_log_prob
                     value_pred_clipped = minibatch.value + (
                         value - minibatch.value
                     ).clip(-cfg.clip_ratio, cfg.clip_ratio)
@@ -593,7 +607,16 @@ class ReppoPPOTrainer:
                     )
 
                     adv_base = advantages
-                    unnormed_advantages = adv_base - minibatch.soft_reward + minibatch.reward  - (gen_log_prob - dest_log_prob) * self.cfg.entropy_coef
+                    if cfg.update_entropy_lagrangian:
+                        entropy_scale = jax.lax.stop_gradient(model.actor_module.temperature())
+                    else:
+                        entropy_scale = self.cfg.entropy_coef
+                    unnormed_advantages = (
+                        adv_base
+                        - minibatch.soft_reward
+                        + minibatch.reward
+                        - log_ratio * entropy_scale
+                    )
                     if cfg.normalize_advantages:
                         adv_base = (unnormed_advantages - jnp.mean(unnormed_advantages)) / (
                             jnp.std(unnormed_advantages) + 1e-8
@@ -617,11 +640,30 @@ class ReppoPPOTrainer:
                         actor_loss
                         + cfg.value_coef * value_loss
                     )
+                    if cfg.update_entropy_lagrangian:
+                        entropy = -self.diffusion_steps * jnp.mean(log_ratio, axis=0)
+                        target_entropy = self.action_size_target + entropy
+                        target_entropy_loss = (
+                            model.actor_module.temperature()
+                            * jax.lax.stop_gradient(target_entropy)
+                        ).mean()
+                        loss += target_entropy_loss
+                    else:
+                        entropy = 0.0
+                        target_entropy = 0.0
+                        target_entropy_loss = 0.0
+                    jax.debug.print("temperature  loss: {}", model.actor_module.temperature())
+                    # print all losses here
+                    jax.debug.print("actor_loss: {}, value_loss: {}, entropy_loss: {}, entropy: {}, target_entropy: {}, target_entropy_loss: {}, total_loss: {}", actor_loss, value_loss, entropy_loss, entropy, target_entropy, target_entropy_loss, loss)
 
                     return loss, dict(
                         actor_loss=actor_loss,
                         value_loss=value_loss,
                         entropy_loss=entropy_loss,
+                        entropy=entropy,
+                        target_entropy=target_entropy,
+                        target_entropy_loss=target_entropy_loss,
+                        temperature=model.actor_module.temperature(),
                         loss=loss,
                         mean_value=value.mean(),
                         mean_log_prob=gen_log_prob.mean(),
@@ -799,14 +841,21 @@ def run(cfg: DictConfig):
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         advantages = metrics.pop("train/advantages", None)
+        advantages_hist = None
+        if advantages is not None:
+            adv_np = np.asarray(jax.device_get(advantages))
+            finite_mask = np.isfinite(adv_np)
+            if finite_mask.any():
+                advantages_hist = wandb.Histogram(adv_np[finite_mask])
         logging.info(
             f"step={state.time_steps[0]} episode_return={episode_return:.3f}, sps={sps:.2f}"
         )
         log_data = {
             "eval/episode_return": episode_return,
-            "train/advantages": wandb.Histogram(advantages),
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
+        if advantages_hist is not None:
+            log_data["train/advantages"] = advantages_hist
         wandb.log(log_data, step=state.time_steps[0])
 
     logging.info(OmegaConf.to_yaml(cfg))

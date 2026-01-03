@@ -159,6 +159,8 @@ def make_eval_fn(
             obs, _, env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )
+            # print the shape of the actions
+            jax.debug.print("Eval action shape: {shape}", shape=action.shape)
             return (key, env_state, obs), info
 
         key, init_key = jax.random.split(key)
@@ -700,6 +702,9 @@ def make_train_fn(
 
                     def single_log_prob(obs, act):
                         return actor_model.actor(obs[None]).log_prob(act[None]).sum()
+                    
+                    def single_target_log_prob(obs, act):
+                        return actor_target_model.actor(obs[None]).log_prob(act[None]).sum()
 
                     stop_pred_action = jax.lax.stop_gradient(pred_action)
                     q_action_grad = jax.vmap(
@@ -710,40 +715,6 @@ def make_train_fn(
                         jax.grad(single_log_prob, argnums=1)
                     )(minibatch.obs, stop_pred_action)
 
-                    # Emit scalar summaries so jax.debug.print triggers inside jit/grad
-                    # jax.debug.print(
-                    #     "q_action_grad mean={mean} max={mx} nan={nan}",
-                    #     mean=jnp.nanmean(q_action_grad),
-                    #     mx=jnp.nanmax(q_action_grad),
-                    #     nan=jnp.any(jnp.isnan(q_action_grad)),
-                    # )
-                    # jax.debug.print(
-                    #     "log_prob_action_grad mean={mean} max={mx} nan={nan}",
-                    #     mean=jnp.nanmean(log_prob_action_grad),
-                    #     mx=jnp.nanmax(log_prob_action_grad),
-                    #     nan=jnp.any(jnp.isnan(log_prob_action_grad)),
-                    # )
-                    # jax.debug.print(
-                    #     "value mean={mean} max={mx} min={mn} nan={nan}",
-                    #     mean=jnp.nanmean(value),
-                    #     mx=jnp.nanmax(value),
-                    #     mn=jnp.nanmin(value),
-                    #     nan=jnp.any(jnp.isnan(value)),
-                    # )
-                    # jax.debug.print(
-                    #     "pred_action mean={mean} max={mx} min={mn} nan={nan}",
-                    #     mean=jnp.nanmean(pred_action),
-                    #     mx=jnp.nanmax(pred_action),
-                    #     mn=jnp.nanmin(pred_action),
-                    #     nan=jnp.any(jnp.isnan(pred_action)),
-                    # )
-                    # jax.debug.print(
-                    #     "log_prob mean={mean} max={mx} min={mn} nan={nan}",
-                    #     mean=jnp.nanmean(log_prob),
-                    #     mx=jnp.nanmax(log_prob),
-                    #     mn=jnp.nanmin(log_prob),
-                    #     nan=jnp.any(jnp.isnan(log_prob)),
-                    # )
 
                     log_prob = log_prob.sum(-1)
                     entropy = -log_prob
@@ -768,12 +739,30 @@ def make_train_fn(
                         old_pi_action, old_pi_act_log_prob = actor_target_model.actor(
                             minibatch.obs
                         ).sample_and_log_prob(sample_shape=(16,), seed=key)
+
                         old_pi_action = jnp.clip(old_pi_action, -cfg.action_clip_value, cfg.action_clip_value)
+                        old_pi_action = jax.lax.stop_gradient(old_pi_action)
+
+                        target_log_prob_action_grad = jax.vmap(
+                            jax.vmap(
+                                jax.grad(single_target_log_prob, argnums=1),
+                                in_axes=(0, 0),
+                            ),
+                            in_axes=(None, 0),
+                        )(minibatch.obs, old_pi_action)
+
+                        kl_log_prob_action_grad = jax.vmap(jax.vmap(
+                                jax.grad(single_log_prob, argnums=1),
+                                in_axes=(0, 0)),in_axes=(None, 0))(minibatch.obs, old_pi_action)
+                        #print the shapes of log prob gradiens
+                        # jax.debug.print("target_log_prob_action_grad shape={shape}", shape=target_log_prob_action_grad.shape)
+                        # jax.debug.print("kl_log_prob_action_grad shape={shape}", shape=kl_log_prob_action_grad.shape)
+                        kl = jnp.mean(jnp.mean((target_log_prob_action_grad - kl_log_prob_action_grad)**2, axis = -1), axis = 0)
 
                         old_pi_act_log_prob = old_pi_act_log_prob.sum(-1).mean(0)
                         pi_act_log_prob = pi.log_prob(old_pi_action).sum(-1).mean(0)
 
-                        kl = old_pi_act_log_prob - pi_act_log_prob
+                        Kl_value = old_pi_act_log_prob - pi_act_log_prob
 
                     temperature = actor_model.temperature()
                     lagrangian = actor_model.lagrangian()
@@ -798,7 +787,7 @@ def make_train_fn(
                         )
                     elif cfg.actor_kl_clip_mode == "clipped":
                         actor_loss = jnp.where(
-                            kl < cfg.kl_bound,
+                            Kl_value < cfg.kl_bound,
                             actor_Q_loss,
                             kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
                         )
@@ -817,7 +806,7 @@ def make_train_fn(
 
                     # Lagrangian constraint (follows temperature update)
                     lagrangian_loss = -lagrangian * jax.lax.stop_gradient(
-                        kl - cfg.kl_bound
+                        Kl_value - cfg.kl_bound
                     )
 
                     # total loss
@@ -844,7 +833,8 @@ def make_train_fn(
                         abs_batch_action=jnp.abs(minibatch.action).mean(),
                         abs_pred_action=jnp.abs(pred_action).mean(),
                         reward_mean=minibatch.reward.mean(),
-                        kl=kl.mean(),
+                        w2_kl=kl.mean(),
+                        kl = Kl_value.mean(),
                         lagrangian=lagrangian,
                         lagrangian_loss=lagrangian_loss,
                         entropy=entropy,

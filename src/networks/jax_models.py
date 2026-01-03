@@ -547,9 +547,17 @@ class SACActorNetworks(nnx.Module):
     ) -> tuple[jax.Array, jax.Array]:
         loc = self.actor_module(obs)
         mean, log_std = jnp.split(loc, 2, axis=-1)
-        std = (jnp.exp(log_std) + self.min_std) * scale
 
         if self.train_mode == "WPO":
+            log_std_sg = jax.lax.stop_gradient(log_std)
+            log_std = log_std_sg + (log_std - log_std_sg) * 0.5
+            std = (jnp.exp(log_std) + self.min_std) * scale
+            var = std ** 2
+            mean_sg = jax.lax.stop_gradient(mean)
+            varsg = jax.lax.stop_gradient(var)
+            mean = mean_sg + (mean - mean_sg) * (varsg)
+        elif(False):
+            std = (jnp.exp(log_std) + self.min_std) * scale
             var = std ** 2
             mean_sg = jax.lax.stop_gradient(mean)
             varsg = jax.lax.stop_gradient(var)
@@ -557,6 +565,8 @@ class SACActorNetworks(nnx.Module):
             var = varsg + (var - varsg) * varsg * 0.5
             #var = jnp.clip(var, a_min=1e-8)  # guard against negative/denormals
             std = jnp.sqrt(var)
+        else:
+            std = (jnp.exp(log_std) + self.min_std) * scale
 
         return mean, std
 
@@ -842,10 +852,11 @@ class DIMEActor(nnx.Module):
 
         terminal_costs = self.diffusion_model.prior_log_prob(init_x)
         running_cost = -(log_ratio + distrax.Tanh().forward_log_det_jacobian(final_x).sum())
+        unscaled_running_cost = -log_ratio
         stochastic_costs = jnp.zeros_like(running_cost)
 
         final_x = distrax.Tanh().forward(final_x)
-        return final_x, running_cost, stochastic_costs, terminal_costs.reshape(running_cost.shape)
+        return final_x, running_cost, stochastic_costs, terminal_costs.reshape(running_cost.shape), unscaled_running_cost
 
     def sample(
         self,
@@ -866,8 +877,8 @@ class DIMEActor(nnx.Module):
         in_axes = (0, 0) # keys, obs
         rnd_result = jax.vmap(_single_sample_for_vmap, in_axes=in_axes)(keys, obs)
         
-        x_0, running_costs, stochastic_costs, terminal_costs = rnd_result
-        return (x_0, running_costs, stochastic_costs, terminal_costs)
+        x_0, running_costs, stochastic_costs, terminal_costs,unscaled_running_costs = rnd_result
+        return (x_0, running_costs, stochastic_costs, terminal_costs, unscaled_running_costs)
 
     def _single_ode_sample(self, key, obs, stop_grad, ode, ode_coef):
         """

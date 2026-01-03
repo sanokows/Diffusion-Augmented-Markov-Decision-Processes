@@ -529,7 +529,7 @@ def make_train_fn(
 
             # compute next state embedding and value
             key, next_act_key = jax.random.split(key)
-            next_action, next_run_cost, next_sto_cost, next_terminal_cost = actor_model.sample(next_act_key, next_obs, stop_grad=True)
+            next_action, next_run_cost, next_sto_cost, next_terminal_cost, _ = actor_model.sample(next_act_key, next_obs, stop_grad=True)
             next_action = jax.lax.stop_gradient(next_action)
             next_run_cost = jax.lax.stop_gradient(next_run_cost)
             next_sto_cost = jax.lax.stop_gradient(next_sto_cost)
@@ -709,7 +709,7 @@ def make_train_fn(
                     actor_model = nnx.merge(train_state.actor.graphdef, params)
 
                     # SAC actor loss
-                    pred_action, pred_run_cost, pred_sto_cost, pred_terminal_cost = actor_model.sample(key, minibatch.obs, stop_grad=False)
+                    pred_action, pred_run_cost, pred_sto_cost, pred_terminal_cost, unscaled_pred_run_cost = actor_model.sample(key, minibatch.obs, stop_grad=False)
 
                     # NOTE: DIME
                     log_prob = (pred_run_cost +  pred_sto_cost + pred_terminal_cost) # (1024, )
@@ -807,7 +807,8 @@ def make_train_fn(
                         entropy_loss=target_entropy_loss,
                         target_values=target_values.mean(),
                         actor_pnorm=actor_pnorm,
-                        friction=friction_detached.mean()
+                        friction=friction_detached.mean(),
+                        unscaled_entropy = -unscaled_pred_run_cost.mean()
                     )
 
                 critic_grad_fn = jax.value_and_grad(critic_loss_fn, has_aux=True)

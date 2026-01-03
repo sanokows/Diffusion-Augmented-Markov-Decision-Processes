@@ -288,19 +288,36 @@ def torch_he_uniform(
     )
 
 
+def zeros_initializer(key, shape, dtype=jnp.float32):
+    return jnp.zeros(shape, dtype)
+
+
 class UnitBallNorm(nnx.Module):
     def __call__(self, x: jax.Array) -> jax.Array:
         return x / (jnp.linalg.norm(x, axis=-1, keepdims=True) + 1e-8)
 
 
 def normed_activation_layer(
-    rngs, in_features, out_features, use_norm=True, activation=nnx.swish
+    rngs,
+    in_features,
+    out_features,
+    use_norm=True,
+    activation=nnx.swish,
+    kernel_init=None,
+    bias_init=None,
 ):
+    linear_kwargs = {}
+    if kernel_init is not None:
+        linear_kwargs["kernel_init"] = kernel_init
+    if bias_init is not None:
+        linear_kwargs["bias_init"] = bias_init
+
     layers = [
         nnx.Linear(
             in_features=in_features,
             out_features=out_features,
             rngs=rngs,
+            **linear_kwargs,
         )
     ]
     if use_norm:
@@ -331,6 +348,8 @@ class FCNN(nnx.Module):
         input_skip: bool = False,
         hidden_skip: bool = False,
         output_skip: bool = False,
+        output_kernel_init=None,
+        output_bias_init=None,
         *,
         rngs: nnx.Rngs,
     ):
@@ -359,14 +378,14 @@ class FCNN(nnx.Module):
             )
             for _ in range(layers - 2)
         ]
-        # self.norm = nnx.RMSNorm(in_features, rngs=rngs)
-        self.norm = nnx.LayerNorm(in_features, rngs=rngs)
         self.output_layer = normed_activation_layer(
             rngs,
             hidden_dim,
             out_features,
             use_norm=use_output_norm,
             activation=output_activation,
+            kernel_init=output_kernel_init,
+            bias_init=output_bias_init,
         )
 
     def __call__(self, x: jax.Array) -> jax.Array:
@@ -377,7 +396,6 @@ class FCNN(nnx.Module):
                 return layer(x)
 
         if self.input_activation:
-            # x = self.norm(x)
             x = self.hidden_activation(x)
         if self.layers == 1:
             return _potentially_skip(self.input_skip, x, self.input_layer)
@@ -1030,6 +1048,8 @@ class DMERLActor(nnx.Module):
                 use_norm=False,
                 output_activation=None,
                 layers=2,
+                output_kernel_init=zeros_initializer,
+                output_bias_init=zeros_initializer,
                 rngs=rngs,
             )
             self.lagrangian_mlp = FCNN(
@@ -1039,6 +1059,8 @@ class DMERLActor(nnx.Module):
                 use_norm=False,
                 output_activation=None,
                 layers=2,
+                output_kernel_init=zeros_initializer,
+                output_bias_init=zeros_initializer,
                 rngs=rngs,
             )
         else:
@@ -1085,7 +1107,8 @@ class DMERLActor(nnx.Module):
         x_new = out_dict["x_new"]
         gen_log_prob = out_dict["gen_log_prob"]
         is_last_step = self.diff_steps - 1 == step
-        gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+        #gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+        gen_log_prob_new = gen_log_prob
         # Clip logits so tanh(action) always respects action_clip_value on the final step.
         # clip_limit = jnp.arctanh(jnp.asarray(self.action_clip_value, dtype=x_new.dtype))
         # clipped_x_new = jnp.clip(x_new, -clip_limit, clip_limit)

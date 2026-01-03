@@ -19,17 +19,22 @@ python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyper
 
 ###PPO
 python -m src.jaxrl.reppo_PPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000
-python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.entropy_coef=0.002
+python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=1e-4 hyperparameters.update_entropy_lagrangian=False hyperparameters.entropy_coef=0.002
 
 python -m src.jaxrl.ppo_mjx env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000
 
 cd /home/it4i-sanokows/code/DIMEReppo
-###dime
-python -m src.jaxrl.reppo_dime env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=1. hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=full
+
+### dime
+python -m src.jaxrl.reppo_dime env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=1. hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped
 
 ### humanoid
 ### reppo WPO
-JAX_DEBUG_NANS=1 python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.lr=1e-4  hyperparameters.train_mode=WPO hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_target_mult=0.3
+python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.lr=1e-5 hyperparameters.train_mode=WPO hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_target_mult=0.3 hyperparameters.kl_bound=0.1 hyperparameters.kl_start=1e-7 hyperparameters.actor_kl_clip_mode=clipped
+
+JAX_DEBUG_NANS=1 python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.lr=1e-4  hyperparameters.train_mode=WPO hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_target_mult=0.5
+
+python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.lr=1e-5 hyperparameters.train_mode=WPO hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_target_mult=0.3 hyperparameters.kl_bound=0.1 hyperparameters.kl_start=1e-7 hyperparameters.actor_kl_clip_mode=clipped
 
 JAX_DEBUG_NANS=1 python -m src.jaxrl.reppo_dime env.name=HumanoidWalk hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=4 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.lr=4e-4 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.diffusion.learn_friction=false hyperparameters.aux_loss_mult=1. hyperparameters.kl_bound=0.1
 
@@ -54,13 +59,26 @@ python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_ev
 python -m src.jaxrl.reppo env.name=HumanoidWalk hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.lr=5e-5
 
 ### Cheetah
-#best run no critic weight decay
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=120 hyperparameters.reverse_kl=true hyperparameters.actor_kl_clip_mode=full hyperparameters.temperature_lr=1e-5 hyperparameters.lagrangian_lr=1e-5 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.98 hyperparameters.lmbda=0.93 hyperparameters.weight_decay=1e-6
+### good run with changed entropy
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32
 
-### laarger minibatch size
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=16
+### more minibatches
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=2e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=2e-4 hyperparameters.lagrangian_lr=2e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.97 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=64 hyperparameters.diffusion.learn_friction=true
 
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.9995 hyperparameters.lmbda=0.96 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=16
+### adjusted adam gamma **1/4 in this case seems to work well
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=1e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=1e-4 hyperparameters.lagrangian_lr=1e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.9993 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=64 hyperparameters.diffusion.learn_friction=false hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997
+
+### adjusted adam gamma **1/4 in this case seems to work well but with unit ball norm
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=2e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=1e-4 hyperparameters.lagrangian_lr=1e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.9993 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=1e-6 hyperparameters.num_mini_batches=64 hyperparameters.diffusion.learn_friction=false hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.project_unit_ball=true 
+
+### learn friction additionally
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.diffusion.learn_friction=true
+
+
+
+
+### works well
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=3e-4 hyperparameters.vmin=-40 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=4 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.aux_loss_mult=1.
 
 
 ### best DMLER run so far
@@ -98,12 +116,13 @@ python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval
 
 Next steps
 ### implement learned prior and learned std
-### implement WPO and DiffPPO
-### log the entropy and not lower bound estimate
 ### plot point of mass
-### todo sweep over gamma and lambda
-### todo test lr annealing
 
 ### TODO log time of the diff env steps
 ### TODO find out how large batch size should be!
-### test if full batch yields same tmeperature updates
+
+### todo make friction learnable by neural network
+### todo make prior learnable in DMERL
+
+
+### TODO add distributional value function in DiffPPO

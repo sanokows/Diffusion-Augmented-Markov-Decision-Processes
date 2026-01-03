@@ -19,6 +19,10 @@ hyperparameters:
   temperature_lr: 1e-5
   lagrangian_lr: 1e-5
   temp_lagrangian_optim: "adam"
+  temp_lagrangian_adam_gamma1: 0.9
+  temp_lagrangian_adam_gamma2: 0.999
+  project_unit_ball: false
+  project_only_if_exceeds: false
   anneal_lr: false
   max_grad_norm: 0.5
   polyak: 1.0 # maybe ablate ?
@@ -73,7 +77,7 @@ hyperparameters:
   actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
   ## entropy settings
   ent_start: 0.01
-  ent_target_mult: 4.
+  ent_target_mult: 3.
   update_entropy_lagrangian: true
   # optionally learn temperature/kl multipliers with a tiny MLP
   use_temp_lagrangian_mlp: false
@@ -82,7 +86,7 @@ hyperparameters:
   temperature_lr_mult: 1.0
   lagrangian_lr_mult: 1.0
   ## auxiliary loss settings
-  aux_loss_mult: 0.0
+  aux_loss_mult: 1.0
 
   # DIME diffusion settings
   diffusion:
