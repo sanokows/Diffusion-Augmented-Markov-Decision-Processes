@@ -18,7 +18,7 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
 
     # Compute SDE components
     dt = diffusion_model.delta_t_fn(step)
-    sigma_square = 1. / diffusion_model.friction_fn(step)
+    sigma_square = 1. / diffusion_model.friction_fn(step, obs)
     eta = dt * sigma_square
     scale = jnp.sqrt(2 * eta)
 
@@ -56,7 +56,7 @@ def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, sto
 
     # Compute SDE components
     dt = diffusion_model.delta_t_fn(step)
-    sigma_square = 1. / diffusion_model.friction_fn(step)
+    sigma_square = 1. / diffusion_model.friction_fn(step, obs)
     eta = dt * sigma_square
     scale = jnp.sqrt(2 * eta)
 
@@ -88,7 +88,7 @@ def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, ob
 
     # Compute SDE components
     dt = diffusion_model.delta_t_fn(step)
-    sigma_square = 1. / diffusion_model.friction_fn(step)
+    sigma_square = 1. / diffusion_model.friction_fn(step, obs)
     eta = dt * sigma_square
     scale = jnp.sqrt(2 * eta)
 
@@ -128,7 +128,7 @@ def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.
 
         # Compute SDE components
         dt = diffusion_model.delta_t_fn(step)
-        sigma_square = 1. / diffusion_model.friction_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step, obs)
         eta = dt * sigma_square
         scale = jnp.sqrt(2 * eta)
 
@@ -165,7 +165,7 @@ def ode_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.
 
         # Compute SDE components
         dt = diffusion_model.delta_t_fn(step)
-        sigma_square = 1. / diffusion_model.friction_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step, obs)
         eta = dt * sigma_square
         scale = jnp.sqrt(2 * eta)
 
@@ -200,7 +200,7 @@ def logratio(diffusion_model, target_diffusion_model, obs, stop_grad=True, kl_ac
 
         # Compute SDE components
         dt = diffusion_model.delta_t_fn(step)
-        sigma_square = 1. / diffusion_model.friction_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step, obs)
         eta = dt * sigma_square
         scale = jnp.sqrt(2 * eta)
 
@@ -240,7 +240,7 @@ def logratio_DIME(diffusion_model, target_diffusion_model, obs, stop_grad=True, 
 
         # Compute SDE components
         dt = diffusion_model.delta_t_fn(step)
-        sigma_square = 1. / diffusion_model.friction_fn(step)
+        sigma_square = 1. / diffusion_model.friction_fn(step, obs)
         eta = dt * sigma_square
         scale = jnp.sqrt(2 * eta)
 
@@ -873,6 +873,12 @@ class DiffusionModel(nnx.Module):
         friction: float = 1.0,
         per_dim_friction: bool = True,
         dt: float = 0.01,
+        use_friction_mlp: bool = False,
+        friction_mlp_hidden: int = 64,
+        friction_mlp_layers: int = 2,
+        friction_num_time_hid: int = 32,
+        friction_num_time_out: int = 16,
+        friction_mlp_use_obs: bool = True,
         learn_dt: bool = True,
         per_step_dt: bool = False,
         learn_prior: bool = False,
@@ -896,6 +902,15 @@ class DiffusionModel(nnx.Module):
         self.learn_betas = learn_betas
         self.per_step_dt = per_step_dt
         self.dt_schedule = dt_schedule
+        self.use_friction_mlp = use_friction_mlp
+        self.friction_num_time_hid = friction_num_time_hid
+        self.friction_num_time_out = friction_num_time_out
+        self.friction_mlp_use_obs = friction_mlp_use_obs
+        # Actor observation often concatenates orig_obs and prev actions; use a derived
+        # orig-obs dim for friction MLP input to avoid mismatched shapes at runtime.
+        self.orig_obs_dim = (
+            observation_dim - action_dim if observation_dim > action_dim else observation_dim
+        )
         
         # Learnable parameters (converted from the params dict)
         self.betas = nnx.Param(jnp.ones((diff_steps,)))
@@ -914,6 +929,33 @@ class DiffusionModel(nnx.Module):
             self.friction = nnx.Param(jnp.ones(action_dim) * inverse_softplus(friction))
         else:
             self.friction = nnx.Param(jnp.ones(1) * inverse_softplus(friction))
+
+        if self.use_friction_mlp:
+            self.friction_timestep_phase = nnx.Param(jnp.zeros((1, self.friction_num_time_hid)))
+            self.friction_timestep_coeff = nnx.Variable(
+                jnp.linspace(start=0.1, stop=50, num=self.friction_num_time_hid)[None]
+            )
+            self.friction_time_coder_state = nnx.Sequential(
+                nnx.Linear(self.friction_num_time_hid * 2, self.friction_num_time_hid, rngs=rngs),
+                nnx.gelu,
+                nnx.Linear(self.friction_num_time_hid, self.friction_num_time_out, rngs=rngs),
+            )
+            friction_out_dim = self.friction.value.shape[-1]
+            friction_in_features = (
+                self.friction_num_time_out if not self.friction_mlp_use_obs
+                else self.orig_obs_dim + self.friction_num_time_out
+            )
+            self.friction_mlp = FCNN(
+                in_features=friction_in_features,
+                out_features=friction_out_dim,
+                hidden_dim=friction_mlp_hidden,
+                use_norm=True,
+                use_output_norm=False,
+                layers=friction_mlp_layers,
+                output_kernel_init=zeros_initializer,
+                output_bias_init=zeros_initializer,
+                rngs=rngs,
+            )
 
     def get_prior_entropy(self):
         dist = distrax.MultivariateNormalDiag(
@@ -961,9 +1003,36 @@ class DiffusionModel(nnx.Module):
             dt = self.dt.value if self.learn_dt else jax.lax.stop_gradient(self.dt.value)
             return jax.nn.softplus(dt) * self.dt_schedule(step)
 
-    def friction_fn(self, step: jax.Array) -> jax.Array:
+    def get_friction_fourier_features(self, timesteps):
+        sin_embed_cond = jnp.sin(
+            (self.friction_timestep_coeff.value * timesteps) + self.friction_timestep_phase.value
+        )
+        cos_embed_cond = jnp.cos(
+            (self.friction_timestep_coeff.value * timesteps) + self.friction_timestep_phase.value
+        )
+        return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
+
+    def friction_fn(self, step: jax.Array, obs_dict: dict[str, jax.Array] | None = None) -> jax.Array:
         """Friction coefficient function."""
         friction = jax.nn.softplus(self.friction.value)
+        if self.use_friction_mlp:
+            if obs_dict is None:
+                raise ValueError("obs_dict must be provided when use_friction_mlp=True.")
+            time = obs_dict["diff_time_step"]
+            time_emb = self.get_friction_fourier_features(time)
+            if self.friction_mlp_use_obs:
+                orig_obs = obs_dict["orig_obs"]
+                if len(orig_obs.shape) == 1:
+                    time_emb = time_emb[0]
+                t_net = self.friction_time_coder_state(time_emb)
+                mlp_in = jnp.concatenate([orig_obs, t_net], axis=-1)
+            else:
+                if len(time_emb.shape) == 1:
+                    time_emb = time_emb[0]
+                mlp_in = self.friction_time_coder_state(time_emb)
+            friction_out = self.friction_mlp(mlp_in)
+            friction = jax.nn.softplus(self.friction.value + friction_out)
+
         return friction if self.learn_friction else jax.lax.stop_gradient(friction)
 
     def mass_fn(self) -> jax.Array:
@@ -1086,10 +1155,11 @@ class DMERLActor(nnx.Module):
     
     def _eval_log_prob(self, current_x, step, obs, actions):
         out_dict = evaluate_one_step_log_prob(self.diffusion_model, current_x, step, obs, actions, stop_grad=False)
-        gen_log_prob = out_dict["gen_log_prob"]
-        is_last_step = self.diff_steps - 1 == step
-        gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(actions).sum(), gen_log_prob)
-        out_dict["gen_log_prob"] = gen_log_prob_new
+        #gen_log_prob = out_dict["gen_log_prob"]
+        #is_last_step = self.diff_steps - 1 == step
+        #gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(actions).sum(), gen_log_prob)
+        #gen_log_prob_new = gen_log_prob_new
+        #out_dict["gen_log_prob"] = gen_log_prob_new
         return out_dict
     
     def vmap_eval_log_prob(self, obs, actions):

@@ -79,6 +79,12 @@ hyperparameters:
     diff_steps: 8
     init_std: 2.5
     friction: 1.0
+    use_friction_mlp: false
+    friction_mlp_hidden: 64
+    friction_mlp_layers: 2
+    friction_num_time_hid: 32
+    friction_num_time_out: 16
+    friction_mlp_use_obs: true
     integrator: "EM"
 
     learn_forward: true

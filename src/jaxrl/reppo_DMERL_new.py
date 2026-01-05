@@ -142,6 +142,12 @@ class ReppoConfig(struct.PyTreeNode):
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
     use_lax_scan: bool = True
+    use_friction_mlp: bool = False
+    friction_mlp_hidden: int = 64
+    friction_mlp_layers: int = 2
+    friction_num_time_hid: int = 32
+    friction_num_time_out: int = 16
+    friction_mlp_use_obs: bool = True
     diffusion: Any = None
     ode_coefs: list | None = None
     project_unit_ball: bool = True
@@ -432,6 +438,12 @@ class ReppoDMERLTrainer:
                 init_std=cfg.diffusion.init_std,
                 friction=cfg.diffusion.friction,
                 per_dim_friction=cfg.diffusion.per_dim_friction,
+                use_friction_mlp=cfg.diffusion.use_friction_mlp,
+                friction_mlp_hidden=cfg.diffusion.friction_mlp_hidden,
+                friction_mlp_layers=cfg.diffusion.friction_mlp_layers,
+                friction_num_time_hid=cfg.diffusion.friction_num_time_hid,
+                friction_num_time_out=cfg.diffusion.friction_num_time_out,
+                friction_mlp_use_obs=cfg.diffusion.friction_mlp_use_obs,
                 dt=cfg.diffusion.dt,
                 learn_dt=cfg.diffusion.learn_dt,
                 per_step_dt=cfg.diffusion.per_step_dt,

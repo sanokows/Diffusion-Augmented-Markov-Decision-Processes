@@ -3,6 +3,7 @@ import math
 import time
 import typing
 from typing import Callable, Optional
+import functools
 
 import distrax
 import numpy as np
@@ -100,9 +101,16 @@ class PPOConfig(struct.PyTreeNode):
     use_critic_skip: bool = False
     action_clip_value: float = 1.0
     kl_start: float = 0.1
+    kl_bound: float = 1.0
+    kl_action_rep: int = 1
+    reduce_kl: bool = True
+    reverse_kl: bool = False
     ent_start: float = 0.1
     ent_target_mult: float = 0.5
     update_entropy_lagrangian: bool = False
+    use_kl_regularization: bool = False
+    actor_kl_clip_mode: str = "clipped"
+    use_clipped_objective: bool = True
     temp_lagrangian_adam_gamma1: float = 0.9
     temp_lagrangian_adam_gamma2: float = 0.999
     weight_decay: float = 0.0
@@ -201,6 +209,12 @@ class PPONetworks(nnx.Module):
             init_std=require(diff_cfg, "init_std"),
             friction=require(diff_cfg, "friction"),
             per_dim_friction=require(diff_cfg, "per_dim_friction"),
+            use_friction_mlp=require(diff_cfg, "use_friction_mlp"),
+            friction_mlp_hidden=require(diff_cfg, "friction_mlp_hidden"),
+            friction_mlp_layers=require(diff_cfg, "friction_mlp_layers"),
+            friction_num_time_hid=require(diff_cfg, "friction_num_time_hid"),
+            friction_num_time_out=require(diff_cfg, "friction_num_time_out"),
+            friction_mlp_use_obs=require(diff_cfg, "friction_mlp_use_obs"),
             dt=require(diff_cfg, "dt"),
             learn_dt=require(diff_cfg, "learn_dt"),
             per_step_dt=require(diff_cfg, "per_step_dt"),
@@ -378,8 +392,10 @@ class ReppoPPOTrainer:
                 num_updates = num_iterations * cfg.num_epochs * cfg.num_mini_batches
                 lr = optax.linear_schedule(cfg.lr, 1e-6, num_updates)
 
-            def _adam_with_decay(lr_val, weight_decay: float = 0.0, decay_mask=None):
-                tx = optax.adam(lr_val)
+            def _adam_with_decay(
+                lr_val, weight_decay: float = 0.0, decay_mask=None, optim=optax.adam
+            ):
+                tx = optim(lr_val)
                 if weight_decay is not None and weight_decay > 0.0:
                     tx = optax.chain(
                         optax.add_decayed_weights(weight_decay, mask=decay_mask), tx
@@ -391,7 +407,9 @@ class ReppoPPOTrainer:
                 labels = {}
                 for k in flat.keys():
                     leaf_name = k[-1]
-                    if "bias" in leaf_name or "norm" in leaf_name:
+                    if "temperature" in leaf_name or "lagrangian" in leaf_name:
+                        labels[k] = "temp_lagrangian"
+                    elif "bias" in leaf_name or "norm" in leaf_name:
                         labels[k] = "no_decay"
                     else:
                         labels[k] = "default"
@@ -399,9 +417,29 @@ class ReppoPPOTrainer:
 
             param_tree = nnx.to_pure_dict(nnx.state(networks))
             decay_labels = _label_weight_decay(param_tree)
+            diff_cfg = require(cfg, "diffusion")
+            if isinstance(diff_cfg, dict):
+                diff_steps = diff_cfg.get("diff_steps", None)
+            else:
+                diff_steps = getattr(diff_cfg, "diff_steps", None)
+            if diff_steps is not None and diff_steps > 0:
+                scale = (cfg.num_mini_batches * 4) / (128.0 *cfg.num_epochs)
+                temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1**scale
+                temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2**scale
+            else:
+                temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1
+                temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2
+            special_optimizer = functools.partial(
+                optax.adam,
+                b1=temp_lagrangian_adam_gamma1,
+                b2=temp_lagrangian_adam_gamma2,
+            )
             tx_cfg = {
                 "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
                 "no_decay": _adam_with_decay(lr, weight_decay=0.0),
+                "temp_lagrangian": _adam_with_decay(
+                    lr, weight_decay=0.0, optim=special_optimizer
+                ),
             }
             optimizer = optax.multi_transform(tx_cfg, decay_labels)
             if cfg.max_grad_norm is not None:
@@ -575,8 +613,9 @@ class ReppoPPOTrainer:
         )
 
         def update(train_state, key):
-            def minibatch_update(carry, indices):
+            def minibatch_update(carry, scan_inputs):
                 idx, train_state = carry
+                indices, step_key = scan_inputs
                 minibatch, advantages, target_values = jax.tree.map(
                     lambda x: jnp.take(x, indices, axis=0), data
                 )
@@ -599,6 +638,7 @@ class ReppoPPOTrainer:
                     )
 
                     ratio = jnp.exp(gen_log_prob - minibatch.log_prob)
+                    lagrangian = model.actor_module.lagrangian()
                     checkify.check(
                         jnp.allclose(ratio, 1.0) | (idx != 1),
                         debug=True,
@@ -607,33 +647,82 @@ class ReppoPPOTrainer:
                     )
 
                     adv_base = advantages
+
                     if cfg.update_entropy_lagrangian:
                         entropy_scale = jax.lax.stop_gradient(model.actor_module.temperature())
                     else:
                         entropy_scale = self.cfg.entropy_coef
+
                     unnormed_advantages = (
                         adv_base
                         - minibatch.soft_reward
                         + minibatch.reward
                         - log_ratio * entropy_scale
                     )
-                    if cfg.normalize_advantages:
+                    if (cfg.normalize_advantages):
                         adv_base = (unnormed_advantages - jnp.mean(unnormed_advantages)) / (
                             jnp.std(unnormed_advantages) + 1e-8
                         )
                     else:
                         adv_base = unnormed_advantages
+                    # print adv_base, unnormed_advantages statistics, reward and log ratio and ratio
+                    # jax.debug.print("adv_base mean: {}, std: {}", adv_base.mean(), adv_base.std())
+                    # jax.debug.print("unnormed_advantages mean: {}, std: {}", unnormed_advantages.mean(), unnormed_advantages.std())
+                    # jax.debug.print("reward mean: {}, log_ratio mean: {}", minibatch.reward.mean(), log_ratio.mean())
+                    # jax.debug.print("ratio mean: {}, std: {}", ratio.mean(), ratio.std())
+
+
                     adv_base = jax.lax.stop_gradient(adv_base)  ### when forward process is learned things have to be adapted
 
-                    actor_loss1 = ratio * adv_base
-                    actor_loss2 = (
-                        jnp.clip(ratio, 1 - cfg.clip_ratio, 1 + cfg.clip_ratio)
-                        * adv_base
-                    )
-                    actor_loss = -jnp.mean(
-                        (1.0 - minibatch.truncated)
-                        * jnp.minimum(actor_loss1, actor_loss2)
-                    )
+                    valid_mask = 1.0 - minibatch.truncated
+                    lagrangian_loss = jnp.array(0.0)
+                    if cfg.use_kl_regularization:
+                        actor_target_model = model.actor_module
+                        kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
+                        if cfg.reverse_kl:
+                            def compute_single(k):
+                                return model.actor_module.rkl_div_one_step(
+                                    k, minibatch.obs, actor_target_model, stop_grad=False
+                                )
+                        else:
+                            def compute_single(k):
+                                return model.actor_module.fkl_div_one_step(
+                                    k, minibatch.obs, actor_target_model, stop_grad=False
+                                )
+                        kl_log_ratios = jax.vmap(compute_single)(kl_keys)
+                        kl_log_ratios = kl_log_ratios.mean(axis=0)
+                        kl = self.diffusion_steps * kl_log_ratios.sum(-1)
+                        adv_term = ratio * adv_base
+                        kl_term = jax.lax.stop_gradient(lagrangian) * kl * (
+                            cfg.reduce_kl
+                        )
+                        if cfg.actor_kl_clip_mode == "full":
+                            combined = adv_term + kl_term
+                        elif cfg.actor_kl_clip_mode == "clipped":
+                            combined = jnp.where(
+                                kl < cfg.kl_bound, adv_term, kl_term
+                            )
+                        elif cfg.actor_kl_clip_mode == "value":
+                            combined = adv_term
+                        else:
+                            raise ValueError(
+                                f"Unknown actor_kl_clip_mode: {cfg.actor_kl_clip_mode}"
+                            )
+                        actor_loss = -jnp.mean(valid_mask * combined)
+                        lagrangian_loss = (
+                            -lagrangian
+                            * jax.lax.stop_gradient(kl - cfg.kl_bound)
+                        ).mean()
+                    else:
+                        actor_loss1 = ratio * adv_base
+                        actor_loss2 = (
+                            jnp.clip(ratio, 1 - cfg.clip_ratio, 1 + cfg.clip_ratio)
+                            * adv_base
+                        )
+                        actor_loss = -jnp.mean(
+                            valid_mask * jnp.minimum(actor_loss1, actor_loss2)
+                        )
+
                     entropy_loss = jnp.mean(gen_log_prob)
 
                     loss = (
@@ -652,9 +741,13 @@ class ReppoPPOTrainer:
                         entropy = 0.0
                         target_entropy = 0.0
                         target_entropy_loss = 0.0
-                    jax.debug.print("temperature  loss: {}", model.actor_module.temperature())
+                    if cfg.use_kl_regularization:
+                        loss += lagrangian_loss
+                    else:
+                        kl = jnp.array(0.0)
+                    #jax.debug.print("temperature  loss: {}", model.actor_module.temperature())
                     # print all losses here
-                    jax.debug.print("actor_loss: {}, value_loss: {}, entropy_loss: {}, entropy: {}, target_entropy: {}, target_entropy_loss: {}, total_loss: {}", actor_loss, value_loss, entropy_loss, entropy, target_entropy, target_entropy_loss, loss)
+                    #jax.debug.print("actor_loss: {}, value_loss: {}, entropy_loss: {}, entropy: {}, target_entropy: {}, target_entropy_loss: {}, kl: {}, lagrangian: {}, lagrangian_loss: {}, total_loss: {}", actor_loss, value_loss, entropy_loss, entropy, target_entropy, target_entropy_loss, kl, lagrangian, lagrangian_loss, loss)
 
                     return loss, dict(
                         actor_loss=actor_loss,
@@ -663,7 +756,10 @@ class ReppoPPOTrainer:
                         entropy=entropy,
                         target_entropy=target_entropy,
                         target_entropy_loss=target_entropy_loss,
-                        temperature=model.actor_module.temperature(),
+                        temp=model.actor_module.temperature(),
+                        kl=kl,
+                        lagrangian=lagrangian,
+                        lagrangian_loss=lagrangian_loss,
                         loss=loss,
                         mean_value=value.mean(),
                         mean_log_prob=gen_log_prob.mean(),
@@ -694,9 +790,10 @@ class ReppoPPOTrainer:
                 ),
                 indices,
             )
+            minibatch_keys = jax.random.split(shuffle_key, self.num_minibatches)
 
             train_state, metrics = jax.lax.scan(
-                minibatch_update, train_state, minibatch_idxs
+                minibatch_update, train_state, (minibatch_idxs, minibatch_keys)
             )
             metrics = jax.tree.map(lambda x: x.mean(0), metrics)
             return train_state, metrics

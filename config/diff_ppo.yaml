@@ -9,14 +9,20 @@ hyperparameters:
   clip_ratio: 0.2
   value_coef: 0.5
   entropy_coef: 0.00
-  ent_start: 0.01
+  ent_start: 0.002
   ent_target_mult: 3
-  update_entropy_lagrangian: true
+  update_entropy_lagrangian: false
+  use_kl_regularization: false
+  actor_kl_clip_mode: "clipped"
+  kl_bound: 0.1
+  kl_action_rep: 1
+  reduce_kl: true
+  reverse_kl: false
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
   total_time_steps: 50_000_000
   num_steps: 64
-  num_mini_batches: 32
+  num_mini_batches: 128
   num_envs: 2048
   num_epochs: 16
   max_grad_norm: 0.5
@@ -25,7 +31,7 @@ hyperparameters:
   anneal_lr: False
   num_eval: 20
   max_episode_steps: 1000
-  env_action_clip_value: 0.99
+  env_action_clip_value: 1.0
 
   # critic architecture settings (need to be increased for MJX humanoid)
   critic_hidden_dim: 512
@@ -41,6 +47,12 @@ hyperparameters:
     diff_steps: 8
     init_std: 2.5
     friction: 1.0
+    use_friction_mlp: false
+    friction_mlp_hidden: 64
+    friction_mlp_layers: 2
+    friction_num_time_hid: 32
+    friction_num_time_out: 16
+    friction_mlp_use_obs: true
     integrator: "EM"
 
     learn_forward: true
