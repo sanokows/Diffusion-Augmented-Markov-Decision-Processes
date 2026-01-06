@@ -16,6 +16,7 @@ hyperparameters:
   lr: 1e-4
   lr_decay_factor: 1.
   weight_decay: 0.0
+  use_current_critic_for_actor_samples: true
   temperature_lr: 1e-5
   lagrangian_lr: 1e-5
   temp_lagrangian_optim: "adam"
@@ -36,7 +37,7 @@ hyperparameters:
 
   # batch settings (need tuning for MJX humanoid)
   num_steps: 128
-  num_mini_batches: 256
+  num_mini_batches: 16
   num_envs: 1024
   num_epochs: 4
   use_lax_scan: true
@@ -65,6 +66,7 @@ hyperparameters:
   num_actor_layers: 3
   actor_min_std: 0.0
   use_actor_skip: False
+  train_mode: "reparam"
 
   # actor & critic loss settings (seem remarkably stable)
   ## kl settings
@@ -95,8 +97,8 @@ hyperparameters:
     init_std: 2.5
     friction: 1.0
     use_friction_mlp: false
-    friction_mlp_hidden: 64
-    friction_mlp_layers: 2
+    friction_mlp_hidden: 128
+    friction_mlp_layers: 3
     friction_num_time_hid: 32
     friction_num_time_out: 16
     friction_mlp_use_obs: true
@@ -128,6 +130,7 @@ hyperparameters:
       bias_init: 0.
       layer_norm: false
       layer_norm_type: "LayerNorm"
+      langevin_param: false
 
     dt_schedule:
       _target_: src.networks.diffusion.schedulers.get_cosine_schedule

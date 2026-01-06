@@ -169,6 +169,7 @@ class PPONetworks(nnx.Module):
                 bias_init=require(score_cfg, "bias_init"),
                 layer_norm=require(score_cfg, "layer_norm"),
                 layer_norm_type=require(score_cfg, "layer_norm_type"),
+                max_time=require(diff_cfg, "diff_steps"),
                 rngs=rngs,
             )
 
@@ -187,6 +188,7 @@ class PPONetworks(nnx.Module):
                 bias_init=require(score_cfg, "bias_init"),
                 layer_norm=require(score_cfg, "layer_norm"),
                 layer_norm_type=require(score_cfg, "layer_norm_type"),
+                max_time=require(diff_cfg, "diff_steps"),
                 rngs=rngs,
             )
 
@@ -222,6 +224,7 @@ class PPONetworks(nnx.Module):
             learn_betas=require(diff_cfg, "learn_betas"),
             learn_friction=require(diff_cfg, "learn_friction"),
             learn_mass_matrix=require(diff_cfg, "learn_mass_matrix"),
+            train_mode=diff_cfg.get("train_mode", "reparam"),
             dt_schedule=dt_schedule,
             rngs=rngs,
         )
@@ -423,7 +426,7 @@ class ReppoPPOTrainer:
             else:
                 diff_steps = getattr(diff_cfg, "diff_steps", None)
             if diff_steps is not None and diff_steps > 0:
-                scale = (cfg.num_mini_batches * 4) / (128.0 *cfg.num_epochs)
+                scale = (128 * 4) / (cfg.diffusion.diff_steps*cfg.num_mini_batches*cfg.num_epochs)
                 temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1**scale
                 temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2**scale
             else:

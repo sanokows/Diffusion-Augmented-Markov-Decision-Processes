@@ -32,7 +32,14 @@ from src.env_utils.jax_wrappers import (
     DiffNormalizeVec,
 )
 from src.jaxrl import utils
-from src.jaxrl.reppo_helpers.learning_DiffReppo import critic_loss_fn, train_step_env, compute_nstep_lambda_step, critic_loss_fn, actor_loss_fn
+from src.jaxrl.reppo_helpers.learning_DiffReppo import (
+    actor_loss_fn,
+    actor_WPO_loss_fn,
+    compute_nstep_lambda_step,
+    critic_loss_fn,
+    maybe_add_q_grad,
+    train_step_env,
+)
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
     CategoricalCriticNetwork,
@@ -141,6 +148,7 @@ class ReppoConfig(struct.PyTreeNode):
     reverse_kl: bool = False
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
+    train_mode: str = "reparam"
     use_lax_scan: bool = True
     use_friction_mlp: bool = False
     friction_mlp_hidden: int = 64
@@ -152,6 +160,7 @@ class ReppoConfig(struct.PyTreeNode):
     ode_coefs: list | None = None
     project_unit_ball: bool = True
     project_only_if_exceeds: bool = True
+    use_current_critic_for_actor_samples: bool = True
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -217,8 +226,9 @@ class ReppoDMERLTrainer:
         diff_steps = getattr(cfg.diffusion, "diff_steps", None)
         if diff_steps is not None and diff_steps > 0:
            ### adjust the gamma1 and gamma2 for temp lagrangian optimizers based in num_minibacthes
-            temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1 ** (cfg.num_mini_batches/128)
-            temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2 ** (cfg.num_mini_batches/128)
+            temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1 ** (128/(cfg.num_mini_batches*cfg.diffusion.diff_steps))
+            temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2 ** (128/(cfg.num_mini_batches*cfg.diffusion.diff_steps))
+            print(f"Adjusted temp_lagrangian_adam_gamma1: {temp_lagrangian_adam_gamma1}, temp_lagrangian_adam_gamma2: {temp_lagrangian_adam_gamma2}")
 
 
             temp_lr_multi = cfg.temperature_lr_mult
@@ -240,6 +250,7 @@ class ReppoDMERLTrainer:
 
             pass
         self.cfg = cfg
+        self.use_langevin_param = bool(cfg.diffusion.score_model.langevin_param)
         self.env_params = env_params
         self.log_callback = log_callback or (lambda *args: None)
         self.num_seeds = num_seeds
@@ -274,28 +285,39 @@ class ReppoDMERLTrainer:
             actor_model = nnx.merge(
                 train_state.actor.graphdef, train_state.actor.params
             )
+            critic_model = nnx.merge(
+                train_state.critic.graphdef, train_state.critic.params
+            )
+            use_langevin = self.use_langevin_param
 
-            def sde_policy(policy_key: PRNGKey, obs: jax.Array) -> tuple[jax.Array, dict]:
-                action, *_ = actor_model.vmap_sample_next_step( obs, policy_key)
+            def sde_policy(
+                policy_key: PRNGKey, obs: jax.Array, critic_obs: jax.Array
+            ) -> tuple[jax.Array, dict]:
+                obs_for_actor = maybe_add_q_grad(
+                    obs, critic_obs, actor_model, critic_model, use_langevin
+                )
+                action, *_ = actor_model.vmap_sample_next_step(
+                    obs_for_actor, policy_key
+                )
                 return action, {}
 
             def step_env(carry, _):
-                key, env_state, obs = carry
+                key, env_state, obs, critic_obs = carry
                 key, act_key, env_key = jax.random.split(key, 3)
-                action, _ = sde_policy(act_key, obs)
+                action, _ = sde_policy(act_key, obs, critic_obs)
                 step_key = jax.random.split(env_key, env.num_envs)
-                obs, _, env_state, reward, done, info = env.step(
+                obs, critic_obs, env_state, reward, done, info = env.step(
                     step_key, env_state, action
                 )
-                return (key, env_state, obs), info
+                return (key, env_state, obs, critic_obs), info
 
             key, init_key = jax.random.split(key)
             init_key = jax.random.split(init_key, env.num_envs)
-            obs, _, env_state = env.reset(init_key, norm_state)
+            obs, critic_obs, env_state = env.reset(init_key, norm_state)
             key, env_key = jax.random.split(key)
             _, infos = jax.lax.scan(
                 f=step_env,
-                init=(key, env_state, obs),
+                init=(key, env_state, obs, critic_obs),
                 xs=None,
                 length=max_episode_steps,
             )
@@ -327,37 +349,44 @@ class ReppoDMERLTrainer:
         def ode_evaluation_fn(
             key: jax.random.PRNGKey,
             train_state: SACTrainState,
-            ode_coef: float,
             norm_state: PyTreeNode | None,
         ):
             actor_model = nnx.merge(
                 train_state.actor.graphdef, train_state.actor.params
             )
+            critic_model = nnx.merge(
+                train_state.critic.graphdef, train_state.critic.params
+            )
+            use_langevin = self.use_langevin_param
 
-            def ode_policy(policy_key: PRNGKey, obs: jax.Array) -> tuple[jax.Array, dict]:
-                raise NotImplementedError("ODE evaluation not implemented in DMERL.")
-                action, *_ = actor_model.det_action(
-                    policy_key, obs, ode=True, ode_coef=ode_coef
+            def ode_policy(
+                policy_key: PRNGKey, obs: jax.Array, critic_obs: jax.Array
+            ) -> tuple[jax.Array, dict]:
+                obs_for_actor = maybe_add_q_grad(
+                    obs, critic_obs, actor_model, critic_model, use_langevin
+                )
+                action, *_ = actor_model.vmap_ode_sample_next_step(
+                    obs_for_actor, policy_key
                 )
                 return action, {}
 
             def step_env(carry, _):
-                key, env_state, obs = carry
+                key, env_state, obs, critic_obs = carry
                 key, act_key, env_key = jax.random.split(key, 3)
-                action, _ = ode_policy(act_key, obs)
+                action, _ = ode_policy(act_key, obs, critic_obs)
                 step_key = jax.random.split(env_key, env.num_envs)
-                obs, _, env_state, reward, done, info = env.step(
+                obs, critic_obs, env_state, reward, done, info = env.step(
                     step_key, env_state, action
                 )
-                return (key, env_state, obs), info
+                return (key, env_state, obs, critic_obs), info
 
             key, init_key = jax.random.split(key)
             init_key = jax.random.split(init_key, env.num_envs)
-            obs, _, env_state = env.reset(init_key, norm_state)
+            obs, critic_obs, env_state = env.reset(init_key, norm_state)
             key, env_key = jax.random.split(key)
             _, infos = jax.lax.scan(
                 f=step_env,
-                init=(key, env_state, obs),
+                init=(key, env_state, obs, critic_obs),
                 xs=None,
                 length=max_episode_steps,
             )
@@ -392,6 +421,7 @@ class ReppoDMERLTrainer:
             obs_dim, critic_obs_dim = env.get_obs_space_sizes()
             action_dim = env.action_space(env_params).shape[0]
             dt_schedule = hydra.utils.call(cfg.diffusion.dt_schedule)
+            langevin_param = bool(cfg.diffusion.score_model.langevin_param)
 
             forward_model = None
             if cfg.diffusion.learn_forward:
@@ -408,6 +438,8 @@ class ReppoDMERLTrainer:
                     bias_init=cfg.diffusion.score_model.bias_init,
                     layer_norm=cfg.diffusion.score_model.layer_norm,
                     layer_norm_type=cfg.diffusion.score_model.layer_norm_type,
+                    use_langevin_param=langevin_param,
+                    max_time=cfg.diffusion.diff_steps,
                     rngs=nnx.Rngs(model_key),
                 )
 
@@ -426,6 +458,8 @@ class ReppoDMERLTrainer:
                     bias_init=cfg.diffusion.score_model.bias_init,
                     layer_norm=cfg.diffusion.score_model.layer_norm,
                     layer_norm_type=cfg.diffusion.score_model.layer_norm_type,
+                    use_langevin_param=langevin_param,
+                    max_time=cfg.diffusion.diff_steps,
                     rngs=nnx.Rngs(model_key),
                 )
 
@@ -451,6 +485,8 @@ class ReppoDMERLTrainer:
                 learn_betas=cfg.diffusion.learn_betas,
                 learn_friction=cfg.diffusion.learn_friction,
                 learn_mass_matrix=cfg.diffusion.learn_mass_matrix,
+                langevin_param=langevin_param,
+                train_mode=getattr(cfg, "train_mode", "reparam"),
                 dt_schedule=dt_schedule,
                 rngs=nnx.Rngs(model_key),
             )
@@ -760,10 +796,14 @@ class ReppoDMERLTrainer:
 
     def train_step_env(self, actor_model, critic_model, carry, _):
         key, env_state, inner_state, obs, critic_obs = carry
+        use_langevin = self.use_langevin_param
         key, act_key, step_key = jax.random.split(key, 3)
         step_key = jax.random.split(step_key, self.cfg.num_envs)
+        obs_for_actor = maybe_add_q_grad(
+            obs, critic_obs, actor_model, critic_model, use_langevin
+        )
         action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
-            obs, act_key
+            obs_for_actor, act_key
         )
         action = jax.lax.stop_gradient(action)
         next_obs, next_critic_obs, next_env_state, reward, done, info = self.env.step(
@@ -771,8 +811,11 @@ class ReppoDMERLTrainer:
         )
         importance_weight = jnp.zeros((self.cfg.num_envs,))
         key, next_act_key = jax.random.split(key)
+        next_obs_for_actor = maybe_add_q_grad(
+            next_obs, next_critic_obs, actor_model, critic_model, use_langevin
+        )
         next_action, next_gen_log_prob, next_dest_log_prob = (
-            actor_model.vmap_sample_next_step(next_obs, next_act_key)
+            actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
         )
         next_action = jax.lax.stop_gradient(next_action)
         next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
@@ -950,7 +993,39 @@ class ReppoDMERLTrainer:
             critic_train_state.params
         )
 
-        actor_loss_fn_ = lambda p: actor_loss_fn(p, updated_state, step_key, minibatch, target_vals, action_size_target, cfg, actor_target_model)
+        critic_rollout_model = nnx.merge(
+            train_state.critic.graphdef,
+            train_state.critic.params,
+        )
+        selected_actor_loss = (
+            actor_WPO_loss_fn
+            if getattr(cfg, "train_mode", "reparam") == "WPO"
+            else actor_loss_fn
+        )
+        if selected_actor_loss is actor_WPO_loss_fn:
+            actor_loss_fn_ = lambda p: selected_actor_loss(
+                p,
+                updated_state,
+                critic_rollout_model,
+                step_key,
+                minibatch,
+                target_vals,
+                action_size_target,
+                cfg,
+                actor_target_model,
+            )
+        else:
+            actor_loss_fn_ = lambda p: selected_actor_loss(
+                p,
+                updated_state,
+                critic_rollout_model,
+                step_key,
+                minibatch,
+                target_vals,
+                action_size_target,
+                cfg,
+                actor_target_model,
+            )
 
         actor_grad_fn = jax.value_and_grad(actor_loss_fn_, has_aux=True)
         actor_output, actor_grads = actor_grad_fn(updated_state.actor.params)
@@ -994,7 +1069,7 @@ class ReppoDMERLTrainer:
         train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
         norm_state = train_state.last_env_state if cfg.normalize_env else None
         eval_key, init_seed_key = jax.random.split(eval_key)
-        eval_metrics = self.sde_eval_fn(init_seed_key, train_state, norm_state)
+        eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
         if getattr(cfg, "ode_coefs", None):
             for ode_coef in cfg.ode_coefs:
                 eval_metrics_ode = self.ode_eval_fn(

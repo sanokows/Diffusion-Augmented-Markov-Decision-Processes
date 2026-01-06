@@ -16,6 +16,8 @@ class ControlNetwork(nnx.Module):
         bias_init: float = 0.0,
         layer_norm: bool = False,
         layer_norm_type: str = "LayerNorm",
+        use_langevin_param: bool = False,
+        max_time: float = 1.0,
         *,
         rngs: nnx.Rngs,
     ):
@@ -23,6 +25,8 @@ class ControlNetwork(nnx.Module):
         self.observation_dim = observation_dim
         self.layer_norm = layer_norm
         self.layer_norm_type = layer_norm_type
+        self.use_langevin_param = use_langevin_param
+        self.max_time = float(max_time)
         self.num_layers = num_layers
         self.num_hid = num_hid
         self.num_time_hid = num_time_hid
@@ -46,64 +50,34 @@ class ControlNetwork(nnx.Module):
             nnx.Linear(self.num_time_hid, self.num_time_out, rngs=rngs),
         )
 
-        # State-time network
-        if self.layer_norm:
-            layers = []
-            layers.extend(
-                [
-                    nnx.Linear(
-                        self.action_dim + self.observation_dim + self.num_time_out,
-                        self.num_hid,
-                        rngs=rngs,
-                    ),
-                    nnx.gelu,
-                ]
-            )
+        def _build_state_time_net(input_dim: int):
+            layers = [
+                nnx.Linear(input_dim, self.num_hid, rngs=rngs),
+                nnx.gelu,
+            ]
             for _ in range(self.num_layers - 2):
-                layers.extend(
-                    [
-                        nnx.Linear(self.num_hid, self.num_hid, rngs=rngs),
-                        getattr(nnx, self.layer_norm_type)(self.num_hid, rngs=rngs),
-                        nnx.gelu,
-                    ]
-                )
-            # Output layer with custom initialization
+                inner = [
+                    nnx.Linear(self.num_hid, self.num_hid, rngs=rngs),
+                ]
+                if self.layer_norm:
+                    inner.append(getattr(nnx, self.layer_norm_type)(self.num_hid, rngs=rngs))
+                inner.append(nnx.gelu)
+                layers.extend(inner)
             output_layer = nnx.Linear(self.num_hid, self.action_dim, rngs=rngs)
-            # Apply custom initialization
             output_layer.kernel.value = output_layer.kernel.value * self.weight_init
             output_layer.bias.value = (
                 jnp.zeros_like(output_layer.bias.value) + self.bias_init
             )
             layers.append(output_layer)
-            self.state_time_net = nnx.Sequential(*layers)
-        else:
-            layers = []
-            layers.extend(
-                [
-                    nnx.Linear(
-                        self.action_dim + self.observation_dim + self.num_time_out,
-                        self.num_hid,
-                        rngs=rngs,
-                    ),
-                    nnx.gelu,
-                ]
-            )
-            for _ in range(self.num_layers - 2):
-                layers.extend(
-                    [
-                        nnx.Linear(self.num_hid, self.num_hid, rngs=rngs),
-                        nnx.gelu,
-                    ]
-                )
-            # Output layer with custom initialization
-            output_layer = nnx.Linear(self.num_hid, self.action_dim, rngs=rngs)
-            # Apply custom initialization
-            output_layer.kernel.value = output_layer.kernel.value * self.weight_init
-            output_layer.bias.value = (
-                jnp.zeros_like(output_layer.bias.value) + self.bias_init
-            )
-            layers.append(output_layer)
-            self.state_time_net = nnx.Sequential(*layers)
+            return nnx.Sequential(*layers)
+
+        input_dim = self.action_dim + self.observation_dim + self.num_time_out
+        self.state_time_net = _build_state_time_net(input_dim)
+
+        self.obs_time_net = None
+        if self.use_langevin_param:
+            obs_input_dim = self.observation_dim + self.num_time_out
+            self.obs_time_net = _build_state_time_net(obs_input_dim)
 
     def get_fourier_features(self, timesteps):
         sin_embed_cond = jnp.sin(
@@ -114,11 +88,21 @@ class ControlNetwork(nnx.Module):
         )
         return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
 
-    def __call__(self, actions, observations, time):
+    def __call__(self, actions, observations, time, q_grad=None):
         time_emb = self.get_fourier_features(time)
         if len(actions.shape) == 1:
             time_emb = time_emb[0]
         t_net = self.time_coder_state(time_emb)
+
+        if self.use_langevin_param:
+            if q_grad is None:
+                raise ValueError("q_grad must be provided when use_langevin_param=True.")
+            if self.obs_time_net is None:
+                raise ValueError("obs_time_net must be initialized when use_langevin_param=True.")
+            gating_input = jnp.concatenate((observations, t_net), axis=-1)
+            gating = self.obs_time_net(gating_input)
+            scaled_grad = gating * jnp.clip(q_grad, -self.inner_clip, self.inner_clip)
+            return scaled_grad
 
         extended_input = jnp.concatenate((actions, observations, t_net), axis=-1)
         out_state = self.state_time_net(extended_input)

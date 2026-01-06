@@ -17,15 +17,12 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     key_gen = key
 
     # Compute SDE components
-    dt = diffusion_model.delta_t_fn(step)
-    sigma_square = 1. / diffusion_model.friction_fn(step, obs)
-    eta = dt * sigma_square
-    scale = jnp.sqrt(2 * eta)
+    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
 
     # Forward kernel
     drift = diffusion_model.drift_fn(step, x)
     # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
-    fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+    fwd_mean = x + eta * (drift + score)
 
     key, key_gen = jax.random.split(key_gen)
     # x_new = fwd_mean if ode else sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
@@ -50,20 +47,33 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     }
     return out_dict, key_gen
 
+def ODE_integrate_one_step(diffusion_model, curr_x , step, obs, key, ode_coeff = 0.5, stop_grad=False):
+    step = step.astype(jnp.float32)
+    x = curr_x
+    key_gen = key
+
+    # Compute SDE components
+    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
+    # Forward kernel
+    drift = diffusion_model.drift_fn(step, x)
+    x_new = x + eta * (drift + ode_coeff*score)
+
+    out_dict = {
+        "x_new": x_new,
+    }
+    return out_dict, key_gen
+
 def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, stop_grad=False):
     step = step.astype(jnp.float32)
     x = curr_x
 
     # Compute SDE components
-    dt = diffusion_model.delta_t_fn(step)
-    sigma_square = 1. / diffusion_model.friction_fn(step, obs)
-    eta = dt * sigma_square
-    scale = jnp.sqrt(2 * eta)
+    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
 
     # Forward kernel
     drift = diffusion_model.drift_fn(step, x)
     # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
-    fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
+    fwd_mean = x + eta * (drift + score)
     # x_new = fwd_mean if ode else sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
     x_new = actions
 
@@ -81,31 +91,31 @@ def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, sto
     }
     return out_dict
 
-def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, obs, key, stop_grad=True, kl_action_rep=1):
+def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, obs, key, stop_grad=True, kl_action_rep=1, target_obs=None):
     step = step.astype(jnp.float32)
     x = curr_x
     key_gen = key
 
+    target_obs = obs if target_obs is None else target_obs
+
     # Compute SDE components
-    dt = diffusion_model.delta_t_fn(step)
-    sigma_square = 1. / diffusion_model.friction_fn(step, obs)
-    eta = dt * sigma_square
-    scale = jnp.sqrt(2 * eta)
+    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
+    target_score, target_scale, target_eta = target_diffusion_model.compute_diffusion_stuff(step, x, obs)
 
     # Forward kernel
     drift = diffusion_model.drift_fn(step, x)
-    fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
-    old_fwd_mean = x + eta * (drift + target_diffusion_model.forward_model(step, x, obs))
+    fwd_mean = x + eta * (drift + score)
+    old_fwd_mean = x + target_eta * (drift + target_score)
     key, key_gen = jax.random.split(key_gen)
 
     # x_new from old_fwd_mean
-    x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, scale)
-    pi_old = distrax.Normal(loc=old_fwd_mean, scale=scale)
+    x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, target_scale)
+    pi_old = distrax.Normal(loc=old_fwd_mean, scale=target_scale)
     x_new_logprob = pi_old.sample(seed=key, sample_shape=(kl_action_rep,))
 
     # Evaluate kernels
     fwd_log_prob = log_prob_kernel(x_new_logprob, fwd_mean, scale)
-    old_fwd_log_prob = log_prob_kernel(x_new_logprob, old_fwd_mean, scale)
+    old_fwd_log_prob = log_prob_kernel(x_new_logprob, old_fwd_mean, target_scale)
 
     # take mean over kl_action_rep
     gen_log_prob = jnp.mean(fwd_log_prob, axis=0)
@@ -268,6 +278,39 @@ def logratio_DIME(diffusion_model, target_diffusion_model, obs, stop_grad=True, 
         next_state = (x_new, log_w, key_gen)
         return next_state, None
     return logratio_EM
+
+def scale_inverse_fisher_grad(
+    mu: jax.Array,       # unused in Fisher (constant shift), kept for signature compatibility
+    log_std: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """
+    Inverse-Fisher gradient scaling for:
+        x ~ N(k + 0.5 * exp(log_std) * mu,  exp(2*log_std))
+
+    Parameters are (mu, phi=log_std). Fisher does not depend on k.
+    Forward values are unchanged; only gradients are preconditioned.
+    """
+
+    # Coeffs depend on mu (treat them as constants for preconditioning)
+    mu_sg_coeff = jax.lax.stop_gradient(mu)
+
+    # F^{-1} entries for (mu, phi)
+    a = 4.0 + 0.5 * (mu_sg_coeff ** 2)   # mu,mu
+    b = -0.5 * mu_sg_coeff              # mu,phi = phi,mu
+    d = 0.5                             # phi,phi
+
+    # Stop-gradient anchors
+    mu_sg = jax.lax.stop_gradient(mu)
+    phi_sg = jax.lax.stop_gradient(log_std)
+
+    dmu = mu - mu_sg
+    dphi = log_std - phi_sg
+
+    # Apply symmetric 2x2 inverse-Fisher transform
+    mu_scaled = mu_sg + a * dmu + b * dphi
+    log_std_scaled = phi_sg + b * dmu + d * dphi
+
+    return mu_scaled, log_std_scaled
 
 
 def torch_he_uniform(
@@ -885,7 +928,9 @@ class DiffusionModel(nnx.Module):
         learn_betas: bool = False,
         learn_friction: bool = True,
         learn_mass_matrix: bool = False,
+        langevin_param: bool = False,
         dt_schedule: callable = None,
+        train_mode: str = "reparam",
         *,
         rngs: nnx.Rngs,
     ):
@@ -902,6 +947,8 @@ class DiffusionModel(nnx.Module):
         self.learn_betas = learn_betas
         self.per_step_dt = per_step_dt
         self.dt_schedule = dt_schedule
+        self.langevin_param = langevin_param
+        self.train_mode = train_mode
         self.use_friction_mlp = use_friction_mlp
         self.friction_num_time_hid = friction_num_time_hid
         self.friction_num_time_out = friction_num_time_out
@@ -1034,6 +1081,33 @@ class DiffusionModel(nnx.Module):
             friction = jax.nn.softplus(self.friction.value + friction_out)
 
         return friction if self.learn_friction else jax.lax.stop_gradient(friction)
+    
+    def diffusion_coeff_fn(self, step: jax.Array, obs_dict: dict[str, jax.Array]) -> jax.Array:
+        friction_value = self.friction_fn(step, obs_dict)
+        dt = self.delta_t_fn(step)
+        sigma_square = 1.0 / friction_value
+        eta = dt * sigma_square
+        log_scale = 0.5 * jnp.log(2.0 * eta)
+        scale = jnp.sqrt(2*eta)
+        return (scale, eta, log_scale) if self.learn_friction else (jax.lax.stop_gradient(scale), jax.lax.stop_gradient(eta), jax.lax.stop_gradient(log_scale))
+    
+    def return_fisher_scaled_mean_and_scale(self, mu, log_std):
+        mu, log_scale = self.scale_inverse_fisher_grad(mu, log_std)
+        scale = jnp.exp(log_scale)
+        eta = jnp.exp(2*log_scale)/2
+        raise ValueError("WPO mode not implemented yet. must seperate forward from backward scale")
+        return mu, scale, eta
+
+        
+    def compute_diffusion_stuff(self, step: jax.Array, x: jax.Array, obs_dict: dict[str, jax.Array]) -> tuple[jax.Array, jax.Array, jax.Array]:
+        """Compute diffusion related quantities."""
+        diffusion_coeff, eta, log_diffusion_coeff = self.diffusion_coeff_fn(step, obs_dict)
+        score = self.forward_model(step, x, obs_dict)
+        if self.train_mode == "WPO":
+            score, scale, eta = self.return_fisher_scaled_mean_and_scale(score, log_diffusion_coeff)
+        else:
+            scale = diffusion_coeff
+        return score, scale, eta
 
     def mass_fn(self) -> jax.Array:
         """Mass function."""
@@ -1057,7 +1131,18 @@ class DiffusionModel(nnx.Module):
             orig_obs = obs_dict["orig_obs"]
             normed_prev_actions = obs_dict["normed_actions"]
             obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
-            return self.fwd_model(x, obs, step)
+            q_grad = obs_dict.get("q_grad") if self.langevin_param else None
+            fwd_out = self.fwd_model(x, obs, step, q_grad=q_grad)
+            # if self.train_mode == "WPO":
+            #     friction = self.friction_fn(step, obs_dict)
+            #     dt = self.delta_t_fn(step)
+            #     sigma_square = 1.0 / friction
+            #     eta = dt * sigma_square
+            #     scale = jnp.sqrt(2.0 * eta)
+            #     varsg = jax.lax.stop_gradient(scale ** 2)
+            #     mean_sg = jax.lax.stop_gradient(fwd_out)
+            #     fwd_out = mean_sg + (fwd_out - mean_sg) * varsg
+            return fwd_out
         else:
             return jnp.zeros_like(x)
 
@@ -1069,7 +1154,8 @@ class DiffusionModel(nnx.Module):
             orig_obs = obs_dict["orig_obs"]
             normed_prev_actions = obs_dict["normed_actions"]
             obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
-            return self.bwd_model(x, obs, step)
+            q_grad = obs_dict.get("q_grad") if self.langevin_param else None
+            return self.bwd_model(x, obs, step, q_grad=q_grad)
         else:
             return jnp.zeros_like(x)
 
@@ -1200,6 +1286,19 @@ class DMERLActor(nnx.Module):
         dest_log_prob = out_dict["dest_log_prob"]
         actions = x_new
         return actions, gen_log_prob, dest_log_prob
+
+    def _ode_sample_next_step(self, key, current_x, step, obs):
+        out_dict, key = ODE_integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
+        return out_dict, key
+    
+    def vmap_ode_sample_next_step(self, obs, keys):
+        in_axes = (None, 0, 0, 0) # keys, current_x, step, obs
+
+        current_x = obs["orig_actions"]
+        step = obs["diff_time_step"][...,0]
+        out_dict, keys = jax.vmap(self._ode_sample_next_step, in_axes=in_axes)(keys, current_x, step, obs)
+        actions = out_dict["x_new"]
+        return actions, keys
     
     def sample_complete_loop(self, obs_dict , key):
         batch_size = obs_dict["orig_obs"].shape[0]
@@ -1357,48 +1456,48 @@ class DMERLActor(nnx.Module):
         return log_ratio
     
     
-    def fkl_div_one_step(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
+    def fkl_div_one_step(self, key, obs_actions: jax.Array, obs_target: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
         """
         Compute KL divergence using the ONE STEP integrator.
         This method is designed to be vmapped externally (e.g., in actor_loss).
         """
-        keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
+        keys = jax.random.split(key, num=obs_actions["orig_obs"].shape[0])
         
         other_diff_model = self.diffusion_model 
         sample_diff_model = target_diffusion_model.diffusion_model # p model in D_kl(p||q)
 
-        def _single_kl_for_vmap(key, obs):
+        def _single_kl_for_vmap(key, obs_act, obs_tgt):
             # This function closes over self, target_diffusion_model, stop_grad
-            current_x = obs["orig_actions"]
-            step = obs["diff_time_step"]
-            return logratio_one_step(other_diff_model, sample_diff_model, current_x , step, obs, key, stop_grad=stop_grad)
+            current_x = obs_act["orig_actions"]
+            step = obs_act["diff_time_step"]
+            return logratio_one_step(other_diff_model, sample_diff_model, current_x , step, obs_act, key, stop_grad=stop_grad, target_obs=obs_tgt)
         
 
-        in_axes = (0, 0) # keys, obs
-        out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
+        in_axes = (0, 0, 0) # keys, obs_actions, obs_target
+        out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs_actions, obs_target)
         p_log_probs = out_dict["p_log_prob"]
         q_log_probs = out_dict["q_log_prob"]
         log_ratios = p_log_probs - q_log_probs
         return log_ratios[..., None]
     
-    def rkl_div_one_step(self, key, obs: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
+    def rkl_div_one_step(self, key, obs_actions: jax.Array, obs_target: jax.Array, target_diffusion_model: nnx.Module, stop_grad: bool = False) -> jax.Array:
         """
         Compute KL divergence using the ONE STEP integrator.
         This method is designed to be vmapped externally (e.g., in actor_loss).
         """
-        keys = jax.random.split(key, num=obs["orig_obs"].shape[0])
+        keys = jax.random.split(key, num=obs_actions["orig_obs"].shape[0])
         sample_diff_model = self.diffusion_model # p model in D_kl(p||q)
         other_diff_model = target_diffusion_model.diffusion_model
         
-        def _single_kl_for_vmap(key, obs):
+        def _single_kl_for_vmap(key, obs_act, obs_tgt):
             # This function closes over self, target_diffusion_model, stop_grad
-            current_x = obs["orig_actions"]
-            step = obs["diff_time_step"]
-            return logratio_one_step(other_diff_model, sample_diff_model, current_x , step, obs, key, stop_grad=stop_grad)
+            current_x = obs_act["orig_actions"]
+            step = obs_act["diff_time_step"]
+            return logratio_one_step(other_diff_model, sample_diff_model, current_x , step, obs_tgt, key, stop_grad=stop_grad, target_obs=obs_act)
         
 
-        in_axes = (0, 0) # keys, obs
-        out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs)
+        in_axes = (0, 0, 0) # keys, obs_actions, obs_target
+        out_dict, keys = jax.vmap(_single_kl_for_vmap, in_axes=in_axes)(keys, obs_target, obs_actions)
         p_log_probs = out_dict["p_log_prob"]
         q_log_probs = out_dict["q_log_prob"]
         log_ratios = p_log_probs - q_log_probs

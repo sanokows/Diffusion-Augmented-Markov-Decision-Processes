@@ -292,6 +292,7 @@ def make_init(
                 bias_init=cfg.diffusion.score_model.bias_init,
                 layer_norm=cfg.diffusion.score_model.layer_norm,
                 layer_norm_type=cfg.diffusion.score_model.layer_norm_type,
+                max_time=cfg.diffusion.diff_steps,
                 rngs=nnx.Rngs(model_key),
             )
         else:
@@ -311,6 +312,7 @@ def make_init(
                 bias_init=cfg.diffusion.score_model.bias_init,
                 layer_norm=cfg.diffusion.score_model.layer_norm,
                 layer_norm_type=cfg.diffusion.score_model.layer_norm_type,
+                max_time=cfg.diffusion.diff_steps,
                 rngs=nnx.Rngs(model_key),
             )
         else:
@@ -332,6 +334,7 @@ def make_init(
             learn_betas=cfg.diffusion.learn_betas,
             learn_friction=cfg.diffusion.learn_friction,
             learn_mass_matrix=cfg.diffusion.learn_mass_matrix,
+            train_mode=getattr(cfg, "train_mode", "reparam"),
             dt_schedule=dt_schedule,
             rngs=nnx.Rngs(model_key),
         )

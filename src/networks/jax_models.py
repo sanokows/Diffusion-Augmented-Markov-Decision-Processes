@@ -556,15 +556,6 @@ class SACActorNetworks(nnx.Module):
             mean_sg = jax.lax.stop_gradient(mean)
             varsg = jax.lax.stop_gradient(var)
             mean = mean_sg + (mean - mean_sg) * (varsg)
-        elif(False):
-            std = (jnp.exp(log_std) + self.min_std) * scale
-            var = std ** 2
-            mean_sg = jax.lax.stop_gradient(mean)
-            varsg = jax.lax.stop_gradient(var)
-            mean = mean_sg + (mean - mean_sg) * (varsg)
-            var = varsg + (var - varsg) * varsg * 0.5
-            #var = jnp.clip(var, a_min=1e-8)  # guard against negative/denormals
-            std = jnp.sqrt(var)
         else:
             std = (jnp.exp(log_std) + self.min_std) * scale
 

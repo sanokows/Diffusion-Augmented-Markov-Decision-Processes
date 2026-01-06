@@ -159,8 +159,7 @@ def make_eval_fn(
             obs, _, env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )
-            # print the shape of the actions
-            jax.debug.print("Eval action shape: {shape}", shape=action.shape)
+
             return (key, env_state, obs), info
 
         key, init_key = jax.random.split(key)
