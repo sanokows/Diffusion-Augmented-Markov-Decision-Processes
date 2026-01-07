@@ -22,6 +22,11 @@ def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.
         eta = dt * sigma_square
         scale = jnp.sqrt(2 * eta)
 
+        dt_next = diffusion_model.delta_t_fn(step + 1 )
+        sigma_square_next = 1. / diffusion_model.friction_fn(step + 1)
+        eta_next = dt_next * sigma_square_next
+        scale_next = jnp.sqrt(2 * eta_next)
+
         # Forward kernel
         drift = diffusion_model.drift_fn(step, x)
         # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
@@ -33,12 +38,11 @@ def sde_integrator(obs, diffusion_model, stop_grad=False, ode=False, ode_coef=1.
 
         # Backward kernel
         drift_new = diffusion_model.drift_fn(step + 1, x_new)
-        bwd_mean = x_new + eta * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
+        bwd_mean = x_new + eta_next * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
 
         # Evaluate kernels
         fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
-        bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
-
+        bwd_log_prob = log_prob_kernel(x, bwd_mean, scale_next)
         # Update weight and return
         # print log_w before
         #jax.debug.print("step: {s}, log_w before: {lw}, bwd_log_prob: {bp}, fwd_log_prob: {fp}", s=step, lw=log_w, bp=bwd_log_prob, fp=fwd_log_prob)
@@ -97,20 +101,26 @@ def logratio(diffusion_model, target_diffusion_model, obs, stop_grad=True, kl_ac
         eta = dt * sigma_square
         scale = jnp.sqrt(2 * eta)
 
+        target_dt = target_diffusion_model.delta_t_fn(step)
+        target_sigma_square = 1. / target_diffusion_model.friction_fn(step)
+        target_eta = target_dt * target_sigma_square
+        target_scale = jnp.sqrt(2 * target_eta)
+
         # Forward kernel
         drift = diffusion_model.drift_fn(step, x)
+        target_drift = target_diffusion_model.drift_fn(step, x)
         fwd_mean = x + eta * (drift + diffusion_model.forward_model(step, x, obs))
-        old_fwd_mean = x + eta * (drift + target_diffusion_model.forward_model(step, x, obs))
+        old_fwd_mean = x + target_eta * (target_drift + target_diffusion_model.forward_model(step, x, obs))
         key, key_gen = jax.random.split(key_gen)
 
         # x_new from old_fwd_mean
-        x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, scale)
-        pi_old = distrax.Normal(loc=old_fwd_mean, scale=scale)
+        x_new = sample_kernel(key, check_stop_grad(old_fwd_mean, stop_grad) if stop_grad else old_fwd_mean, target_scale)
+        pi_old = distrax.Normal(loc=old_fwd_mean, scale=target_scale)
         x_new_logprob = pi_old.sample(seed=key, sample_shape=(kl_action_rep,))
 
         # Evaluate kernels
         fwd_log_prob = log_prob_kernel(x_new_logprob, fwd_mean, scale)
-        old_fwd_log_prob = log_prob_kernel(x_new_logprob, old_fwd_mean, scale)
+        old_fwd_log_prob = log_prob_kernel(x_new_logprob, old_fwd_mean, target_scale)
 
         # take mean over kl_action_rep
         fwd_log_prob = jnp.mean(fwd_log_prob, axis=0)

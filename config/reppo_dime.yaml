@@ -39,8 +39,8 @@ hyperparameters:
   # critic architecture settings (need to be increased for MJX humanoid)
   critic_hidden_dim: 512
   actor_hidden_dim: 512
-  vmin: ${env.vmin}
-  vmax: ${env.vmax}
+  vmin: 0
+  vmax: 150
   num_bins: 151
   hl_gauss: true
   use_critic_norm: true

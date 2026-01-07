@@ -30,11 +30,18 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
 
     # Backward kernel
     drift_new = diffusion_model.drift_fn(step + 1, x_new)
-    bwd_mean = x_new + eta * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
+    
+    obs_new = dict(obs)
+    obs_new['diff_time_step'] = obs_new['diff_time_step'] + 1.0
+    scale_new, eta_new, _ = diffusion_model.diffusion_coeff_fn(step + 1, obs_new)
 
+    bwd_mean = x_new + eta_new * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs_new))
+
+    # print scale new and scale
+    #jax.debug.print("step: {s}, scale: {sc}, scale_new: {sn}", s=step, sc=scale, sn=scale_new)
     # Evaluate kernels
     fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
-    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
+    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale_new)
 
     # log_w = bwd_log_prob - fwd_log_prob
     # jax.debug.print("step: {s}, log_w before: {lw}, bwd_log_prob: {bp}, fwd_log_prob: {fp}", s=step, lw=log_w, bp=bwd_log_prob, fp=fwd_log_prob)
@@ -79,11 +86,15 @@ def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, sto
 
     # Backward kernel
     drift_new = diffusion_model.drift_fn(step + 1, x_new)
-    bwd_mean = x_new + eta * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs))
+    obs_new = dict(obs)
+    obs_new['diff_time_step'] = obs_new['diff_time_step'] + 1.0
+    scale_new, eta_new, _ = diffusion_model.diffusion_coeff_fn(step + 1, obs_new)
+
+    bwd_mean = x_new + eta_new * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs_new))
 
     # Evaluate kernels
     fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
-    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale)
+    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale_new)
 
     out_dict = {
         "gen_log_prob": fwd_log_prob, 
