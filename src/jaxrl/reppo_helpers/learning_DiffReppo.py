@@ -162,6 +162,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         else:
             def compute_single(k):
                 return actor_model.fkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+                
         kl_log_ratios = jax.vmap(compute_single)(keys)
         kl_log_ratios = kl_log_ratios.mean(axis=0)
         kl = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
@@ -262,20 +263,21 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         def single_q(obs, act):
             batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
-            return critic_current_model.critic(batched_obs, act[None]).squeeze()
+            return jnp.squeeze(critic_current_model.critic(batched_obs, act[None]), axis=0)
 
-        def single_log_prob_ratio(obs, act):
+        def single_log_probs(obs, act):
             batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
             gen_lp, dest_lp = actor_model.vmap_eval_log_prob(batched_obs, act[None])
-            return (gen_lp - dest_lp).squeeze()
+            return jnp.squeeze(gen_lp, axis=0), jnp.squeeze(dest_lp, axis=0)
 
         q_action_grad = jax.vmap(jax.grad(single_q, argnums=1))(
             minibatch.critic_obs, stop_pred_action
         )
         stop_q_action_grad = jax.lax.stop_gradient(q_action_grad)
-        log_prob_action_grad = jax.vmap(jax.grad(single_log_prob_ratio, argnums=1))(
-            obs_for_actions, stop_pred_action
-        )
+        gen_log_prob_action_grad, dest_log_prob_action_grad = jax.vmap(
+            jax.jacrev(single_log_probs, argnums=1)
+        )(obs_for_actions, stop_pred_action)
+        log_prob_action_grad = gen_log_prob_action_grad - dest_log_prob_action_grad
 
         # fKL constraint (matches actor_loss_fn).
         kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
@@ -294,9 +296,11 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         actor_Q_loss = jnp.sum(
             jax.lax.stop_gradient(log_prob_action_grad * temperature - stop_q_action_grad)
-            * log_prob_action_grad,
+            * (gen_log_prob_action_grad - dest_log_prob_action_grad),
             axis=-1,
         )
+
+        actor_WPO_loss = jnp.mean((jax.lax.stop_gradient(log_prob_action_grad - stop_q_action_grad/temperature)**2).sum(axis=-1))
 
         if cfg.actor_kl_clip_mode == "full":
             actor_loss_val = (
@@ -333,6 +337,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         friction_detached = jax.lax.stop_gradient(friction)
         return loss, dict(
             actor_loss=actor_loss_val,
+            actor_WPO_loss = actor_WPO_loss,
             loss=loss,
             temp=actor_model.temperature(),
             abs_batch_action=jnp.abs(minibatch.action).mean(),

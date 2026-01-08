@@ -71,7 +71,7 @@ hyperparameters:
   ent_target_mult: 4.0
   update_entropy_lagrangian: true
   ## auxiliary loss settings
-  aux_loss_mult: 0.0
+  aux_loss_mult: 1.0
 
   # DIME diffusion settings
   diffusion:
@@ -91,12 +91,12 @@ hyperparameters:
     learn_backward: false
     learn_prior: false
     learn_betas: false
-    learn_friction: false
+    learn_friction: true
     learn_mass_matrix: false
 
     dt: 0.125
-    learn_dt: false
-    per_step_dt: false
+    learn_dt: true
+    per_step_dt: true
     per_dim_friction: true
     use_step_size_scheduler: false
 

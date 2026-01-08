@@ -226,8 +226,13 @@ class ReppoDMERLTrainer:
         diff_steps = getattr(cfg.diffusion, "diff_steps", None)
         if diff_steps is not None and diff_steps > 0:
            ### adjust the gamma1 and gamma2 for temp lagrangian optimizers based in num_minibacthes
-            temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1 ** (128/(cfg.num_mini_batches*cfg.diffusion.diff_steps))
-            temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2 ** (128/(cfg.num_mini_batches*cfg.diffusion.diff_steps))
+            temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1 #** (128/(cfg.num_mini_batches*cfg.diffusion.diff_steps))
+            temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2 #** (128/(cfg.num_mini_batches*cfg.diffusion.diff_steps))
+            # minimum value of gamma1 and gamma2 is 0.9 and 0.999 respectively
+            temp_lagrangian_adam_gamma1 = max(temp_lagrangian_adam_gamma1, 0.9)
+            temp_lagrangian_adam_gamma2 = max(temp_lagrangian_adam_gamma2, 0.999)
+
+            print(128/(cfg.num_mini_batches*cfg.diffusion.diff_steps), cfg.num_mini_batches, cfg.diffusion.diff_steps)
             print(f"Adjusted temp_lagrangian_adam_gamma1: {temp_lagrangian_adam_gamma1}, temp_lagrangian_adam_gamma2: {temp_lagrangian_adam_gamma2}")
 
 
@@ -719,14 +724,14 @@ class ReppoDMERLTrainer:
 
             params_actor = jax.tree.map(lambda x: x[0], actor_trainstate.params)
             params_critic = jax.tree.map(lambda x: x[0], critic_trainstate.params)
-            print(params_actor)
-            jax.debug.print("Actor params: {params}", params=params_actor)
-            print(params_critic)
-            jax.debug.print("Critic params: {params}", params=params_critic)
-            jax.debug.print("Actor norm: {params}", params=jax.tree.map(lambda x: jnp.linalg.norm(x), actor_trainstate.params))
-            print(jax.tree.map(lambda x: jnp.linalg.norm(x), actor_trainstate.params))
-            print(jax.tree.map(lambda x: jnp.linalg.norm(x), critic_trainstate.params))
-            jax.debug.print("Critic norm: {params}", params=jax.tree.map(lambda x: jnp.linalg.norm(x), critic_trainstate.params))
+            #print(params_actor)
+            # jax.debug.print("Actor params: {params}", params=params_actor)
+            # #print(params_critic)
+            # jax.debug.print("Critic params: {params}", params=params_critic)
+            # jax.debug.print("Actor norm: {params}", params=jax.tree.map(lambda x: jnp.linalg.norm(x), actor_trainstate.params))
+            # #print(jax.tree.map(lambda x: jnp.linalg.norm(x), actor_trainstate.params))
+            # #print(jax.tree.map(lambda x: jnp.linalg.norm(x), critic_trainstate.params))
+            # jax.debug.print("Critic norm: {params}", params=jax.tree.map(lambda x: jnp.linalg.norm(x), critic_trainstate.params))
             # jax.debug.callback(lambda p: _host_print_layer_norms("actor", p), params_actor)
             # jax.debug.callback(lambda p: _host_print_layer_norms("critic", p), params_critic)
             #raise ValueError("Layer norms printed for debugging; remove after inspection.")
@@ -878,7 +883,6 @@ class ReppoDMERLTrainer:
                         min=jnp.min(target_values),
                         max=jnp.max(target_values),
                         mean=jnp.mean(target_values))
-
         target_vals_flat = target_values.reshape(-1)
         target_vals_finite = jnp.nan_to_num(
             target_vals_flat,
@@ -931,6 +935,10 @@ class ReppoDMERLTrainer:
         update_metrics["target_value_mean"] = target_val_mean
         update_metrics["target_value_min"] = target_val_min
         update_metrics["target_value_max"] = target_val_max
+        temperature = update_metrics["temp"]
+        lagrangian = update_metrics["lagrangian"]
+        jax.debug.print("Temperature: {temperature}, Lagrangian: {lagrangian}",
+                        temperature=temperature, lagrangian=lagrangian)
         return train_state, update_metrics
 
     def _run_epoch_update(

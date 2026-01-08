@@ -1,5 +1,6 @@
 hyperparameters: 
-  anneal_lr: true
+  anneal_lr: false
+
   #lr_decay_factor: 0.05
   #lr: 3e-5
   #hl_gauss: true

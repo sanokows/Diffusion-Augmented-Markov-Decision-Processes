@@ -17,11 +17,11 @@ hyperparameters:
   lr_decay_factor: 1.
   weight_decay: 0.0
   use_current_critic_for_actor_samples: true
-  temperature_lr: 1e-5
-  lagrangian_lr: 1e-5
+  temperature_lr: 1e-4
+  lagrangian_lr: 1e-4
   temp_lagrangian_optim: "adam"
-  temp_lagrangian_adam_gamma1: 0.9
-  temp_lagrangian_adam_gamma2: 0.999
+  temp_lagrangian_adam_gamma1: 0.97
+  temp_lagrangian_adam_gamma2: 0.997
   project_unit_ball: false
   project_only_if_exceeds: false
   anneal_lr: false
@@ -138,6 +138,8 @@ hyperparameters:
       min: 0.001
       s: 0.008
       pow: 2
+    # dt_schedule:
+    #   _target_: src.networks.diffusion.schedulers.get_constant_schedule
     # dt_schedule:
     #   _target_: src.networks.diffusion.schedulers.get_linear_schedule
     #   total_steps: ${hyperparameters.diffusion.diff_steps}

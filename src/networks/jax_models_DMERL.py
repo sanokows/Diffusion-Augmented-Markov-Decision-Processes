@@ -17,25 +17,22 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     key_gen = key
 
     # Compute SDE components
-    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
+    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model)
 
     # Forward kernel
     drift = diffusion_model.drift_fn(step, x)
     # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
-    fwd_mean = x + eta * (drift + score)
+    fwd_mean = x + eta * mu
 
     key, key_gen = jax.random.split(key_gen)
     # x_new = fwd_mean if ode else sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
     x_new = sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
-
-    # Backward kernel
-    drift_new = diffusion_model.drift_fn(step + 1, x_new)
     
     obs_new = dict(obs)
     obs_new['diff_time_step'] = obs_new['diff_time_step'] + 1.0
-    scale_new, eta_new, _ = diffusion_model.diffusion_coeff_fn(step + 1, obs_new)
+    mu_bwd, scale_new, eta_new = diffusion_model.compute_diffusion_stuff(step+1, x, obs_new, model=diffusion_model.backward_model)
 
-    bwd_mean = x_new + eta_new * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs_new))
+    bwd_mean = x_new + eta_new * mu_bwd
 
     # print scale new and scale
     #jax.debug.print("step: {s}, scale: {sc}, scale_new: {sn}", s=step, sc=scale, sn=scale_new)
@@ -54,16 +51,15 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     }
     return out_dict, key_gen
 
-def ODE_integrate_one_step(diffusion_model, curr_x , step, obs, key, ode_coeff = 0.5, stop_grad=False):
+def ODE_integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False):
     step = step.astype(jnp.float32)
     x = curr_x
     key_gen = key
 
     # Compute SDE components
-    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
+    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model, ode_coeff= 0.5)
     # Forward kernel
-    drift = diffusion_model.drift_fn(step, x)
-    x_new = x + eta * (drift + ode_coeff*score)
+    x_new = x + eta * mu
 
     out_dict = {
         "x_new": x_new,
@@ -75,26 +71,24 @@ def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, sto
     x = curr_x
 
     # Compute SDE components
-    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
+    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model)
 
     # Forward kernel
-    drift = diffusion_model.drift_fn(step, x)
     # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
-    fwd_mean = x + eta * (drift + score)
+    fwd_mean = x + eta * mu
     # x_new = fwd_mean if ode else sample_kernel(key, check_stop_grad(fwd_mean, stop_grad) if stop_grad else fwd_mean, scale)
     x_new = actions
 
     # Backward kernel
-    drift_new = diffusion_model.drift_fn(step + 1, x_new)
     obs_new = dict(obs)
     obs_new['diff_time_step'] = obs_new['diff_time_step'] + 1.0
-    scale_new, eta_new, _ = diffusion_model.diffusion_coeff_fn(step + 1, obs_new)
+    mu_bwd, scale_new, eta_new = diffusion_model.compute_diffusion_stuff(step+1, x, obs_new, model=diffusion_model.backward_model)
 
-    bwd_mean = x_new + eta_new * (drift_new + diffusion_model.backward_model(step + 1, x_new, obs_new))
+    bwd_mean = x_new + eta_new * mu_bwd
 
     # Evaluate kernels
     fwd_log_prob = log_prob_kernel(x_new, fwd_mean, scale)
-    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale_new)
+    bwd_log_prob = log_prob_kernel(x, bwd_mean, scale_new) 
 
     out_dict = {
         "gen_log_prob": fwd_log_prob, 
@@ -110,13 +104,11 @@ def logratio_one_step(diffusion_model, target_diffusion_model, curr_x , step, ob
     target_obs = obs if target_obs is None else target_obs
 
     # Compute SDE components
-    score, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs)
-    target_score, target_scale, target_eta = target_diffusion_model.compute_diffusion_stuff(step, x, obs)
+    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model)
+    target_mu, target_scale, target_eta = target_diffusion_model.compute_diffusion_stuff(step, x, obs, model=target_diffusion_model.forward_model)
 
-    # Forward kernel
-    drift = diffusion_model.drift_fn(step, x)
-    fwd_mean = x + eta * (drift + score)
-    old_fwd_mean = x + target_eta * (drift + target_score)
+    fwd_mean = x + eta * mu
+    old_fwd_mean = x + target_eta * target_mu
     key, key_gen = jax.random.split(key_gen)
 
     # x_new from old_fwd_mean
@@ -290,9 +282,10 @@ def logratio_DIME(diffusion_model, target_diffusion_model, obs, stop_grad=True, 
         return next_state, None
     return logratio_EM
 
+
 def scale_inverse_fisher_grad(
     mu: jax.Array,       # unused in Fisher (constant shift), kept for signature compatibility
-    log_std: jax.Array,
+    eta: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
     """
     Inverse-Fisher gradient scaling for:
@@ -303,25 +296,52 @@ def scale_inverse_fisher_grad(
     """
 
     # Coeffs depend on mu (treat them as constants for preconditioning)
-    mu_sg_coeff = jax.lax.stop_gradient(mu)
+    mu_sg= jax.lax.stop_gradient(mu)
+    eta_sg = jax.lax.stop_gradient(eta)
 
     # F^{-1} entries for (mu, phi)
-    a = 4.0 + 0.5 * (mu_sg_coeff ** 2)   # mu,mu
-    b = -0.5 * mu_sg_coeff              # mu,phi = phi,mu
-    d = 0.5                             # phi,phi
+    a = jax.lax.stop_gradient(2/eta_sg**2 + 2 * mu_sg**2) # mu,mu
+    b = jax.lax.stop_gradient(-2 *mu_sg*eta_sg)           # mu,phi = phi,mu
+    d = jax.lax.stop_gradient(2 * eta_sg**2)                            # phi,phi
 
-    # Stop-gradient anchors
-    mu_sg = jax.lax.stop_gradient(mu)
-    phi_sg = jax.lax.stop_gradient(log_std)
 
     dmu = mu - mu_sg
-    dphi = log_std - phi_sg
+    deta = eta - eta_sg
 
     # Apply symmetric 2x2 inverse-Fisher transform
-    mu_scaled = mu_sg + a * dmu + b * dphi
-    log_std_scaled = phi_sg + b * dmu + d * dphi
+    mu_scaled = mu_sg + a * dmu + b * deta
+    eta_scaled = eta_sg + b * dmu + d * deta
+    return mu_scaled, eta_scaled
 
-    return mu_scaled, log_std_scaled
+def scale_inverse_fisher_grad_for_backward(
+    mu: jax.Array,       # unused in Fisher (constant shift), kept for signature compatibility
+    eta: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """
+    Inverse-Fisher gradient scaling for:
+        x ~ N(k + 0.5 * exp(log_std) * mu,  exp(2*log_std))
+
+    Parameters are (mu, phi=log_std). Fisher does not depend on k.
+    Forward values are unchanged; only gradients are preconditioned.
+    """
+
+    # Coeffs depend on mu (treat them as constants for preconditioning)
+    mu_sg= jax.lax.stop_gradient(mu)
+    eta_sg = jax.lax.stop_gradient(eta)
+
+    # F^{-1} entries for (mu, phi)
+    a = jax.lax.stop_gradient(eta**2/(1+ mu**2*eta))
+
+
+    dmu = mu - mu_sg
+    deta = eta - eta_sg
+
+    # Apply symmetric 2x2 inverse-Fisher transform
+    mu_scaled = mu
+    eta_scaled = eta_sg +  (deta)*a
+
+    return mu_scaled, eta_scaled
+
 
 
 def torch_he_uniform(
@@ -1094,31 +1114,48 @@ class DiffusionModel(nnx.Module):
         return friction if self.learn_friction else jax.lax.stop_gradient(friction)
     
     def diffusion_coeff_fn(self, step: jax.Array, obs_dict: dict[str, jax.Array]) -> jax.Array:
-        friction_value = self.friction_fn(step, obs_dict)
+        friction_value = self.friction_fn(step, obs_dict) 
+        if(self.learn_friction==False):
+            friction_value = jax.lax.stop_gradient(friction_value)
         dt = self.delta_t_fn(step)
         sigma_square = 1.0 / friction_value
         eta = dt * sigma_square
         log_scale = 0.5 * jnp.log(2.0 * eta)
         scale = jnp.sqrt(2*eta)
-        return (scale, eta, log_scale) if self.learn_friction else (jax.lax.stop_gradient(scale), jax.lax.stop_gradient(eta), jax.lax.stop_gradient(log_scale))
+        # if self.train_mode == "WPO":
+        #     log_scale_sg = jax.lax.stop_gradient(log_scale)
+        #     log_scale = log_scale_sg + (log_scale - log_scale_sg) * 1/2
+        #     scale = jnp.exp(log_scale)
+        #     eta = jnp.exp(2*log_scale)/2
+        return (scale, eta, log_scale) #if self.learn_friction else (jax.lax.stop_gradient(scale), jax.lax.stop_gradient(eta), jax.lax.stop_gradient(log_scale))
     
-    def return_fisher_scaled_mean_and_scale(self, mu, log_std):
-        mu, log_scale = self.scale_inverse_fisher_grad(mu, log_std)
-        scale = jnp.exp(log_scale)
-        eta = jnp.exp(2*log_scale)/2
-        raise ValueError("WPO mode not implemented yet. must seperate forward from backward scale")
+    def return_fisher_scaled_mean_and_scale(self, mu, eta, mode = "forward"):
+        if(mode == "forward"):
+            mu, eta = scale_inverse_fisher_grad(mu, eta)
+        else:
+            mu, eta = scale_inverse_fisher_grad_for_backward(mu, eta)
+        scale = jnp.sqrt(2.0 * eta)
         return mu, scale, eta
 
-        
-    def compute_diffusion_stuff(self, step: jax.Array, x: jax.Array, obs_dict: dict[str, jax.Array]) -> tuple[jax.Array, jax.Array, jax.Array]:
+    def compute_diffusion_stuff(self, step: jax.Array, x: jax.Array, obs_dict: dict[str, jax.Array], model = None, ode_coeff: float = 1.0) -> tuple[jax.Array, jax.Array, jax.Array]:
         """Compute diffusion related quantities."""
-        diffusion_coeff, eta, log_diffusion_coeff = self.diffusion_coeff_fn(step, obs_dict)
-        score = self.forward_model(step, x, obs_dict)
-        if self.train_mode == "WPO":
-            score, scale, eta = self.return_fisher_scaled_mean_and_scale(score, log_diffusion_coeff)
+        scale, eta, log_diffusion_coeff = self.diffusion_coeff_fn(step, obs_dict)
+        drift = self.drift_fn(step, x)
+        score = model(step, x, obs_dict)
+        mu = drift + ode_coeff * score
+        if (self.train_mode == "WPO"):
+            pass
+            # if the model is the forward_model() t
+            # if(model == self.forward_model):
+            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, log_diffusion_coeff, mode="forward")
+            # elif(model == self.backward_model):
+            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, log_diffusion_coeff, mode="backward")
+            # else:
+            #     raise ValueError("model must be either forward_model or backward_model")
         else:
-            scale = diffusion_coeff
-        return score, scale, eta
+            pass
+        return mu, scale, eta
+    
 
     def mass_fn(self) -> jax.Array:
         """Mass function."""
