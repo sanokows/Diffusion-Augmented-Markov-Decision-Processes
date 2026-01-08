@@ -279,17 +279,46 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         )(obs_for_actions, stop_pred_action)
         log_prob_action_grad = gen_log_prob_action_grad - dest_log_prob_action_grad
 
-        # fKL constraint (matches actor_loss_fn).
-        kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
-        if cfg.reverse_kl:
-            def compute_single(k):
-                return actor_model.rkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+        use_W2_kl = cfg.use_W2_kl
+        if use_W2_kl:
+            def target_single_log_probs(obs, act):
+                batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
+                gen_lp_old, _ = actor_target_model.vmap_eval_log_prob(batched_obs, act[None])
+                return jnp.squeeze(gen_lp_old, axis=0)
+
+
+            target_log_prob_grad = jax.vmap( 
+                jax.grad(target_single_log_probs, argnums=1)
+            )(obs_for_target, stop_pred_action)
+
+            #jax.debug.print("target_log_prob_grad shape: {shape}", shape=target_log_prob_grad.shape)
+            kl = cfg.diffusion.diff_steps * jnp.mean(jnp.sum(
+                (target_log_prob_grad - gen_log_prob_action_grad) ** 2, axis=-1
+            ), axis = 0)
+                        # fKL constraint (matches actor_loss_fn).
+            kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
+            if cfg.reverse_kl:
+                def compute_single(k):
+                    return actor_model.rkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+            else:
+                def compute_single(k):
+                    return actor_model.fkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+            kl_log_ratios = jax.vmap(compute_single)(kl_keys)
+            kl_log_ratios = kl_log_ratios.mean(axis=0)
+            kl_clip_value = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
         else:
-            def compute_single(k):
-                return actor_model.fkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
-        kl_log_ratios = jax.vmap(compute_single)(kl_keys)
-        kl_log_ratios = kl_log_ratios.mean(axis=0)
-        kl = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
+            # fKL constraint (matches actor_loss_fn).
+            kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
+            if cfg.reverse_kl:
+                def compute_single(k):
+                    return actor_model.rkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+            else:
+                def compute_single(k):
+                    return actor_model.fkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+            kl_log_ratios = jax.vmap(compute_single)(kl_keys)
+            kl_log_ratios = kl_log_ratios.mean(axis=0)
+            kl = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
+            kl_clip_value = kl
 
         temperature = actor_model.temperature()
         lagrangian = actor_model.lagrangian()
@@ -309,7 +338,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             )
         elif cfg.actor_kl_clip_mode == "clipped":
             actor_loss_val = jnp.where(
-                kl < cfg.kl_bound,
+                kl_clip_value < cfg.kl_bound,
                 actor_Q_loss,
                 kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
             )
@@ -344,7 +373,8 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             abs_pred_action=jnp.abs(pred_action).mean(),
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
             energy_mean=-minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
-            kl=kl.mean(),
+            kl=kl_clip_value.mean(),
+            kl_clip_value = kl.mean(),
             lagrangian=lagrangian,
             lagrangian_loss=lagrangian_loss,
             run_cost=0.0,
@@ -356,8 +386,6 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             actor_pnorm=actor_pnorm,
             friction=friction_detached.mean(),
             entropy_prior=entropy_prior,
-            q_action_grad=q_action_grad,
-            policy_action_grad=log_prob_action_grad,
         )
 
 def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):

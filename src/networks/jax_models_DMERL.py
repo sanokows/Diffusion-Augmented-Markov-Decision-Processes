@@ -57,7 +57,7 @@ def ODE_integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=F
     key_gen = key
 
     # Compute SDE components
-    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model, ode_coeff= 0.5)
+    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model, ode_coeff= 0.5, train_mode = False)
     # Forward kernel
     x_new = x + eta * mu
 
@@ -298,9 +298,9 @@ def scale_inverse_fisher_grad(
     # Coeffs depend on mu (treat them as constants for preconditioning)
     mu_sg= jax.lax.stop_gradient(mu)
     eta_sg = jax.lax.stop_gradient(eta)
-
+    eps = 1e-3
     # F^{-1} entries for (mu, phi)
-    a = jax.lax.stop_gradient(2/eta_sg**2 + 2 * mu_sg**2) # mu,mu
+    a = jax.lax.stop_gradient(2/(eta_sg+ eps) + 2 * mu_sg**2) # mu,mu
     b = jax.lax.stop_gradient(-2 *mu_sg*eta_sg)           # mu,phi = phi,mu
     d = jax.lax.stop_gradient(2 * eta_sg**2)                            # phi,phi
 
@@ -330,7 +330,7 @@ def scale_inverse_fisher_grad_for_backward(
     eta_sg = jax.lax.stop_gradient(eta)
 
     # F^{-1} entries for (mu, phi)
-    a = jax.lax.stop_gradient(eta**2/(1+ mu**2*eta))
+    a = jax.lax.stop_gradient(2*eta**2/(1+ mu**2*eta))
 
 
     dmu = mu - mu_sg
@@ -1137,21 +1137,20 @@ class DiffusionModel(nnx.Module):
         scale = jnp.sqrt(2.0 * eta)
         return mu, scale, eta
 
-    def compute_diffusion_stuff(self, step: jax.Array, x: jax.Array, obs_dict: dict[str, jax.Array], model = None, ode_coeff: float = 1.0) -> tuple[jax.Array, jax.Array, jax.Array]:
+    def compute_diffusion_stuff(self, step: jax.Array, x: jax.Array, obs_dict: dict[str, jax.Array], model = None, ode_coeff: float = 1.0, train_mode: bool = True) -> tuple[jax.Array, jax.Array, jax.Array]:
         """Compute diffusion related quantities."""
         scale, eta, log_diffusion_coeff = self.diffusion_coeff_fn(step, obs_dict)
         drift = self.drift_fn(step, x)
         score = model(step, x, obs_dict)
         mu = drift + ode_coeff * score
-        if (self.train_mode == "WPO"):
-            pass
+        if (self.train_mode == "WPO" and train_mode == True):
             # if the model is the forward_model() t
-            # if(model == self.forward_model):
-            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, log_diffusion_coeff, mode="forward")
-            # elif(model == self.backward_model):
-            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, log_diffusion_coeff, mode="backward")
-            # else:
-            #     raise ValueError("model must be either forward_model or backward_model")
+            if(model == self.forward_model):
+                mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="forward")
+            elif(model == self.backward_model):
+                mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="backward")
+            else:
+                raise ValueError("model must be either forward_model or backward_model")
         else:
             pass
         return mu, scale, eta

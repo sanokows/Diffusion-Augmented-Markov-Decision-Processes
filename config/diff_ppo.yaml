@@ -18,8 +18,8 @@ hyperparameters:
   kl_action_rep: 1
   reduce_kl: true
   reverse_kl: false
-  temp_lagrangian_adam_gamma1: 0.9
-  temp_lagrangian_adam_gamma2: 0.999
+  temp_lagrangian_adam_gamma1: 0.97
+  temp_lagrangian_adam_gamma2: 0.9997
   total_time_steps: 50_000_000
   num_steps: 64
   num_mini_batches: 128

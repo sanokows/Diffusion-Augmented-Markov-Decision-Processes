@@ -427,8 +427,8 @@ class ReppoPPOTrainer:
                 diff_steps = getattr(diff_cfg, "diff_steps", None)
             if diff_steps is not None and diff_steps > 0:
                 scale = (128 * 4) / (cfg.diffusion.diff_steps*cfg.num_mini_batches*cfg.num_epochs)
-                temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1**scale
-                temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2**scale
+                temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1##**scale
+                temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2#**scale
             else:
                 temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1
                 temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2
@@ -663,17 +663,15 @@ class ReppoPPOTrainer:
                         - log_ratio * entropy_scale
                     )
                     if (cfg.normalize_advantages):
-                        adv_base = (unnormed_advantages - jnp.mean(unnormed_advantages)) / (
-                            jnp.std(unnormed_advantages) + 1e-8
+                        mean = jax.lax.stop_gradient(jnp.mean(unnormed_advantages))
+                        sdt = jax.lax.stop_gradient(jnp.std(unnormed_advantages))
+                        adv_base = (unnormed_advantages - mean) / (
+                            sdt + 1e-8
                         )
                     else:
                         adv_base = unnormed_advantages
-                    # print adv_base, unnormed_advantages statistics, reward and log ratio and ratio
-                    # jax.debug.print("adv_base mean: {}, std: {}", adv_base.mean(), adv_base.std())
-                    # jax.debug.print("unnormed_advantages mean: {}, std: {}", unnormed_advantages.mean(), unnormed_advantages.std())
-                    # jax.debug.print("reward mean: {}, log_ratio mean: {}", minibatch.reward.mean(), log_ratio.mean())
-                    # jax.debug.print("ratio mean: {}, std: {}", ratio.mean(), ratio.std())
-
+                        mean = 0.
+                        sdt = 1.
 
                     adv_base = jax.lax.stop_gradient(adv_base)  ### when forward process is learned things have to be adapted
 
@@ -725,6 +723,15 @@ class ReppoPPOTrainer:
                         actor_loss = -jnp.mean(
                             valid_mask * jnp.minimum(actor_loss1, actor_loss2)
                         )
+                        do_update = actor_loss1 < actor_loss2
+
+                        scaled_dest_log_prob = dest_log_prob/sdt
+                        stop_grad_ratio = jax.lax.stop_gradient(ratio)
+                        masked_scaled_dest_log_prob = jnp.where(do_update, scaled_dest_log_prob, jax.lax.stop_gradient(scaled_dest_log_prob))
+                        dest_loss = jnp.mean(stop_grad_ratio*masked_scaled_dest_log_prob*entropy_scale)
+                        actor_loss += dest_loss
+
+
 
                     entropy_loss = jnp.mean(gen_log_prob)
 
@@ -946,7 +953,9 @@ def run(cfg: DictConfig):
             adv_np = np.asarray(jax.device_get(advantages))
             finite_mask = np.isfinite(adv_np)
             if finite_mask.any():
-                advantages_hist = wandb.Histogram(adv_np[finite_mask])
+                finite_adv = adv_np[finite_mask]
+                if np.ptp(finite_adv) > 0:
+                    advantages_hist = wandb.Histogram(finite_adv)
         logging.info(
             f"step={state.time_steps[0]} episode_return={episode_return:.3f}, sps={sps:.2f}"
         )

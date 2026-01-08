@@ -146,6 +146,7 @@ class ReppoConfig(struct.PyTreeNode):
     use_actor_skip: bool = False
     reduce_kl: bool = True
     reverse_kl: bool = False
+    use_W2_kl: bool = False
     anneal_lr: bool = False
     actor_kl_clip_mode: str = "clipped"
     train_mode: str = "reparam"
