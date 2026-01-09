@@ -269,6 +269,7 @@ class ReppoDMERLTrainer:
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
+        
         self.ode_eval_fn = self._make_ode_eval_fn()
 
     def _prepare_env(self, env: Environment) -> Environment:
@@ -975,7 +976,7 @@ class ReppoDMERLTrainer:
         )
         metrics = jax.tree.map(lambda x: x.mean(0), metrics)
         return train_state, metrics
-    
+
     def minibatch_update_step(self, 
         cfg,
         action_size_target: float,
@@ -1038,9 +1039,9 @@ class ReppoDMERLTrainer:
 
         actor_grad_fn = jax.value_and_grad(actor_loss_fn_, has_aux=True)
         actor_output, actor_grads = actor_grad_fn(updated_state.actor.params)
+        actor_metrics = actor_output[1]
         actor_train_state = updated_state.actor.apply_gradients(actor_grads)
         updated_state = updated_state.replace(actor=actor_train_state)
-        actor_metrics = actor_output[1]
         actor_metrics["actor_gnorm"] = utils.tree_norm(actor_grads)
         actor_metrics["actor_timestep_coeff_norm"] = _timestep_coeff_norm(
             actor_train_state.params

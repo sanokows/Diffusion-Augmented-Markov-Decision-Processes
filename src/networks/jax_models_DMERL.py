@@ -298,7 +298,7 @@ def scale_inverse_fisher_grad(
     # Coeffs depend on mu (treat them as constants for preconditioning)
     mu_sg= jax.lax.stop_gradient(mu)
     eta_sg = jax.lax.stop_gradient(eta)
-    eps = 1e-3
+    eps = 1e-4
     # F^{-1} entries for (mu, phi)
     a = jax.lax.stop_gradient(2/(eta_sg+ eps) + 2 * mu_sg**2) # mu,mu
     b = jax.lax.stop_gradient(-2 *mu_sg*eta_sg)           # mu,phi = phi,mu
@@ -1142,15 +1142,16 @@ class DiffusionModel(nnx.Module):
         scale, eta, log_diffusion_coeff = self.diffusion_coeff_fn(step, obs_dict)
         drift = self.drift_fn(step, x)
         score = model(step, x, obs_dict)
-        mu = drift + ode_coeff * score
+        mu = drift + ode_coeff *score
         if (self.train_mode == "WPO" and train_mode == True):
             # if the model is the forward_model() t
-            if(model == self.forward_model):
-                mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="forward")
-            elif(model == self.backward_model):
-                mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="backward")
-            else:
-                raise ValueError("model must be either forward_model or backward_model")
+            # if(model == self.forward_model):
+            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="forward")
+            # elif(model == self.backward_model):
+            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="backward")
+            # else:
+            #     raise ValueError("model must be either forward_model or backward_model")
+            pass
         else:
             pass
         return mu, scale, eta
@@ -1161,12 +1162,15 @@ class DiffusionModel(nnx.Module):
         mass_std = jax.nn.softplus(self.mass_std.value)
         return mass_std if self.learn_mass_matrix else jax.lax.stop_gradient(mass_std)
 
+    def get_prior_std(self) -> jax.Array:
+        return jax.nn.softplus(self.prior_std.value)*jnp.ones(self.action_dim) if self.learn_prior else jnp.ones(self.action_dim) * self.init_std
+
     def drift_fn(self, step: jax.Array, x: jax.Array) -> jax.Array:
         """Drift function for diffusion (gradient of prior log prob)."""
         # return jax.grad(self.prior_log_prob)(x)
         # Fall back to analytical gradient: ∇_x log p(x) = -(x-μ)/σ²
         mean = self.prior_mean if self.learn_prior else jnp.zeros(self.action_dim)
-        std = jax.nn.softplus(self.prior_std) if self.learn_prior else jnp.ones(self.action_dim) * self.init_std
+        std = self.get_prior_std()
         grad = -(x - mean) / (std ** 2)
         return grad
 

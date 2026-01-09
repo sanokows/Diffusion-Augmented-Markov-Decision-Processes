@@ -234,19 +234,63 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         use_current_critic_for_actions = bool(
             getattr(cfg, "use_current_critic_for_actor_samples", False)
         )
-        actor_model = nnx.merge(updated_state.actor.graphdef, params)
         critic_current_model = nnx.merge(
             updated_state.critic.graphdef, updated_state.critic.params
         )
         critic_for_actions = (
             critic_current_model if use_current_critic_for_actions else critic_rollout_model
         )
+        actor_model_raw = nnx.merge(updated_state.actor.graphdef, params)
         obs_for_actions = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model, critic_for_actions, use_langevin
+            minibatch.obs, minibatch.critic_obs, actor_model_raw, critic_for_actions, use_langevin
         )
         obs_for_target = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model, critic_rollout_model, use_langevin
+            minibatch.obs, minibatch.critic_obs, actor_model_raw, critic_rollout_model, use_langevin
         )
+
+        stop_grad_params = jax.tree.map(jax.lax.stop_gradient, params)
+        batch_size = minibatch.action.shape[0]
+        fisher_keys = jax.random.split(step_key, batch_size)
+
+        ### TODO shoudl actually be done seperatly for each state
+        def _single_gen_log_prob(p, obs, key):
+            actor_single = nnx.merge(updated_state.actor.graphdef, p)
+            obs_batched = jax.tree_util.tree_map(lambda x: x[None], obs)
+            _, gen_log_prob, _ = actor_single.vmap_sample_next_step(obs_batched, key)
+            return gen_log_prob.squeeze()
+
+        per_sample_grads = jax.vmap(
+            jax.grad(_single_gen_log_prob), in_axes=(None, 0, 0)
+        )(params, obs_for_actions, fisher_keys)
+        def _is_array_like(x):
+            return hasattr(x, "shape") and hasattr(x, "dtype")
+
+        def _skip_fisher(path):
+            for key in path:
+                if isinstance(key, str) and ("temperature" in key or "lagrangian" in key):
+                    return True
+            return False
+
+        def _precondition_delta(path, p, p0, g):
+            delta = p - p0
+            if _skip_fisher(path):
+                return delta
+            if not _is_array_like(p):
+                return delta
+            fisher_diag = jnp.mean(jnp.square(g), axis=0)
+            inv_fisher = 1.0 / (fisher_diag + 1e-8)
+            sg_inverse_fisher = jax.lax.stop_gradient(inv_fisher)
+            return delta * sg_inverse_fisher
+
+        precond_delta = tree_util.tree_map_with_path(
+            _precondition_delta, params, stop_grad_params, per_sample_grads
+        )
+
+        def _apply_precond(p, p0, d):
+            return p0 + d
+
+        params = jax.tree.map(_apply_precond, params, stop_grad_params, precond_delta)
+        actor_model = nnx.merge(updated_state.actor.graphdef, params)
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
         )
@@ -364,9 +408,9 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         actor_pnorm = utils.tree_norm(params)
         friction = actor_model.diffusion_model.friction.value
         friction_detached = jax.lax.stop_gradient(friction)
-        return loss, dict(
+        metrics = dict(
             actor_loss=actor_loss_val,
-            actor_WPO_loss = actor_WPO_loss,
+            actor_WPO_loss=actor_WPO_loss,
             loss=loss,
             temp=actor_model.temperature(),
             abs_batch_action=jnp.abs(minibatch.action).mean(),
@@ -374,7 +418,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
             energy_mean=-minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
             kl=kl_clip_value.mean(),
-            kl_clip_value = kl.mean(),
+            kl_clip_value=kl.mean(),
             lagrangian=lagrangian,
             lagrangian_loss=lagrangian_loss,
             run_cost=0.0,
@@ -387,6 +431,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             friction=friction_detached.mean(),
             entropy_prior=entropy_prior,
         )
+        return loss, metrics
 
 def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     key, env_state, inner_state, obs, critic_obs = carry
