@@ -20,6 +20,39 @@ salloc -A EU-25-100 -p qgpu_free
 salloc -A EU-25-100 -p qgpu --time=01:00:00
 python config.py --RL_algo DiffPPO
 
+### TODO check if diffusion is initialized so that it maps to prior
+
+Easy Tasks:
+AcrobotSwingup
+BallInCup
+CartpoleBalance
+CartoleSwingup
+CheetahRun
+FingerSpin
+FingerTurnEasy
+FingerTurnHard
+
+Hard Tasks:
+AcrobotSwingupSparse
+PendulumSwingup
+CartpoleSwingupSparse
+CartpoleBalanceSparse
+FingerTurnHard
+
+Next steps
+### implement learned prior and learned std
+### plot point of mass
+
+### TODO log time of the diff env steps
+### TODO find out how large batch size should be!
+
+### todo make friction learnable by neural network
+### todo make prior learnable in DMERL
+
+
+### TODO add distributional value function in DiffPPO
+### TODO implement Q function guidance
+
 
 python -m src.jaxrl.reppo env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=1. hyperparameters.env_action_clip_value=0.999
 
@@ -83,39 +116,20 @@ python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_
 python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=1e-3 hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=1e-3 hyperparameters.lagrangian_lr=1e-3 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=201 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=false hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
 
 ### AcrobotSwingup DiffPPO
-python -m src.jaxrl.reppo_DiffPPO env.name=AcrobotSwingup hyperparameters.num_eval=20 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=3e-4 hyperparameters.entropy_coef=0.01 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.num_collection_step_factor=0.5 hyperparameters.num_envs=1024 hyperparameters.num_epochs=8
+python -m src.jaxrl.reppo_DiffPPO env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=3e-4 hyperparameters.entropy_coef=0.01 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.num_collection_step_factor=0.5 hyperparameters.num_envs=1024 hyperparameters.num_epochs=8
 
+### AcrobotSwingup PPO works quite well
 python -m src.jaxrl.reppo_PPO env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_envs=1024 hyperparameters.entropy_coef=0.01
 
-### TODO check if diffusion is initialized so that it maps to prior
+### AcrobotSwingup PPO works quite well
+python -m src.jaxrl.reppo_PPO env.name=BallInCup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_envs=1024 hyperparameters.entropy_coef=0.01
 
-Easy Tasks:
-AcrobotSwingup
-BallInCup
-CartpoleBalance
-CartoleSwingup
-CheetahRun
-FingerSpin
-FingerTurnEasy
-FingerTurnHard
+### CheetahRun DiffPPO
+python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=3e-4 hyperparameters.entropy_coef=0.001 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.num_collection_step_factor=0.5 hyperparameters.num_envs=1024 hyperparameters.num_epochs=8 hyperparameters.update_entropy_lagrangian=true
 
-Hard Tasks:
-AcrobotSwingupSparse
-PendulumSwingup
-CartpoleSwingupSparse
-CartpoleBalanceSparse
-FingerTurnHard
+### CheetahRun DiffPPO categoricalValue
+python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=3e-4 hyperparameters.entropy_coef=0.001 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.num_collection_step_factor=0.5 hyperparameters.num_envs=1024 hyperparameters.num_epochs=8 hyperparameters.use_categorical_value=true  hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.num_bins=201
 
-Next steps
-### implement learned prior and learned std
-### plot point of mass
+### BallInCup DiffPPO
+python -m src.jaxrl.reppo_DiffPPO env.name=BallInCup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=1e-3 hyperparameters.entropy_coef=0.001 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.num_collection_step_factor=0.5 hyperparameters.num_envs=1024 hyperparameters.num_epochs=8
 
-### TODO log time of the diff env steps
-### TODO find out how large batch size should be!
-
-### todo make friction learnable by neural network
-### todo make prior learnable in DMERL
-
-
-### TODO add distributional value function in DiffPPO
-### TODO implement Q function guidance

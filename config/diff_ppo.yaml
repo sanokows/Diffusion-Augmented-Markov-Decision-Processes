@@ -42,6 +42,12 @@ hyperparameters:
   num_critic_pred_layers: 2
   use_simplical_embedding: False
   use_critic_skip: False
+  use_categorical_value: False
+  vmin: ${env.vmin}
+  vmax: ${env.vmax}
+  num_bins: 151
+  hl_gauss: True
+  aux_loss_mult: 1.0
 
   diffusion:
     name: "dis"

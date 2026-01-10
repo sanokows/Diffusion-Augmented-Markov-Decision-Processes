@@ -742,26 +742,27 @@ def make_train_fn(
                         old_pi_action = jnp.clip(old_pi_action, -cfg.action_clip_value, cfg.action_clip_value)
                         old_pi_action = jax.lax.stop_gradient(old_pi_action)
 
-                        target_log_prob_action_grad = jax.vmap(
-                            jax.vmap(
-                                jax.grad(single_target_log_prob, argnums=1),
-                                in_axes=(0, 0),
-                            ),
-                            in_axes=(None, 0),
-                        )(minibatch.obs, old_pi_action)
+                        # target_log_prob_action_grad = jax.vmap(
+                        #     jax.vmap(
+                        #         jax.grad(single_target_log_prob, argnums=1),
+                        #         in_axes=(0, 0),
+                        #     ),
+                        #     in_axes=(None, 0),
+                        # )(minibatch.obs, old_pi_action)
 
-                        kl_log_prob_action_grad = jax.vmap(jax.vmap(
-                                jax.grad(single_log_prob, argnums=1),
-                                in_axes=(0, 0)),in_axes=(None, 0))(minibatch.obs, old_pi_action)
+                        # kl_log_prob_action_grad = jax.vmap(jax.vmap(
+                        #         jax.grad(single_log_prob, argnums=1),
+                        #         in_axes=(0, 0)),in_axes=(None, 0))(minibatch.obs, old_pi_action)
                         #print the shapes of log prob gradiens
                         # jax.debug.print("target_log_prob_action_grad shape={shape}", shape=target_log_prob_action_grad.shape)
                         # jax.debug.print("kl_log_prob_action_grad shape={shape}", shape=kl_log_prob_action_grad.shape)
-                        kl = jnp.mean(jnp.mean((target_log_prob_action_grad - kl_log_prob_action_grad)**2, axis = -1), axis = 0)
+                        #kl = jnp.mean(jnp.mean((target_log_prob_action_grad - kl_log_prob_action_grad)**2, axis = -1), axis = 0)
 
                         old_pi_act_log_prob = old_pi_act_log_prob.sum(-1).mean(0)
                         pi_act_log_prob = pi.log_prob(old_pi_action).sum(-1).mean(0)
 
                         Kl_value = old_pi_act_log_prob - pi_act_log_prob
+                        kl = Kl_value
 
                     temperature = actor_model.temperature()
                     lagrangian = actor_model.lagrangian()
@@ -1082,7 +1083,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
         wandb.init(
             mode=cfg.wandb.mode,
-            project=cfg.wandb.project,
+            project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
             entity=cfg.wandb.entity,
             tags=[
                 cfg.name,
@@ -1092,7 +1093,10 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 *cfg.tags,
             ],
             config=OmegaConf.to_container(cfg),
-            name=f"{cfg.name}-{cfg.env.name.lower()}",
+            name=(
+                f"{cfg.name}-{cfg.env.name.lower()}"
+                f"-{getattr(cfg.hyperparameters, 'train_mode', 'reparam')}"
+            ),
             save_code=True,
         )
 

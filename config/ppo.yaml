@@ -31,3 +31,4 @@ wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
   project: "dime_${env.name}"
+  project_suffix: ""

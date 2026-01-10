@@ -1370,7 +1370,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         cfg.seed = cfg.seed + i
         wandb.init(
             mode=cfg.wandb.mode,
-            project=cfg.wandb.project,
+            project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
             entity=cfg.wandb.entity,
             tags=[
                 cfg.name,
@@ -1380,7 +1380,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 *cfg.tags,
             ],
             config=OmegaConf.to_container(cfg),
-            name=f"{cfg.name}-{cfg.env.name.lower()}",
+            name=f"{cfg.name}-{cfg.env.name.lower()}-{getattr(cfg, 'train_mode', 'reparam')}",
             save_code=True,
         )
         logging.info(OmegaConf.to_yaml(cfg))

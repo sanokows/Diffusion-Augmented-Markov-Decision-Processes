@@ -30,6 +30,7 @@ from src.env_utils.jax_wrappers import (
 )
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
+    CategoricalValueNetwork,
     DiffValueNetwork,
     DiffusionModel,
     DMERLActor,
@@ -99,6 +100,12 @@ class PPOConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
+    use_categorical_value: bool = False
+    vmin: float = -10.0
+    vmax: float = 10.0
+    num_bins: int = 51
+    hl_gauss: bool = False
+    aux_loss_mult: float = 0.0
     action_clip_value: float = 1.0
     kl_start: float = 0.1
     kl_bound: float = 1.0
@@ -123,6 +130,7 @@ class Transition(struct.PyTreeNode):
     obs: jax.Array
     critic_obs: jax.Array
     action: jax.Array
+    next_emb: jax.Array
     reward: jax.Array
     soft_reward: jax.Array
     log_prob: jax.Array
@@ -245,20 +253,38 @@ class PPONetworks(nnx.Module):
             temp_lagrangian_hidden=require(cfg, "temp_lagrangian_hidden"),
             rngs=rngs,
         )
-        self.critic_module = DiffValueNetwork(
-            obs_dim=critic_obs_dim,
-            action_dim=action_dim,
-            hidden_dim=critic_hidden_dim,
-            num_time_hid=require(score_cfg, "num_time_hid"),
-            num_time_out=require(score_cfg, "num_time_out"),
-            use_norm=require(cfg, "use_critic_norm"),
-            encoder_layers=require(cfg, "num_critic_encoder_layers"),
-            head_layers=require(cfg, "num_critic_head_layers"),
-            pred_layers=require(cfg, "num_critic_pred_layers"),
-            use_simplical_embedding=require(cfg, "use_simplical_embedding"),
-            use_skip=require(cfg, "use_critic_skip"),
-            rngs=rngs,
-        )
+        if require(cfg, "use_categorical_value"):
+            self.critic_module = CategoricalValueNetwork(
+                obs_dim=critic_obs_dim,
+                hidden_dim=critic_hidden_dim,
+                num_bins=require(cfg, "num_bins"),
+                vmin=require(cfg, "vmin"),
+                vmax=require(cfg, "vmax"),
+                num_time_hid=require(score_cfg, "num_time_hid"),
+                num_time_out=require(score_cfg, "num_time_out"),
+                use_norm=require(cfg, "use_critic_norm"),
+                encoder_layers=require(cfg, "num_critic_encoder_layers"),
+                head_layers=require(cfg, "num_critic_head_layers"),
+                pred_layers=require(cfg, "num_critic_pred_layers"),
+                use_simplical_embedding=require(cfg, "use_simplical_embedding"),
+                use_skip=require(cfg, "use_critic_skip"),
+                rngs=rngs,
+            )
+        else:
+            self.critic_module = DiffValueNetwork(
+                obs_dim=critic_obs_dim,
+                action_dim=action_dim,
+                hidden_dim=critic_hidden_dim,
+                num_time_hid=require(score_cfg, "num_time_hid"),
+                num_time_out=require(score_cfg, "num_time_out"),
+                use_norm=require(cfg, "use_critic_norm"),
+                encoder_layers=require(cfg, "num_critic_encoder_layers"),
+                head_layers=require(cfg, "num_critic_head_layers"),
+                pred_layers=require(cfg, "num_critic_pred_layers"),
+                use_simplical_embedding=require(cfg, "use_simplical_embedding"),
+                use_skip=require(cfg, "use_critic_skip"),
+                rngs=rngs,
+            )
 
     def critic(self, obs: jax.Array) -> jax.Array:
         return self.critic_module.critic(obs).squeeze()
@@ -539,6 +565,13 @@ class ReppoPPOTrainer:
                 obs=obs,
                 critic_obs=critic_obs,
                 action=action,
+                next_emb=(
+                    jax.lax.stop_gradient(
+                        model.critic_module.forward(next_critic_obs)[0]
+                    )
+                    if cfg.use_categorical_value
+                    else jnp.zeros((cfg.num_envs, cfg.critic_hidden_dim))
+                ),
                 reward=reward,
                 soft_reward=soft_reward,
                 log_prob=gen_log_prob,
@@ -631,18 +664,53 @@ class ReppoPPOTrainer:
                     model = nnx.merge(train_state.graphdef, params)
 
                     gen_log_prob, dest_log_prob = model.actor_log_prob_step(minibatch.obs, minibatch.action)
-                    value = model.critic(minibatch.critic_obs)
-
                     log_ratio = gen_log_prob - dest_log_prob
-                    value_pred_clipped = minibatch.value + (
-                        value - minibatch.value
-                    ).clip(-cfg.clip_ratio, cfg.clip_ratio)
-                    value_error = jnp.square(value - target_values)
-                    value_error_clipped = jnp.square(value_pred_clipped - target_values)
-                    value_loss = 0.5 * jnp.mean(
-                        (1.0 - minibatch.truncated)
-                        * jnp.maximum(value_error, value_error_clipped)
-                    )
+                    if cfg.use_categorical_value:
+                        critic_pred = model.critic_module.critic_cat(
+                            minibatch.critic_obs
+                        ).squeeze()
+                        if cfg.hl_gauss:
+                            target_cat = jax.vmap(
+                                utils.hl_gauss, in_axes=(0, None, None, None)
+                            )(target_values, cfg.num_bins, cfg.vmin, cfg.vmax)
+                            critic_update_loss = optax.softmax_cross_entropy(
+                                critic_pred, target_cat
+                            )
+                        else:
+                            critic_update_loss = optax.squared_error(
+                                critic_pred.reshape(-1, 1),
+                                target_values.reshape(-1, 1),
+                            )
+                        _, pred, pred_rew, value = model.critic_module.forward(
+                            minibatch.critic_obs
+                        )
+                        aux_loss = optax.squared_error(pred, minibatch.next_emb)
+                        aux_rew_loss = optax.squared_error(
+                            pred_rew, minibatch.reward.reshape(-1, 1)
+                        )
+                        aux_loss = jnp.mean(
+                            (1 - minibatch.done.reshape(-1, 1))
+                            * jnp.concatenate([aux_loss, aux_rew_loss], axis=-1),
+                            axis=-1,
+                        )
+                        critic_loss = optax.squared_error(value, target_values)
+                        critic_loss = jnp.mean(critic_loss)
+                        value_loss = jnp.mean(
+                            (1.0 - minibatch.truncated)
+                            * (critic_update_loss + cfg.aux_loss_mult * aux_loss)
+                        )
+                    else:
+                        value = model.critic(minibatch.critic_obs)
+                        value_pred_clipped = minibatch.value + (
+                            value - minibatch.value
+                        ).clip(-cfg.clip_ratio, cfg.clip_ratio)
+                        value_error = jnp.square(value - target_values)
+                        value_error_clipped = jnp.square(value_pred_clipped - target_values)
+                        value_loss = 0.5 * jnp.mean(
+                            (1.0 - minibatch.truncated)
+                            * jnp.maximum(value_error, value_error_clipped)
+                        )
+                        critic_loss = value_loss
 
                     ratio = jnp.exp(gen_log_prob - minibatch.log_prob)
                     lagrangian = model.actor_module.lagrangian()
@@ -680,6 +748,12 @@ class ReppoPPOTrainer:
                     adv_base = jax.lax.stop_gradient(adv_base)  ### when forward process is learned things have to be adapted
 
                     valid_mask = 1.0 - minibatch.truncated
+                    clipped = jnp.logical_or(
+                        ratio > 1 + cfg.clip_ratio, ratio < 1 - cfg.clip_ratio
+                    )
+                    clip_fraction = (valid_mask * clipped).mean() / (
+                        valid_mask.mean() + 1e-8
+                    )
                     lagrangian_loss = jnp.array(0.0)
                     if cfg.use_kl_regularization:
                         actor_target_model = model.actor_module
@@ -736,9 +810,6 @@ class ReppoPPOTrainer:
                         actor_loss += dest_loss
 
 
-
-                    entropy_loss = jnp.mean(gen_log_prob)
-
                     loss = (
                         actor_loss
                         + cfg.value_coef * value_loss
@@ -752,7 +823,7 @@ class ReppoPPOTrainer:
                         ).mean()
                         loss += target_entropy_loss
                     else:
-                        entropy = 0.0
+                        entropy = -self.diffusion_steps * jnp.mean(log_ratio, axis=0)
                         target_entropy = 0.0
                         target_entropy_loss = 0.0
                     if cfg.use_kl_regularization:
@@ -766,11 +837,10 @@ class ReppoPPOTrainer:
                     return loss, dict(
                         actor_loss=actor_loss,
                         value_loss=value_loss,
-                        entropy_loss=entropy_loss,
+                        entropy_loss=target_entropy_loss,
                         entropy=entropy,
                         target_entropy=target_entropy,
-                        target_entropy_loss=target_entropy_loss,
-                        temp=model.actor_module.temperature(),
+                        temp=entropy_scale,
                         kl=kl,
                         lagrangian=lagrangian,
                         lagrangian_loss=lagrangian_loss,
@@ -780,6 +850,22 @@ class ReppoPPOTrainer:
                         mean_advantages=adv_base.mean(),
                         mean_action=minibatch.action.mean(),
                         reward_mean=minibatch.reward.mean()*self.diffusion_steps,
+                        clip_ratio=clip_fraction,
+                        critic_update_loss=(
+                            jnp.mean(critic_update_loss)
+                            if cfg.use_categorical_value
+                            else jnp.array(0.0)
+                        ),
+                        aux_loss=(
+                            jnp.mean(aux_loss)
+                            if cfg.use_categorical_value
+                            else jnp.array(0.0)
+                        ),
+                        rew_aux_loss=(
+                            jnp.mean(aux_rew_loss)
+                            if cfg.use_categorical_value
+                            else jnp.array(0.0)
+                        ),
                     )
 
                 grad_fn = jax.value_and_grad(loss_fn, has_aux=True)

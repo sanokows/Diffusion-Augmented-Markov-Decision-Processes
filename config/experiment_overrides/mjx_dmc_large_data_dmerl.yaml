@@ -8,4 +8,4 @@ hyperparameters:
   temp_lagrangian_adam_gamma1: 0.997
   temp_lagrangian_adam_gamma2: 0.9997
   num_collection_step_factor: 0.5
-  num_eval: 20
+  num_eval: 50

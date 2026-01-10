@@ -664,7 +664,7 @@ def run(cfg: DictConfig):
         key, train_key = jax.random.split(key)
         wandb.init(
             mode=cfg.wandb.mode,
-            project=cfg.wandb.project,
+            project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
             entity=cfg.wandb.entity,
             tags=[cfg.name, cfg.env.name, cfg.env.type, *cfg.tags],
             config=OmegaConf.to_container(cfg),
@@ -694,7 +694,7 @@ def tune(cfg: DictConfig):
     env = MjxGymnaxWrapper(cfg.env.name, episode_length=cfg.env.max_episode_steps)
 
     def train_agent():
-        wandb.init(project=cfg.wandb.project)
+        wandb.init(project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}")
         run_cfg = OmegaConf.to_container(cfg)
         for k, v in dict(wandb.config).items():
             run_cfg["experiment"]["hyperparameters"][k] = v

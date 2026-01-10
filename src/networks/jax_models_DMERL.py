@@ -766,6 +766,148 @@ class CategoricalCriticNetwork(nnx.Module):
         return features, pred_features, pred_rew, value
 
 
+class CategoricalValueNetwork(nnx.Module):
+    def __init__(
+        self,
+        obs_dim: int,
+        hidden_dim: int = 512,
+        use_norm: bool = True,
+        use_simplical_embedding: bool = False,
+        encoder_layers: int = 1,
+        head_layers: int = 1,
+        pred_layers: int = 1,
+        num_bins: int = 51,
+        vmin: float = -10.0,
+        vmax: float = 10.0,
+        num_time_hid: int = 32,
+        num_time_out: int = 16,
+        use_skip: bool = False,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        self.num_bins = num_bins
+        self.vmin = vmin
+        self.vmax = vmax
+
+        self.num_time_hid = num_time_hid
+        self.num_time_out = num_time_out
+
+        self.use_skip = use_skip
+
+        self.feature_module = FCNN(
+            in_features=obs_dim + self.num_time_out,
+            out_features=hidden_dim,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            layers=encoder_layers,
+            hidden_skip=use_skip,
+            output_skip=use_skip,
+            rngs=rngs,
+        )
+        self.critic_module = FCNN(
+            in_features=hidden_dim,
+            out_features=self.num_bins,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            layers=head_layers,
+            input_activation=not use_simplical_embedding,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            rngs=rngs,
+        )
+        self.pred_module = FCNN(
+            in_features=hidden_dim,
+            out_features=hidden_dim + 1,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=None,
+            use_norm=use_norm,
+            use_output_norm=None,
+            layers=pred_layers,
+            input_activation=not use_simplical_embedding,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            output_skip=False,
+            rngs=rngs,
+        )
+
+        self.zero_dist = nnx.Param(
+            utils.hl_gauss(jnp.zeros((1,)), num_bins, vmin, vmax)
+        )
+        self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
+        self.timestep_coeff = nnx.Variable(
+            jnp.linspace(start=0.1, stop=50, num=self.num_time_hid)[None]
+        )
+
+        self.time_coder_state = nnx.Sequential(
+            nnx.Linear(self.num_time_hid * 2, self.num_time_hid, rngs=rngs),
+            nnx.gelu,
+            nnx.Linear(self.num_time_hid, self.num_time_out, rngs=rngs),
+        )
+
+    def get_fourier_features(self, timesteps):
+        sin_embed_cond = jnp.sin(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        cos_embed_cond = jnp.cos(
+            (self.timestep_coeff.value * timesteps) + self.timestep_phase.value
+        )
+        return jnp.concatenate([sin_embed_cond, cos_embed_cond], axis=-1)
+
+    def features(self, obs: jax.Array, time: jax.Array):
+        time_emb = self.get_fourier_features(time)
+        if len(obs.shape) == 1:
+            time_emb = time_emb[0]
+        t_net = self.time_coder_state(time_emb)
+        state = jnp.concatenate([obs, t_net], axis=-1)
+        return self.feature_module(state)
+
+    def critic_head(self, features: jax.Array) -> jax.Array:
+        cat = self.critic_module(features) + self.zero_dist.value * 40.0
+        return cat
+
+    def from_dict_to_observation(self, obs_dict):
+        orig_obs = obs_dict["orig_obs"]
+        normed_prev_actions = obs_dict["normed_actions"]
+        time = obs_dict["diff_time_step"]
+        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        return obs, time
+
+    def critic_cat(self, obs_dict: jax.Array) -> jax.Array:
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, time)
+        return self.critic_head(features)
+
+    def critic(self, obs_dict: jax.Array) -> jax.Array:
+        value_cat = jax.nn.softmax(self.critic_cat(obs_dict), axis=-1)
+        value = value_cat.dot(
+            jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
+        )
+        return value
+
+    def forward(self, obs_dict):
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, time)
+        value_cat = jax.nn.softmax(self.critic_head(features), axis=-1)
+
+        value = value_cat.dot(
+            jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
+        )
+        preds = self.pred_module(features)
+        pred_rew = preds[..., :1]
+        pred_features = preds[..., 1:]
+        if self.use_skip:
+            pred_features = pred_features + features
+
+        return features, pred_features, pred_rew, value
+
+
 class ValueNetwork(nnx.Module):
     def __init__(
         self,
