@@ -22,6 +22,7 @@ hyperparameters:
   temp_lagrangian_adam_gamma2: 0.9997
   total_time_steps: 50_000_000
   num_steps: 64
+  num_collection_step_factor: 1
   num_mini_batches: 128
   num_envs: 2048
   num_epochs: 16
@@ -89,14 +90,14 @@ hyperparameters:
       s: 0.008
       pow: 2
 
-name: "ppo"
+name: "diff_ppo"
 tags: ["ppo_baseline_retuned"]
 seed: 0
 num_seeds: 1
 tune: false
 checkpoint_dir: null
-trials: 8 
+trials: 1
 wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
-  project: "dime_benchmark_rerun"
+  project: "dime_${env.name}"

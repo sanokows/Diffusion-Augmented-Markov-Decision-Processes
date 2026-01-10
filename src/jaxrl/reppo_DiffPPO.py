@@ -114,6 +114,7 @@ class PPOConfig(struct.PyTreeNode):
     temp_lagrangian_adam_gamma1: float = 0.9
     temp_lagrangian_adam_gamma2: float = 0.999
     weight_decay: float = 0.0
+    num_collection_step_factor: float = 1.0
     use_temp_lagrangian_mlp: bool = False
     temp_lagrangian_hidden: int = 64
 
@@ -291,12 +292,14 @@ class ReppoPPOTrainer:
 
         self.diffusion_steps = require(diff_cfg, "diff_steps")
         self.eval_env_steps = cfg.max_episode_steps * self.diffusion_steps
-        self.num_collection_steps = cfg.num_steps * self.diffusion_steps
+        self.num_collection_steps = int(
+            cfg.num_steps * self.diffusion_steps * cfg.num_collection_step_factor
+        )
         self.num_minibatches = cfg.num_mini_batches * self.diffusion_steps
         self.normalizer = DictNormalizer()
-        self.eval_interval = int(
-            (cfg.total_time_steps / (cfg.num_steps * cfg.num_envs)) // cfg.num_eval
-        )
+        self.num_train_steps = cfg.total_time_steps // int(cfg.num_steps * cfg.num_envs * cfg.num_collection_step_factor) 
+        self.eval_interval = int(self.num_train_steps // cfg.num_eval)
+
         self.eval_fn = self._make_eval_fn(cfg.max_episode_steps)
 
     def _prepare_env(self, env: Environment) -> Environment:
@@ -368,8 +371,9 @@ class ReppoPPOTrainer:
         env_params = self.env_params
 
         def init(key: jax.random.PRNGKey) -> PPOTrainState:
-            num_train_steps = cfg.total_time_steps // (cfg.num_steps * cfg.num_envs)
+            num_train_steps = self.num_train_steps
             eval_interval = self.eval_interval
+
             num_iterations = num_train_steps // eval_interval + int(
                 num_train_steps % eval_interval != 0
             )
@@ -864,7 +868,7 @@ class ReppoPPOTrainer:
     def _train_loop(self, key: PRNGKey) -> tuple[PPOTrainState, dict]:
         cfg = self.cfg
         eval_interval = self.eval_interval
-        num_train_steps = cfg.total_time_steps // (cfg.num_steps * cfg.num_envs)
+        num_train_steps = self.num_train_steps
         num_iterations = num_train_steps // eval_interval + int(
             num_train_steps % eval_interval != 0
         )

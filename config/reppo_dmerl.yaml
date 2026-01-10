@@ -37,6 +37,7 @@ hyperparameters:
 
   # batch settings (need tuning for MJX humanoid)
   num_steps: 128
+  num_collection_step_factor: 1
   num_mini_batches: 16
   num_envs: 1024
   num_epochs: 4

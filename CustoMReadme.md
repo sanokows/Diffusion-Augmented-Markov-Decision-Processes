@@ -17,7 +17,7 @@ python -m src.jaxrl.DiffReppo env=hopper cfg.normalize_env=true cfg.num_envs=1 c
 
 salloc -A EU-25-100 -p qgpu_exp --exclude=acn13
 salloc -A EU-25-100 -p qgpu_free
-salloc -A EU-25-100 -p qgpu --time=04:00:00
+salloc -A EU-25-100 -p qgpu --time=01:00:00
 python config.py --RL_algo DiffPPO
 
 
@@ -51,43 +51,60 @@ python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_ev
 python -m src.jaxrl.reppo env.name=HumanoidWalk hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.action_clip_value=0.999 hyperparameters.env_action_clip_value=0.999 hyperparameters.lr=5e-5
 
 ### Cheetah
-### good run with changed entropy
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-40 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=151 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32
 
 ### learn friction with mlp  code change WPO  "works"
 python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=3e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=301 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_friction=false hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.train_mode=WPO
 
 python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=3e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=301 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_friction=false hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.train_mode=WPO hyperparameters.fisher_type=kfac
 
-
-### learn friction with mlp  code change
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=301 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=true hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_friction=true
-
-### learn friction with mlp  code change
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=301 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=true hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=false hyperparameters.diffusion.per_step_dt=false
-
-
-### more minibatches
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=2e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=2e-4 hyperparameters.lagrangian_lr=2e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=300 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=64 hyperparameters.diffusion.learn_friction=true
-
-### more minibatches with langevin_param
-python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=4e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=4e-4 hyperparameters.lagrangian_lr=4e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=300 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.score_model.langevin_param=true
-
-
+# Final Configs
 
 ### PendulumSwingUp DMERL
-python -m src.jaxrl.reppo_DMERL_new env.name=PendulumSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=201 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=false hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.997
+python -m src.jaxrl.reppo_DMERL_new env.name=PendulumSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=6e-4 hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=201 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=false hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997
 
-### reppo
+### changed num_collection_step_factor and other default params
+python -m src.jaxrl.reppo_DMERL_new env.name=PendulumSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=2e-3 hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=2e-3 hyperparameters.lagrangian_lr=2e-3 hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=201 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=false hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
+
+
+### PendulumSwingUp reppo_dime
 python -m src.jaxrl.reppo_dime env.name=PendulumSwingup hyperparameters.num_eval=100 hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_start=0.01 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.num_bins=301  hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.lr=3e-4 env=mjx_dmc experiment_overrides=mjx_dmc_large_data 
 
-### from Huy
+python -m src.jaxrl.reppo_dime env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_start=0.01 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.num_bins=301  hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.lr=3e-4 env=mjx_dmc experiment_overrides=mjx_dmc_large_data 
+
+### PendulumSwingUp reppo
 python -m src.jaxrl.reppo env.name=PendulumSwingup env=mjx_dmc experiment_overrides=mjx_dmc_large_data
+### AcrobotSwingup
+python -m src.jaxrl.reppo env.name=AcrobotSwingup env=mjx_dmc experiment_overrides=mjx_dmc_large_data
 
+### AcrobotSwingup DMERL
+python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=2e-3 hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=2e-3 hyperparameters.lagrangian_lr=2e-3 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=201 hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=false hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
 
-python -m src.jaxrl.reppo_DMERL_new env.name=BallInCup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=1e-4 hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=1e-4 hyperparameters.lagrangian_lr=1e-4 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=301 hyperparameters.kl_bound=0.1 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.num_mini_batches=32 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=true hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=false hyperparameters.diffusion.per_step_dt=false
+### smaller lr
+python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=1 hyperparameters.lr=1e-3 hyperparameters.vmin=-50 hyperparameters.vmax=150 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.temperature_lr=1e-3 hyperparameters.lagrangian_lr=1e-3 hyperparameters.ent_target_mult=3 hyperparameters.num_bins=201 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.weight_decay=0 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.use_friction_mlp=false hyperparameters.hl_gauss=true hyperparameters.ent_start=0.01 hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
+
+### AcrobotSwingup DiffPPO
+python -m src.jaxrl.reppo_DiffPPO env.name=AcrobotSwingup hyperparameters.num_eval=20 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=32 hyperparameters.lr=3e-4 hyperparameters.entropy_coef=0.01 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.temp_lagrangian_adam_gamma1=0.97 hyperparameters.temp_lagrangian_adam_gamma2=0.9997 hyperparameters.num_collection_step_factor=0.5 hyperparameters.num_envs=1024 hyperparameters.num_epochs=8
+
+python -m src.jaxrl.reppo_PPO env.name=AcrobotSwingup hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_envs=1024 hyperparameters.entropy_coef=0.01
+
 ### TODO check if diffusion is initialized so that it maps to prior
 
+Easy Tasks:
+AcrobotSwingup
+BallInCup
+CartpoleBalance
+CartoleSwingup
+CheetahRun
+FingerSpin
+FingerTurnEasy
+FingerTurnHard
+
+Hard Tasks:
+AcrobotSwingupSparse
+PendulumSwingup
+CartpoleSwingupSparse
+CartpoleBalanceSparse
+FingerTurnHard
 
 Next steps
 ### implement learned prior and learned std

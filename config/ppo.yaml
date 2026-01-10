@@ -8,7 +8,7 @@ hyperparameters:
     lmbda: 0.95
     clip_ratio: 0.2
     value_coef: 0.5
-    entropy_coef: 0.0
+    entropy_coef: 0.002
     total_time_steps: 50_000_000
     num_steps: 64
     num_mini_batches: 32
@@ -26,8 +26,8 @@ seed: 0
 num_seeds: 1
 tune: false
 checkpoint_dir: null
-trials: 8 
+trials: 1
 wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
-  project: "dime_benchmark_rerun"
+  project: "dime_${env.name}"

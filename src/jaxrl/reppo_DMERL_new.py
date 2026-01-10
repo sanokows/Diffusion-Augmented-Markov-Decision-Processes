@@ -110,6 +110,7 @@ class ReppoConfig(struct.PyTreeNode):
     ent_target_mult: float
     kl_start: float
     weight_decay: float = 0.0
+    num_collection_step_factor: float = 1.0
     temperature_lr: float | None = None
     lagrangian_lr: float | None = None
     temperature_lr_mult: float = 1.0
@@ -264,7 +265,9 @@ class ReppoDMERLTrainer:
         self.env = self._prepare_env(env)
         self.eval_env = copy.deepcopy(self.env)
         self.eval_env_steps = cfg.max_episode_steps*self.cfg.diffusion.diff_steps
-        self.num_collection_steps = cfg.num_steps * self.cfg.diffusion.diff_steps
+        self.num_collection_steps = int(
+            cfg.num_steps * self.cfg.diffusion.diff_steps * cfg.num_collection_step_factor
+        )
         self.num_minibatches = cfg.num_mini_batches*self.cfg.diffusion.diff_steps
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
@@ -1068,9 +1071,7 @@ class ReppoDMERLTrainer:
             return state, metrics
 
         train_key, eval_key = jax.random.split(key)
-        eval_interval = int(
-            (cfg.total_time_steps / (cfg.num_steps * cfg.num_envs)) // cfg.num_eval
-        )
+        eval_interval = self.eval_interval
         train_state, train_metrics = jax.lax.scan(
             f=train_step,
             init=train_state,
@@ -1119,10 +1120,12 @@ class ReppoDMERLTrainer:
 
     def _train_loop(self, key: PRNGKey) -> tuple[SACTrainState, dict]:
         cfg = self.cfg
-        eval_interval = int(
-            (cfg.total_time_steps / (cfg.num_steps * cfg.num_envs)) // cfg.num_eval
-        )
-        num_train_steps = cfg.total_time_steps // (cfg.num_steps * cfg.num_envs)
+
+        num_train_steps = cfg.total_time_steps // int(cfg.num_steps * cfg.num_envs * cfg.num_collection_step_factor) 
+        eval_interval = int(num_train_steps // cfg.num_eval)
+        self.eval_interval = eval_interval
+        
+        # num iteratns defines the number of training steps for each logging interval
         num_iterations = num_train_steps // eval_interval + int(
             num_train_steps % eval_interval != 0
         )
