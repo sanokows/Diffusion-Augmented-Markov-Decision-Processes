@@ -63,4 +63,4 @@ command:
   - env=${config_env}
   - experiment_overrides=${experiment_overrides}
   - wandb.project_suffix=${wandb_project_suffix}
-  - --trial=${n_trials}
+  - num_trials=${n_trials}
