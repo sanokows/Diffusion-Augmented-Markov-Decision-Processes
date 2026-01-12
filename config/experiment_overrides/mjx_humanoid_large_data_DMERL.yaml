@@ -1,11 +1,10 @@
 hyperparameters:
-  gamma: 0.9992
   critic_hidden_dim: 1024
   num_envs: 1024
   num_steps: 128
-  num_mini_batches: 2 ## *diff_steps = 16
+  num_mini_batches: 8 ## *diff_steps = 16
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
-  num_collection_step_factor: 0.25
+  num_collection_step_factor: 0.5
   num_epochs: 8
   kl_bound: 0.1

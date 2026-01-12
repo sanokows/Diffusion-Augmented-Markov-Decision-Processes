@@ -6,7 +6,12 @@ python -m src.jaxrl.reppo env.name=AcrobotSwingup env=mjx_dmc experiment_overrid
 ### FingerTurnEasy
 python -m src.jaxrl.reppo env.name=FingerTurnEasy env=mjx_dmc experiment_overrides=mjx_dmc_large_data
 
-### HumanoidRun vmin and vmax are adjusten in overrides
-python -m src.jaxrl.reppo env.name=HumanoidRun env=mjx_dmc experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50
+### AcrobotSwingupSparse
+python -m src.jaxrl.reppo env.name=AcrobotSwingupSparse env=mjx_dmc experiment_overrides=mjx_dmc_large_data hyperparameters.lr=3e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
+
+### HumanoidRun 
+python -m src.jaxrl.reppo env.name=HumanoidRun env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50
+
+
 
 

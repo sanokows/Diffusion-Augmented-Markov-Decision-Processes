@@ -12,7 +12,6 @@
 
 # (optional) load needed modules
 
-conda activate humanoid_ppo
 # run your code
-chmod +x ./sweeps/Ablations/Temperature/start_sweeps_DiffPPO.sh
-sh ./sweeps/Ablations/Temperature/start_sweeps_DiffPPO.sh
+chmod +x ./READMEs/Sweeps/run_sweep.sh
+sh ./READMEs/Sweeps/run_sweep.sh

@@ -8,7 +8,7 @@ hyperparameters:
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
   num_collection_step_factor: 0.25
-  vmin: -50
+  vmin: -20
   vmax: 170
-  num_bins: 221
+  num_bins: 191
   num_eval: 50

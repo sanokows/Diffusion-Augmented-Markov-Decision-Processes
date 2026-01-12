@@ -6,5 +6,5 @@ terminate: false
 push_distractions: false
 asymmetric_observation: true
 
-vmin: -10
-vmax:  50
+vmin: 0
+vmax:  150
