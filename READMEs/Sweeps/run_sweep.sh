@@ -2,7 +2,10 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    AcrobotSwingup, BallInCup, AcrobotSwingupSparse, PendulumSwingup
+    AcrobotSwingup
+    BallInCup
+    AcrobotSwingupSparse
+    PendulumSwingup
     # Add more env names here
 )
 
@@ -32,6 +35,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.diffusion.per_step_dt=true \
         hyperparameters.lr=3e-4 \
         env=mjx_dmc \
+        num_trials=3 \
         experiment_overrides=mjx_dmc_large_data &
     GPU_INDEX=$((GPU_INDEX + 1))
 done
