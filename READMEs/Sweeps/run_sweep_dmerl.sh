@@ -2,10 +2,14 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    AcrobotSwingup
-    BallInCup
-    AcrobotSwingupSparse
-    PendulumSwingup
+    CartpoleBalance
+    CartpoleBalanceSparse
+    CartoleSwingup
+    CartpoleSwingupSparse
+    CheetahRun
+    FingerSpin
+    FingerTurnEasy
+    FingerTurnHard
     # Add more env names here
 )
 
@@ -42,26 +46,23 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         wait "${GPU_PIDS[$GPU_ID]}"
     fi
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
-    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_dime \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FinalRuns_DIME_Reppo" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
-        hyperparameters.kl_action_rep=4 \
-        hyperparameters.reverse_kl=false \
-        hyperparameters.actor_kl_clip_mode=clipped \
-        hyperparameters.ent_start=0.01 \
-        hyperparameters.vmin=-20 \
-        hyperparameters.vmax=170 \
-        hyperparameters.num_bins=191 \
+        hyperparameters.lr=6e-4 \
+        hyperparameters.temperature_lr=6e-4 \
+        hyperparameters.lagrangian_lr=6e-4 \
+        hyperparameters.ent_target_mult=3 \
+        hyperparameters.gamma=0.9992 \
+        hyperparameters.lmbda=0.98 \
         hyperparameters.diffusion.learn_friction=true \
         hyperparameters.diffusion.learn_dt=true \
         hyperparameters.diffusion.per_step_dt=true \
-        hyperparameters.lr=3e-4 \
         env=mjx_dmc \
         num_trials=3 \
-        experiment_overrides=mjx_dmc_large_data &
+        experiment_overrides=mjx_dmc_large_data_dmerl &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done
