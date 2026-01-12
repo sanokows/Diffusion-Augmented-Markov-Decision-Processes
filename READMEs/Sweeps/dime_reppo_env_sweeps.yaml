@@ -34,7 +34,7 @@ parameters:
     values: [3e-4]
   config_env:
     values: [mjx_dmc]
-  experiment_overrides:
+  exp_overrides:
     values: [mjx_dmc_large_data]
   wandb_project_suffix:
     values: ["_Final_reppo_DIME"]
@@ -61,6 +61,6 @@ command:
   - hyperparameters.diffusion.per_step_dt=${per_step_dt}
   - hyperparameters.lr=${lr}
   - env=${config_env}
-  - experiment_overrides=${experiment_overrides}
+  - experiment_overrides=${exp_overrides}
   - wandb.project_suffix=${wandb_project_suffix}
   - num_trials=${n_trials}
