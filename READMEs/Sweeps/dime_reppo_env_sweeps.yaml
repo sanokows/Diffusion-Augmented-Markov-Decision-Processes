@@ -60,7 +60,7 @@ command:
   - hyperparameters.diffusion.learn_dt=${learn_dt}
   - hyperparameters.diffusion.per_step_dt=${per_step_dt}
   - hyperparameters.lr=${lr}
-  - env=${config_env}
-  - experiment_overrides=${exp_overrides}
+  - env=mjx_dmc
+  - experiment_overrides=mjx_dmc_large_data
   - wandb.project_suffix=${wandb_project_suffix}
   - num_trials=${n_trials}
