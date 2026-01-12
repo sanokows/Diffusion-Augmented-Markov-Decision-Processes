@@ -6,7 +6,7 @@ the wand sweeps can be run with for example:
 sbatch ./Clusters/Melux/DiffSteps/run_gpu_DiffSAC.sh
 sbatch ./Clusters/Melux/Temperature/run_gpu_DiffSAC.sh
 sbatch ./Clusters/Melux/Temperature/run_gpu_DiffPPO.sh
-sbatch ./Clusters/Melux/Ant/run_gpu_DiffSAC.sh
+sbatch ./READMEs/Sweeps/run_sweep.sh
 ```
 
 
