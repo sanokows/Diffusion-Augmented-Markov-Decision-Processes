@@ -62,5 +62,5 @@ command:
   - hyperparameters.lr=${lr}
   - env=mjx_dmc
   - experiment_overrides=mjx_dmc_large_data
-  - wandb.project_suffix=${wandb_project_suffix}
+  - +wandb.project_suffix=${wandb_project_suffix}
   - num_trials=${n_trials}
