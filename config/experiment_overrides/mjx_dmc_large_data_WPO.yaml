@@ -1,7 +1,7 @@
 hyperparameters:
   num_envs: 1024
   num_steps: 128
-  num_mini_batches: 128
+  num_mini_batches: 64
   num_epochs: 8
-  #kl_bound: 0.1
+  kl_bound: 0.1
   num_eval: 50

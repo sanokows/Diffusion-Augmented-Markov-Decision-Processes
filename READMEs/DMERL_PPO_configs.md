@@ -1,0 +1,5 @@
+### CheetahRun DiffPPO
+python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=16 hyperparameters.lr=1e-4 hyperparameters.entropy_coef=0.004 hyperparameters.update_entropy_lagrangian=true  hyperparameters.num_envs=1024 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true
+
+### CheetahRun DiffPPO learn temperature
+python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=16 hyperparameters.lr=1e-4 hyperparameters.entropy_coef=0.004 hyperparameters.update_entropy_lagrangian=true hyperparameters.num_envs=1024 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true

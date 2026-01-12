@@ -20,8 +20,8 @@ hyperparameters:
   temperature_lr: 1e-4
   lagrangian_lr: 1e-4
   temp_lagrangian_optim: "adam"
-  temp_lagrangian_adam_gamma1: 0.97
-  temp_lagrangian_adam_gamma2: 0.9997
+  temp_lagrangian_adam_gamma1: 0.95
+  temp_lagrangian_adam_gamma2: 0.9995
   project_unit_ball: false
   project_only_if_exceeds: false
   anneal_lr: false

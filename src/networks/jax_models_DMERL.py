@@ -1137,10 +1137,11 @@ class DiffusionModel(nnx.Module):
         self.prior_mean = nnx.Param(jnp.zeros((action_dim,)))
         self.prior_std = nnx.Param(jnp.ones((action_dim,)) * inverse_softplus(init_std))
         self.mass_std = nnx.Param(jnp.ones(1) * inverse_softplus(1.0))
+        self.per_dim_friction = per_dim_friction
 
         # Initialize dt parameters
         if per_step_dt:
-            self.dt = nnx.Param(inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps))))
+                self.dt = nnx.Param(inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps))))
         else:
             self.dt = nnx.Param(jnp.ones(1) * inverse_softplus(dt))
         

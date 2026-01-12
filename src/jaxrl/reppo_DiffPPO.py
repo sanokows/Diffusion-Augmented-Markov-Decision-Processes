@@ -736,9 +736,9 @@ class ReppoPPOTrainer:
                     )
                     if (cfg.normalize_advantages):
                         mean = jax.lax.stop_gradient(jnp.mean(unnormed_advantages))
-                        sdt = jax.lax.stop_gradient(jnp.std(unnormed_advantages))
+                        sdt = jax.lax.stop_gradient(jnp.std(unnormed_advantages)) #+ e-8
                         adv_base = (unnormed_advantages - mean) / (
-                            sdt + 1e-8
+                            sdt
                         )
                     else:
                         adv_base = unnormed_advantages
@@ -801,12 +801,21 @@ class ReppoPPOTrainer:
                         actor_loss = -jnp.mean(
                             valid_mask * jnp.minimum(actor_loss1, actor_loss2)
                         )
-                        do_update = actor_loss1 < actor_loss2
+                        do_update = ( (actor_loss1 < actor_loss2))| ((ratio >= 1 - cfg.clip_ratio) & (ratio <= 1 + cfg.clip_ratio))
+                        do_update = valid_mask.astype(bool) * do_update
+
+                        # grad_not_tracked = (actor_loss1 > actor_loss2) * ((ratio < 1 - cfg.clip_ratio) | (ratio > 1 + cfg.clip_ratio)) 
+                        # grad_tracked = (1.0 - grad_not_tracked)* valid_mask.astype(bool)
+
+                        # ### check element wise if do_update == grad_tracked
+                        # jax.debug.print("do_update: {}, grad_tracked: {}", do_update, grad_tracked)
+                        # ### chekck if all elements are the same
+                        # jax.debug.print("All equal: {}", jnp.all(do_update == grad_tracked))
 
                         scaled_dest_log_prob = dest_log_prob/sdt
                         stop_grad_ratio = jax.lax.stop_gradient(ratio)
                         masked_scaled_dest_log_prob = jnp.where(do_update, scaled_dest_log_prob, jax.lax.stop_gradient(scaled_dest_log_prob))
-                        dest_loss = jnp.mean(stop_grad_ratio*masked_scaled_dest_log_prob*entropy_scale)
+                        dest_loss = -jnp.mean(stop_grad_ratio*masked_scaled_dest_log_prob*entropy_scale)
                         actor_loss += dest_loss
 
 

@@ -7,4 +7,4 @@ push_distractions: false
 asymmetric_observation: true
 
 vmin: -10
-vmax:  10
+vmax:  50

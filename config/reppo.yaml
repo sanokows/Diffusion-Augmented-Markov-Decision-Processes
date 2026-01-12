@@ -20,6 +20,7 @@ hyperparameters:
   env_action_clip_value: 0.999
   action_clip_value: 0.999
   train_mode: "reparam"
+  disable_wpo_fisher_preconditioning: false
 
   # problem discount settings (need tuning)
   gamma: 0.99

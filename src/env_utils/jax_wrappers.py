@@ -47,8 +47,10 @@ class MjxGymnaxWrapper(Environment):
                     env, episode_length=episode_length, action_repeat=action_repeat
                 )
             self.env = env
+            self.sanitize_nans = "humanoid" in env_or_name.lower()
         else:
             self.env = env_or_name
+            self.sanitize_nans = False
         self.reward_scale = reward_scale
         self.episode_length = episode_length
         if isinstance(self.env.observation_size, int):
@@ -106,9 +108,37 @@ class MjxGymnaxWrapper(Environment):
 
     def step(self, key, state, action):
         # action = jnp.nan_to_num(action, 0.0)
+        prev_state = state
         state = self.env.step(state, action)
         obs = state.obs if not self.dict_obs else state.obs["state"]
         critic_obs = state.obs if not self.dict_obs else state.obs[self.dict_obs_key]
+        if self.sanitize_nans:
+            has_nan = ~jnp.isfinite(obs).all()
+            has_nan = jnp.logical_or(has_nan, ~jnp.isfinite(critic_obs).all())
+            has_nan = jnp.logical_or(has_nan, ~jnp.isfinite(state.reward))
+            prev_obs = (
+                prev_state.obs if not self.dict_obs else prev_state.obs["state"]
+            )
+            prev_critic_obs = (
+                prev_state.obs
+                if not self.dict_obs
+                else prev_state.obs[self.dict_obs_key]
+            )
+            obs = jnp.where(jnp.isfinite(obs), obs, prev_obs)
+            critic_obs = jnp.where(
+                jnp.isfinite(critic_obs), critic_obs, prev_critic_obs
+            )
+            min_reward = jnp.finfo(state.reward.dtype).min
+            reward = jnp.where(jnp.isfinite(state.reward), state.reward, min_reward)
+            done = (state.done > 0.5) | has_nan
+            return (
+                obs,
+                critic_obs,
+                state,
+                reward * self.reward_scale,
+                done,
+                {},
+            )
         #print the step of the current state
         #jax.debug.print("Env step info={}", state.info["steps"])
         return (

@@ -1,0 +1,34 @@
+### PendulumSwingUp
+python -m src.jaxrl.reppo env.name=PendulumSwingup env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
+
+### CheetahRun
+python -m src.jaxrl.reppo env.name=CheetahRun env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
+
+### FingerTurnHard
+python -m src.jaxrl.reppo env.name=CheetahFingerTurnHardRun env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
+
+### FingerTurnEasy
+python -m src.jaxrl.reppo env.name=FingerTurnEasy env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
+
+### FingerSpin
+python -m src.jaxrl.reppo env.name=FingerSpin env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
+
+
+
+
+Easy Tasks:
+AcrobotSwingup
+BallInCup
+CartpoleBalance
+CartoleSwingup
+CheetahRun
+FingerSpin
+FingerTurnEasy
+FingerTurnHard
+
+Hard Tasks:
+AcrobotSwingupSparse
+PendulumSwingup
+CartpoleSwingupSparse
+CartpoleBalanceSparse
+FingerTurnHard

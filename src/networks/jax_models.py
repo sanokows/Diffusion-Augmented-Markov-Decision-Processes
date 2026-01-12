@@ -527,6 +527,7 @@ class SACActorNetworks(nnx.Module):
         min_std: float = 0.1,
         use_skip: bool = False,
         train_mode: str = "reparam",
+        disable_wpo_fisher_preconditioning: bool = False,
         *,
         rngs: nnx.Rngs,
     ):
@@ -551,6 +552,7 @@ class SACActorNetworks(nnx.Module):
         if train_mode not in ("reparam", "WPO"):
             raise ValueError(f"Unknown train_mode: {train_mode}")
         self.train_mode = train_mode
+        self.disable_wpo_fisher_preconditioning = disable_wpo_fisher_preconditioning
 
     def _compute_mean_std(
         self, obs: jax.Array, scale: float | jax.Array
@@ -558,7 +560,10 @@ class SACActorNetworks(nnx.Module):
         loc = self.actor_module(obs)
         mean, log_std = jnp.split(loc, 2, axis=-1)
 
-        if self.train_mode == "WPO":
+        if (
+            self.train_mode == "WPO"
+            and not self.disable_wpo_fisher_preconditioning
+        ):
             log_std_sg = jax.lax.stop_gradient(log_std)
             log_std = log_std_sg + (log_std - log_std_sg) * 0.5
             std = (jnp.exp(log_std) + self.min_std) * scale

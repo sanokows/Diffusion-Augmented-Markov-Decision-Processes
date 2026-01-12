@@ -5,7 +5,7 @@ hyperparameters:
   num_epochs: 8
   kl_bound: 0.1 # 0.2
   kl_start: 0.3 # 0.15
-  temp_lagrangian_adam_gamma1: 0.997
-  temp_lagrangian_adam_gamma2: 0.9997
+  temp_lagrangian_adam_gamma1: 0.95
+  temp_lagrangian_adam_gamma2: 0.9995
   num_collection_step_factor: 0.5
   num_eval: 50

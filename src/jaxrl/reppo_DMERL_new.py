@@ -272,8 +272,22 @@ class ReppoDMERLTrainer:
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
-        
         self.ode_eval_fn = self._make_ode_eval_fn()
+
+    def _init_step_sizes(self):
+        self.mini_batch_size = (self.num_collection_steps * self.cfg.num_envs) // self.num_minibatches
+
+        ### total time steps are in therms of env calls of the original env, same for num_steps
+        self.num_train_steps = self.cfg.total_time_steps // int(self.cfg.num_steps * self.cfg.num_envs * self.cfg.num_collection_step_factor) 
+        self.eval_interval = int(self.num_train_steps // self.cfg.num_eval)
+        self.num_iterations = self.num_train_steps // self.eval_interval + int(
+            self.num_train_steps % self.eval_interval != 0
+        )
+        self.minibatch_size_per_diff_step = self.mini_batch_size // self.cfg.diffusion.diff_steps
+
+        wandb.log({"step_metrics/mini_batch_size": self.mini_batch_size, "step_metrics/num_collection_steps": self.num_collection_steps,
+                   "step_metrics/num_train_steps": self.num_train_steps, "step_metrics/num_iterations": self.num_iterations, "step_metrics/mini_batch_size_per_diff_step": self.minibatch_size_per_diff_step,
+                   "step_metrics/eval_interval": self.eval_interval}, step = 0)
 
     def _prepare_env(self, env: Environment) -> Environment:
         env = LogWrapper(env, self.cfg.num_envs)
@@ -564,6 +578,7 @@ class ReppoDMERLTrainer:
             if not cfg.anneal_lr:
                 lr = cfg.lr
             else:
+                raise NotImplementedError("DMERL LR annealing not implemented.")
                 num_iterations = cfg.total_time_steps // cfg.num_steps // cfg.num_envs
                 num_updates = num_iterations * cfg.num_epochs * self.num_minibatches
                 min_lr = cfg.lr * cfg.lr_decay_factor
@@ -1080,16 +1095,10 @@ class ReppoDMERLTrainer:
         train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
         norm_state = train_state.last_env_state if cfg.normalize_env else None
         eval_key, init_seed_key = jax.random.split(eval_key)
-        eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
-        if getattr(cfg, "ode_coefs", None):
-            for ode_coef in cfg.ode_coefs:
-                eval_metrics_ode = self.ode_eval_fn(
-                    init_seed_key, train_state, ode_coef, norm_state
-                )
-                ode_suffix = f"ode_{int(ode_coef * 100):03d}"
-                eval_metrics.update(
-                    {f"{k}_{ode_suffix}": v for k, v in eval_metrics_ode.items()}
-                )
+        if getattr(cfg, "train_mode", "reparam") == "WPO":
+            eval_metrics = self.sde_eval_fn(init_seed_key, train_state, norm_state)
+        else:
+            eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
 
         train_returns = {
             "train/episode_return": train_state.last_env_state.info[
@@ -1119,17 +1128,8 @@ class ReppoDMERLTrainer:
         return train_state, metrics
 
     def _train_loop(self, key: PRNGKey) -> tuple[SACTrainState, dict]:
-        cfg = self.cfg
-
-        num_train_steps = cfg.total_time_steps // int(cfg.num_steps * cfg.num_envs * cfg.num_collection_step_factor) 
-        eval_interval = int(num_train_steps // cfg.num_eval)
-        self.eval_interval = eval_interval
-        
         # num iteratns defines the number of training steps for each logging interval
-        num_iterations = num_train_steps // eval_interval + int(
-            num_train_steps % eval_interval != 0
-        )
-        print("Warning is num train steps correct?")
+        num_iterations = self.num_iterations
         key, init_key = jax.random.split(key)
         init_fn = self._make_init_fn()
         train_state = jax.vmap(init_fn)(jax.random.split(init_key, self.num_seeds))
@@ -1383,6 +1383,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             name=f"{cfg.name}-{cfg.env.name.lower()}-{getattr(cfg, 'train_mode', 'reparam')}",
             save_code=True,
         )
+        trainer._init_step_sizes()
         logging.info(OmegaConf.to_yaml(cfg))
         key = jax.random.PRNGKey(cfg.seed)
         start = time.perf_counter()
