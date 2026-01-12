@@ -1098,12 +1098,14 @@ def run(cfg: DictConfig):
     key = jax.random.PRNGKey(cfg.seed)
     for i in range(cfg.trials):
         key, train_key = jax.random.split(key)
+        run_config = OmegaConf.to_container(cfg)
+        run_config["method_name"] = "reppo_DiffPPO"
         wandb.init(
             mode=cfg.wandb.mode,
             project=cfg.wandb.project,
             entity=cfg.wandb.entity,
             tags=[cfg.name, cfg.env.name, cfg.env.type, *cfg.tags],
-            config=OmegaConf.to_container(cfg),
+            config=run_config,
             name=f"ppo-{cfg.name}-{cfg.env.name.lower()}",
             save_code=True,
         )
@@ -1145,6 +1147,7 @@ def tune(cfg: DictConfig):
         run_cfg = OmegaConf.to_container(cfg)
         for k, v in dict(wandb.config).items():
             run_cfg["experiment"]["hyperparameters"][k] = v
+        wandb.config.update({"method_name": "reppo_DiffPPO"}, allow_val_change=True)
         ppo_cfg = PPOConfig(**run_cfg["experiment"]["hyperparameters"])
         trainer = ReppoPPOTrainer(
             cfg=ppo_cfg,

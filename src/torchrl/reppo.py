@@ -748,10 +748,12 @@ def main(cfg):
         cfg.hyperparameters.num_envs * cfg.hyperparameters.num_steps // num_batches
     )
 
+    run_config = OmegaConf.to_container(cfg)
+    run_config["method_name"] = "reppo"
     wandb.init(
         project=cfg.wandb.project,
         name=run_name,
-        config=OmegaConf.to_container(cfg),
+        config=run_config,
         save_code=True,
     )
 

@@ -1132,6 +1132,8 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     for i in range(completed_trials, cfg.num_trials):
         cfg.seed = cfg.seed + i
 
+        run_config = OmegaConf.to_container(cfg)
+        run_config["method_name"] = "reppo_dime"
         wandb.init(
             mode=cfg.wandb.mode,
             project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
@@ -1143,7 +1145,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 "hp_tune" if trial is not None else "val",
                 *cfg.tags,
             ],
-            config=OmegaConf.to_container(cfg),
+            config=run_config,
             name=f"{cfg.name}-{cfg.env.name.lower()}",
             save_code=True,
         )
