@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Step 1: Initialize the sweep and retrieve the sweep command
-SWEEP_OUTPUT=$(wandb sweep ./READMEs/Sweeps/dime_reppo_env_sweeps.yaml 2>&1)
+SWEEP_OUTPUT=$(wandb sweep ./READMEs/Sweeps/dime_reppo_env_sweeps_safe.yaml 2>&1)
 AGENT_COMMAND=$(echo "$SWEEP_OUTPUT" | grep -oP 'Run sweep agent with: \K.*')
 echo "Command to start agents: $AGENT_COMMAND" 
 
