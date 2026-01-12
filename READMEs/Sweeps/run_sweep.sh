@@ -1,39 +1,41 @@
 #!/bin/bash
 
-# Step 1: Initialize the sweep and retrieve the sweep command
-SWEEP_OUTPUT=$(wandb sweep ./READMEs/Sweeps/dime_reppo_env_sweeps_safe.yaml 2>&1)
-AGENT_COMMAND=$(echo "$SWEEP_OUTPUT" | grep -oP 'Run sweep agent with: \K.*')
-echo "Command to start agents: $AGENT_COMMAND" 
+# Step 1: Define env.name values to loop over
+ENV_NAMES=(
+    AcrobotSwingup, BallInCup, AcrobotSwingupSparse, PendulumSwingup
+    # Add more env names here
+)
 
-# Check if AGENT_COMMAND is valid
-if [ -z "$AGENT_COMMAND" ]; then
-    echo "Error: AGENT_COMMAND could not be retrieved. Please check the output below:"
-    echo "$SWEEP_OUTPUT"
-    exit 1
-fi
-
-# Step 2: Define the number of agents per GPU
-AGENTS_PER_GPU=1
+# Step 2: Define GPU pool and round-robin scheduling
 NUM_GPUS=4
+GPU_INDEX=0
 
-# Function to start wandb agents on a specific GPU in the background
-start_agents() {
-    GPU_ID=$1
-    NUM_AGENTS=$2
-
-    for (( i=0; i<NUM_AGENTS; i++ )); do
-        echo "Starting agent $i on GPU $GPU_ID..."
-        # Start the agent in the background
-        CUDA_VISIBLE_DEVICES=$GPU_ID $AGENT_COMMAND &
-    done
-}
-
-# Step 3: Launch agents on each GPU
-for GPU_ID in $(seq 0 $((NUM_GPUS-1))); do
-    start_agents $GPU_ID $AGENTS_PER_GPU
+# Step 3: Launch one run per env.name
+for ENV_NAME in "${ENV_NAMES[@]}"; do
+    GPU_ID=$((GPU_INDEX % NUM_GPUS))
+    echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
+    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_dime \
+        env.name="$ENV_NAME" \
+        hyperparameters.num_eval=100 \
+        hyperparameters.total_time_steps=50000000 \
+        hyperparameters.diffusion.diff_steps=8 \
+        hyperparameters.kl_action_rep=1 \
+        hyperparameters.reverse_kl=false \
+        hyperparameters.actor_kl_clip_mode=clipped \
+        hyperparameters.ent_start=0.01 \
+        hyperparameters.vmin=-100 \
+        hyperparameters.vmax=200 \
+        hyperparameters.num_bins=301 \
+        hyperparameters.diffusion.learn_friction=true \
+        hyperparameters.diffusion.learn_dt=true \
+        hyperparameters.diffusion.per_step_dt=true \
+        hyperparameters.lr=3e-4 \
+        env=mjx_dmc \
+        experiment_overrides=mjx_dmc_large_data &
+    GPU_INDEX=$((GPU_INDEX + 1))
 done
 
-# Step 4: Wait for all background agents to finish
-echo "All agents started. Waiting for them to finish..."
+# Step 4: Wait for all background runs to finish
+echo "All runs started. Waiting for them to finish..."
 wait
-echo "All WandB sweep agents have finished."
+echo "All runs have finished."
