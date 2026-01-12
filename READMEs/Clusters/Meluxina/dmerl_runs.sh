@@ -11,7 +11,11 @@
 #SBATCH --qos=default                      # quality of service
 
 # (optional) load needed modules
+conda activate REPPO
 
+which python
+python -c "import sys; print(sys.executable)"
+python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/run_sweep.sh
-sh ./READMEs/Sweeps/run_sweep.sh
+chmod +x ./READMEs/Sweeps/run_sweep_dmerl.sh
+sh ./READMEs/Sweeps/run_sweep_dmerl.sh
