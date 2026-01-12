@@ -4,7 +4,7 @@
 ENV_NAMES=(
     CartpoleBalance
     CartpoleBalanceSparse
-    CartoleSwingup
+    CartpoleSwingup
     CartpoleSwingupSparse
     CheetahRun
     FingerSpin
@@ -52,9 +52,9 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
-        hyperparameters.lr=6e-4 \
-        hyperparameters.temperature_lr=6e-4 \
-        hyperparameters.lagrangian_lr=6e-4 \
+        hyperparameters.lr=3e-4 \
+        hyperparameters.temperature_lr=3e-4 \
+        hyperparameters.lagrangian_lr=3e-4 \
         hyperparameters.ent_target_mult=3 \
         hyperparameters.gamma=0.9992 \
         hyperparameters.lmbda=0.98 \
