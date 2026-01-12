@@ -1134,7 +1134,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
         wandb.init(
             mode=cfg.wandb.mode,
-            project=cfg.wandb.project,
+            project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
             entity=cfg.wandb.entity,
             tags=[
                 cfg.name,
