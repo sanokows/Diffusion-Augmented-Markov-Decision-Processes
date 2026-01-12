@@ -11,7 +11,10 @@
 #SBATCH --qos=default                      # quality of service
 
 # (optional) load needed modules
-
+conda activate REPPO
+nvidia-smi
+### print the conda environment info
+conda info
 # run your code
 chmod +x ./READMEs/Sweeps/run_sweep.sh
 sh ./READMEs/Sweeps/run_sweep.sh
