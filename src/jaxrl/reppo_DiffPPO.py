@@ -681,7 +681,7 @@ class ReppoPPOTrainer:
                                 critic_pred.reshape(-1, 1),
                                 target_values.reshape(-1, 1),
                             )
-                        _, pred, pred_rew, value = model.critic_module.forward(
+                        _, pred, pred_rew, _, value = model.critic_module.forward(
                             minibatch.critic_obs
                         )
                         aux_loss = optax.squared_error(pred, minibatch.next_emb)

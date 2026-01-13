@@ -70,6 +70,7 @@ class Transition(struct.PyTreeNode):
     reward: jax.Array
     soft_reward: jax.Array
     next_emb: jax.Array
+    next_state_emb: jax.Array
     next_emb_mask: jax.Array
     value: jax.Array
     done: jax.Array
@@ -844,7 +845,7 @@ class ReppoDMERLTrainer:
             actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
         )
         next_action = jax.lax.stop_gradient(next_action)
-        next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
+        next_emb, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
         log_ratio = jax.lax.stop_gradient(
             next_gen_log_prob - next_dest_log_prob
         )
@@ -857,6 +858,7 @@ class ReppoDMERLTrainer:
             critic_obs=critic_obs,
             action=action,
             next_emb=next_emb,
+            next_state_emb=next_emb,
             next_emb_mask=jnp.ones_like(reward),
             reward=reward,
             soft_reward=soft_reward,
@@ -922,12 +924,12 @@ class ReppoDMERLTrainer:
         shift_steps = self.cfg.diffusion.diff_steps
         time_idx = jnp.arange(self.num_collection_steps)
         shifted_idx = jnp.minimum(time_idx + shift_steps, self.num_collection_steps - 1)
-        shifted_next_emb = jnp.take(batch.next_emb, shifted_idx, axis=0)
+        next_state_emb = jnp.take(batch.next_emb, shifted_idx, axis=0)
         valid_shift = (time_idx + shift_steps) <= (self.num_collection_steps - 1)
         next_emb_mask = jnp.broadcast_to(
             valid_shift[:, None], (self.num_collection_steps, cfg.num_envs)
         )
-        batch = batch.replace(next_emb=shifted_next_emb, next_emb_mask=next_emb_mask)
+        batch = batch.replace(next_state_emb=next_state_emb, next_emb_mask=next_emb_mask)
         # Flatten rollout data to (num_steps * num_envs, ...) for easier indexing.
         data = (batch, target_values)
         data = jax.tree.map(

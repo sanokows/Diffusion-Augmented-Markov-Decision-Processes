@@ -539,7 +539,9 @@ def make_train_fn(
             next_log_prob = (next_run_cost + next_sto_cost + next_terminal_cost) # (1024, 1)
             next_log_prob = next_log_prob.sum(-1)
             # compute next state embedding and value
-            next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
+            next_emb, _, _, value = critic_model.forward(
+                next_critic_obs, next_action
+            )
             soft_reward = (
                 reward
                 - cfg.gamma * next_log_prob.squeeze() * actor_model.temperature()

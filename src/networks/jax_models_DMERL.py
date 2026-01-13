@@ -542,6 +542,36 @@ class CriticNetwork(nnx.Module):
             layers=pred_layers,
             rngs=rngs,
         )
+        self.pred_next_state_module = FCNN(
+            in_features=hidden_dim,
+            out_features=hidden_dim,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=utils.multi_softmax if use_simplical_embedding else None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            output_skip=False,
+            input_activation=not use_simplical_embedding,
+            layers=pred_layers,
+            rngs=rngs,
+        )
+        self.pred_next_state_module = FCNN(
+            in_features=hidden_dim,
+            out_features=hidden_dim,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=utils.multi_softmax if use_simplical_embedding else None,
+            use_norm=use_norm,
+            use_output_norm=False,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            output_skip=False,
+            input_activation=not use_simplical_embedding,
+            layers=pred_layers,
+            rngs=rngs,
+        )
 
         self.timestep_phase = nnx.Param(jnp.zeros((1, self.num_time_hid)))
         # Store timestep_coeff as a Variable (non-trainable parameter)
@@ -600,7 +630,8 @@ class CriticNetwork(nnx.Module):
         pred = self.pred_module(features)
         pred_rew = pred[..., :1]
         pred_features = pred[..., 1:]
-        return features, pred_features, pred_rew, value.squeeze(-1)
+        pred_next_diff_state = self.pred_next_state_module(features)
+        return features, pred_features, pred_rew, pred_next_diff_state, value.squeeze(-1)
 
 
 class CategoricalCriticNetwork(nnx.Module):
@@ -672,6 +703,36 @@ class CategoricalCriticNetwork(nnx.Module):
         self.pred_module = FCNN(
             in_features=hidden_dim,
             out_features=hidden_dim + 1,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=None,
+            use_norm=use_norm,
+            use_output_norm=None,
+            layers=pred_layers,
+            input_activation=not use_simplical_embedding,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            output_skip=False,
+            rngs=rngs,
+        )
+        self.pred_next_state_module = FCNN(
+            in_features=hidden_dim,
+            out_features=hidden_dim,
+            hidden_dim=hidden_dim,
+            hidden_activation=nnx.swish,
+            output_activation=None,
+            use_norm=use_norm,
+            use_output_norm=None,
+            layers=pred_layers,
+            input_activation=not use_simplical_embedding,
+            input_skip=use_skip,
+            hidden_skip=use_skip,
+            output_skip=False,
+            rngs=rngs,
+        )
+        self.pred_next_state_module = FCNN(
+            in_features=hidden_dim,
+            out_features=hidden_dim,
             hidden_dim=hidden_dim,
             hidden_activation=nnx.swish,
             output_activation=None,
@@ -760,10 +821,12 @@ class CategoricalCriticNetwork(nnx.Module):
         preds = self.pred_module(features)
         pred_rew = preds[..., :1]
         pred_features = preds[..., 1:]
+        pred_next_diff_state = self.pred_next_state_module(features)
         if self.use_skip:
             pred_features = pred_features + features
+            pred_next_diff_state = pred_next_diff_state + features
         
-        return features, pred_features, pred_rew, value
+        return features, pred_features, pred_rew, pred_next_diff_state, value
 
 
 class CategoricalValueNetwork(nnx.Module):
@@ -902,10 +965,12 @@ class CategoricalValueNetwork(nnx.Module):
         preds = self.pred_module(features)
         pred_rew = preds[..., :1]
         pred_features = preds[..., 1:]
+        pred_next_diff_state = self.pred_next_state_module(features)
         if self.use_skip:
             pred_features = pred_features + features
+            pred_next_diff_state = pred_next_diff_state + features
 
-        return features, pred_features, pred_rew, value
+        return features, pred_features, pred_rew, pred_next_diff_state, value
 
 
 class ValueNetwork(nnx.Module):
@@ -1053,7 +1118,8 @@ class DiffValueNetwork(nnx.Module):
         pred = self.pred_module(features)
         pred_rew = pred[..., :1]
         pred_features = pred[..., 1:]
-        return features, pred_features, pred_rew, value.squeeze(-1)
+        pred_next_diff_state = self.pred_next_state_module(features)
+        return features, pred_features, pred_rew, pred_next_diff_state, value.squeeze(-1)
 
 
 class GumbleSoftmaxDistribution(distrax.Distribution):

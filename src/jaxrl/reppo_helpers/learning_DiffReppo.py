@@ -92,8 +92,13 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
                 target_vals.reshape(-1, 1),
             )
 
-        _, pred, pred_rew, value = critic_model.forward(minibatch.critic_obs, minibatch.action)
-        aux_loss = optax.squared_error(pred, minibatch.next_emb)
+        _, pred, pred_rew, pred_next_diff_state, value = critic_model.forward(
+            minibatch.critic_obs, minibatch.action
+        )
+        aux_loss = optax.squared_error(pred, minibatch.next_state_emb)
+        aux_next_diff_loss = optax.squared_error(
+            pred_next_diff_state, minibatch.next_emb
+        )
         aux_rew_loss = optax.squared_error(
             pred_rew, minibatch.reward.reshape(-1, 1)
         )
@@ -102,24 +107,27 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             cfg.diffusion.diff_steps - 1,
             dtype=minibatch.obs["diff_time_step"].dtype,
         )
-        step = minibatch.obs["diff_time_step"][..., 0].astype(aux_loss.dtype)
-        denom = jnp.maximum(diff_steps.astype(aux_loss.dtype), 1.0)
-        aux_weight = ((step / denom)**4).reshape(-1, 1)
-        aux_weight = aux_weight * minibatch.next_emb_mask.reshape(-1, 1).astype(aux_weight.dtype)
+        is_last_step = (minibatch.obs["diff_time_step"][..., 0] == diff_steps).reshape(-1, 1)
+        aux_weight = is_last_step.astype(aux_loss.dtype)
         # jax.debug.print("aux_weight value: {value}, sum: {sum}", value=aux_weight, sum=jnp.sum(aux_weight))
         # jax.debug.print("diff_time_step: {value}", value=minibatch.obs["diff_time_step"][..., 0])
         
-        aux_loss = jnp.mean(
-            (1 - minibatch.done.reshape(-1, 1))
-            * aux_weight
-            * jnp.concatenate([aux_loss, aux_rew_loss], axis=-1),
+        masked_aux_terms = jnp.concatenate([aux_loss, aux_rew_loss], axis=-1)
+        masked_aux_loss = jnp.mean(
+            (1 - minibatch.done.reshape(-1, 1)) * aux_weight * masked_aux_terms,
             axis=-1,
         )
+        aux_next_diff_loss = jnp.mean(
+            (1 - minibatch.done.reshape(-1, 1)) * aux_next_diff_loss,
+            axis=-1,
+        )
+        alpha = 0.9
+        aux_loss = alpha*jnp.sum(masked_aux_loss)/jnp.maximum(jnp.sum(aux_weight), 1.0) + (1-alpha)*jnp.mean(aux_next_diff_loss)
         critic_loss = optax.squared_error(value, target_vals)
         critic_loss = jnp.mean(critic_loss)
         loss = jnp.mean(
             (1.0 - minibatch.truncated)
-            * (critic_update_loss ) + jnp.sum(cfg.aux_loss_mult * aux_loss)/jnp.maximum(jnp.sum(aux_weight), 1.0)
+            * (critic_update_loss ) + cfg.aux_loss_mult * aux_loss
         )
         critic_pnorm = utils.tree_norm(params)
         return loss, dict(
@@ -468,7 +476,7 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
     )
     next_action = jax.lax.stop_gradient(next_action)
-    next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
+    next_emb, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
     log_ratio = jax.lax.stop_gradient(
         next_gen_log_prob - next_dest_log_prob
     )
@@ -481,6 +489,7 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         critic_obs=critic_obs,
         action=action,
         next_emb=next_emb,
+        next_state_emb=next_emb,
         next_emb_mask=jnp.ones_like(reward),
         reward=reward,
         soft_reward=soft_reward,

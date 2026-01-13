@@ -405,7 +405,9 @@ def make_train_fn(
             next_action, next_log_prob = actor_model.actor(next_obs).sample_and_log_prob(
                 seed=act_key
             )
-            next_emb, _, _, value = critic_model.forward(next_critic_obs, next_action)
+            next_emb, _, _, value = critic_model.forward(
+                next_critic_obs, next_action
+            )
             soft_reward = (
                 reward
                 - cfg.gamma * next_log_prob.sum(-1).squeeze() * actor_model.temperature()

@@ -52,7 +52,9 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
                 target_vals.reshape(-1, 1),
             )
 
-        _, pred, pred_rew, value = critic_model.forward(minibatch.critic_obs, minibatch.action)
+        _, pred, pred_rew, value = critic_model.forward(
+            minibatch.critic_obs, minibatch.action
+        )
         aux_loss = optax.squared_error(pred, minibatch.next_emb)
         aux_rew_loss = optax.squared_error(
             pred_rew, minibatch.reward.reshape(-1, 1)

@@ -109,7 +109,7 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         actor_model.vmap_sample_next_step(next_obs, next_act_key)
     )
     next_action = jax.lax.stop_gradient(next_action)
-    value = critic_model.forward(next_critic_obs, next_action)
+    _, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
     log_ratio = jax.lax.stop_gradient(
         next_gen_log_prob - next_dest_log_prob
     )
