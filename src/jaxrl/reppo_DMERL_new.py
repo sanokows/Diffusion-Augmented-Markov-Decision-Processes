@@ -899,10 +899,10 @@ class ReppoDMERLTrainer:
             reverse=True,
         )
         # print min max and mean values of target_values for debugging
-        jax.debug.print("target_values stats - min: {min}, max: {max}, mean: {mean}",
-                        min=jnp.min(target_values),
-                        max=jnp.max(target_values),
-                        mean=jnp.mean(target_values))
+        # jax.debug.print("target_values stats - min: {min}, max: {max}, mean: {mean}",
+        #                 min=jnp.min(target_values),
+        #                 max=jnp.max(target_values),
+        #                 mean=jnp.mean(target_values))
         target_vals_flat = target_values.reshape(-1)
         target_vals_finite = jnp.nan_to_num(
             target_vals_flat,
@@ -957,8 +957,8 @@ class ReppoDMERLTrainer:
         update_metrics["target_value_max"] = target_val_max
         temperature = update_metrics["temp"]
         lagrangian = update_metrics["lagrangian"]
-        jax.debug.print("Temperature: {temperature}, Lagrangian: {lagrangian}",
-                        temperature=temperature, lagrangian=lagrangian)
+        # jax.debug.print("Temperature: {temperature}, Lagrangian: {lagrangian}",
+        #                 temperature=temperature, lagrangian=lagrangian)
         return train_state, update_metrics
 
     def _run_epoch_update(

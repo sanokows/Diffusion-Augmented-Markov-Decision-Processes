@@ -5,7 +5,7 @@ AcrobotSwingupSparse
 BallInCup
 CartpoleBalance
 CartpoleBalanceSparse
-CartoleSwingup
+CartpoleSwingup
 CartpoleSwingupSparse
 CheetahRun
 FingerSpin

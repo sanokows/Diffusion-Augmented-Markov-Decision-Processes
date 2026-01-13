@@ -19,7 +19,7 @@ hyperparameters:
   polyak: 1.0 # maybe ablate ?
   env_action_clip_value: 0.999
   action_clip_value: 0.999
-  train_mode: "reparam"
+  train_mode: "reparam" # "WPO"
   disable_wpo_fisher_preconditioning: false
 
   # problem discount settings (need tuning)

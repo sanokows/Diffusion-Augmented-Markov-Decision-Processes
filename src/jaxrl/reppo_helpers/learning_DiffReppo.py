@@ -97,8 +97,31 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         aux_rew_loss = optax.squared_error(
             pred_rew, minibatch.reward.reshape(-1, 1)
         )
+
+        diff_steps = jnp.asarray(
+            cfg.diffusion.diff_steps - 1,
+            dtype=minibatch.obs["diff_time_step"].dtype,
+        )
+        num_diff_steps = jnp.asarray(
+            cfg.diffusion.diff_steps,
+            dtype=aux_loss.dtype,
+        )
+        is_last_step = (minibatch.obs["diff_time_step"][..., 0] == diff_steps).reshape(-1, 1)
+        ### print shapes
+        #jax.debug.print("is_last_step shape: {shape}, aux_rew_loss shape: {shape2}, aux_loss shape: {shape3}", shape=is_last_step.shape, shape2=aux_rew_loss.shape, shape3=aux_loss.shape)
+        ### print the aux mask value also print the sum of aux mask
+        factor = 0.0
+        aux_mask = jnp.where(
+            is_last_step,
+            1.0 - factor * (1.0 / num_diff_steps),
+            factor*1.0 / num_diff_steps,
+        ).astype(aux_loss.dtype)
+        # jax.debug.print("aux_mask value: {value}, sum: {sum}", value=aux_mask, sum=jnp.sum(aux_mask))
+        # jax.debug.print("diff_time_step: {value}", value=minibatch.obs["diff_time_step"][..., 0])
+        
         aux_loss = jnp.mean(
             (1 - minibatch.done.reshape(-1, 1))
+            * aux_mask
             * jnp.concatenate([aux_loss, aux_rew_loss], axis=-1),
             axis=-1,
         )
@@ -106,7 +129,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         critic_loss = jnp.mean(critic_loss)
         loss = jnp.mean(
             (1.0 - minibatch.truncated)
-            * (critic_update_loss + cfg.aux_loss_mult * aux_loss)
+            * (critic_update_loss ) + jnp.sum(cfg.aux_loss_mult * aux_loss)/jnp.sum(aux_mask)
         )
         critic_pnorm = utils.tree_norm(params)
         return loss, dict(
@@ -114,7 +137,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             critic_update_loss=critic_update_loss,
             loss=loss,
             aux_loss=aux_loss,
-            rew_aux_loss=aux_rew_loss,
+            rew_aux_loss=aux_rew_loss * aux_mask.astype(aux_rew_loss.dtype),
             q=value.mean(),
             reward_mean=minibatch.reward.mean(),
             target_values=target_vals.mean(),

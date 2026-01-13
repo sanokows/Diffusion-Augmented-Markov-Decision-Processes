@@ -64,7 +64,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.diffusion.per_step_dt=true \
         hyperparameters.lr=3e-4 \
         env=mjx_dmc \
-        num_trials=3 \
+        num_trials=5 \
         experiment_overrides=mjx_dmc_large_data &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
