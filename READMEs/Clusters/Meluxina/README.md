@@ -5,7 +5,7 @@ the wand sweeps can be run with for example:
 ```
 
 sbatch ./READMEs/Clusters/Meluxina/dmerl_runs.sh
-sbatch ./READMEs/Clusters/Meluxina/dime_runs.sh
+sbatch ./READMEs/Clusters/Meluxina/dime_runs_2.sh
 ```
 
 

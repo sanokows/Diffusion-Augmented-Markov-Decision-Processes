@@ -51,7 +51,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.lr=6e-4 \
         hyperparameters.temperature_lr=6e-4 \
         hyperparameters.lagrangian_lr=6e-4 \
-        hyperparameters.ent_target_mult=3 \
+        hyperparameters.ent_target_mult=2.5 \
         hyperparameters.gamma=0.9992 \
         hyperparameters.lmbda=0.98 \
         hyperparameters.diffusion.learn_friction=true \

@@ -102,26 +102,16 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             cfg.diffusion.diff_steps - 1,
             dtype=minibatch.obs["diff_time_step"].dtype,
         )
-        num_diff_steps = jnp.asarray(
-            cfg.diffusion.diff_steps,
-            dtype=aux_loss.dtype,
-        )
-        is_last_step = (minibatch.obs["diff_time_step"][..., 0] == diff_steps).reshape(-1, 1)
-        ### print shapes
-        #jax.debug.print("is_last_step shape: {shape}, aux_rew_loss shape: {shape2}, aux_loss shape: {shape3}", shape=is_last_step.shape, shape2=aux_rew_loss.shape, shape3=aux_loss.shape)
-        ### print the aux mask value also print the sum of aux mask
-        factor = 0.0
-        aux_mask = jnp.where(
-            is_last_step,
-            1.0 - factor * (1.0 / num_diff_steps),
-            factor*1.0 / num_diff_steps,
-        ).astype(aux_loss.dtype)
-        # jax.debug.print("aux_mask value: {value}, sum: {sum}", value=aux_mask, sum=jnp.sum(aux_mask))
+        step = minibatch.obs["diff_time_step"][..., 0].astype(aux_loss.dtype)
+        denom = jnp.maximum(diff_steps.astype(aux_loss.dtype), 1.0)
+        aux_weight = ((step / denom)**4).reshape(-1, 1)
+        aux_weight = aux_weight * minibatch.next_emb_mask.reshape(-1, 1).astype(aux_weight.dtype)
+        # jax.debug.print("aux_weight value: {value}, sum: {sum}", value=aux_weight, sum=jnp.sum(aux_weight))
         # jax.debug.print("diff_time_step: {value}", value=minibatch.obs["diff_time_step"][..., 0])
         
         aux_loss = jnp.mean(
             (1 - minibatch.done.reshape(-1, 1))
-            * aux_mask
+            * aux_weight
             * jnp.concatenate([aux_loss, aux_rew_loss], axis=-1),
             axis=-1,
         )
@@ -129,7 +119,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         critic_loss = jnp.mean(critic_loss)
         loss = jnp.mean(
             (1.0 - minibatch.truncated)
-            * (critic_update_loss ) + jnp.sum(cfg.aux_loss_mult * aux_loss)/jnp.sum(aux_mask)
+            * (critic_update_loss ) + jnp.sum(cfg.aux_loss_mult * aux_loss)/jnp.maximum(jnp.sum(aux_weight), 1.0)
         )
         critic_pnorm = utils.tree_norm(params)
         return loss, dict(
@@ -137,7 +127,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             critic_update_loss=critic_update_loss,
             loss=loss,
             aux_loss=aux_loss,
-            rew_aux_loss=aux_rew_loss * aux_mask.astype(aux_rew_loss.dtype),
+            rew_aux_loss=aux_rew_loss * aux_weight.astype(aux_rew_loss.dtype),
             q=value.mean(),
             reward_mean=minibatch.reward.mean(),
             target_values=target_vals.mean(),
@@ -491,6 +481,7 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         critic_obs=critic_obs,
         action=action,
         next_emb=next_emb,
+        next_emb_mask=jnp.ones_like(reward),
         reward=reward,
         soft_reward=soft_reward,
         value=value,

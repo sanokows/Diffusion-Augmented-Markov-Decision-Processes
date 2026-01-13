@@ -52,9 +52,9 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.reverse_kl=false \
         hyperparameters.actor_kl_clip_mode=clipped \
         hyperparameters.ent_start=0.01 \
-        hyperparameters.vmin=-50 \
+        hyperparameters.vmin=-20 \
         hyperparameters.vmax=170 \
-        hyperparameters.num_bins=231 \
+        hyperparameters.num_bins=191 \
         hyperparameters.diffusion.learn_friction=true \
         hyperparameters.diffusion.learn_dt=true \
         hyperparameters.diffusion.per_step_dt=true \
