@@ -57,7 +57,6 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.diffusion.learn_friction=true \
         hyperparameters.diffusion.learn_dt=true \
         hyperparameters.diffusion.per_step_dt=true \
-        hyperparameters.aux_loss=1. \
         env=mjx_dmc \
         num_trials=3 \
         experiment_overrides=mjx_dmc_large_data_dmerl &
