@@ -38,6 +38,40 @@ from src.networks.jax_models import (
 logging.basicConfig(level=logging.INFO)
 
 
+def _sectioned_wandb_key(key: str) -> str:
+    if key.startswith("/"):
+        key = key.lstrip("/")
+    if key.startswith("train/"):
+        suffix = key.split("/", 1)[1]
+        if suffix.startswith(("temp", "entropy", "target_entropy")):
+            return f"temperature/{suffix}"
+        if suffix.startswith(("lagrangian", "kl")):
+            return f"lagrangian/{suffix}"
+        if suffix.startswith("target_value_"):
+            return f"target_value/{suffix}"
+        return f"train/{suffix}"
+    if key.startswith("eval/"):
+        suffix = key.split("/", 1)[1]
+        return f"eval/{suffix}"
+    if key.startswith("norm_init/"):
+        suffix = key.split("/", 1)[1]
+        return f"norm_init/{suffix}"
+    if key.startswith("norm/"):
+        suffix = key.split("/", 1)[1]
+        return f"norm/{suffix}"
+    if key.startswith("figures/"):
+        suffix = key.split("/", 1)[1]
+        return f"figures/{suffix}"
+    if key.startswith("step_metrics/"):
+        suffix = key.split("/", 1)[1]
+        return f"step_metrics/{suffix}"
+    return f"system/{key}"
+
+
+def _sectioned_wandb_log(log_data: dict[str, Any]) -> dict[str, Any]:
+    return {_sectioned_wandb_key(key): value for key, value in log_data.items()}
+
+
 class Policy(typing.Protocol):
     def __call__(
         self,
@@ -701,7 +735,9 @@ def make_train_fn(
                         rew_aux_loss= aux_rew_loss,
                         q=value.mean(),
                         reward_mean=minibatch.reward.mean(),
-                        target_values=target_values.mean(),
+                        target_value_mean=target_values.mean(),
+                        target_value_min=target_values.min(),
+                        target_value_max=target_values.max(),
                         critic_pnorm=critic_pnorm,
                     )
 
@@ -966,15 +1002,13 @@ def make_train_fn(
         critic_param_count = utils.count_params(jax.tree.map(lambda x: x[0], train_state.critic.params))
 
         def _log_init_norms(actor_norm, critic_norm, actor_count, critic_count):
-            wandb.log(
-                {
-                    "norm_init/actor": float(np.asarray(actor_norm).mean()),
-                    "norm_init/critic": float(np.asarray(critic_norm).mean()),
-                    "norm_init/actor_params": int(actor_count),
-                    "norm_init/critic_params": int(critic_count),
-                },
-                step=0,
-            )
+            log_data = {
+                "norm_init/actor": float(np.asarray(actor_norm).mean()),
+                "norm_init/critic": float(np.asarray(critic_norm).mean()),
+                "norm_init/actor_params": int(actor_count),
+                "norm_init/critic_params": int(critic_count),
+            }
+            wandb.log(_sectioned_wandb_log(log_data), step=0)
 
         jax.debug.callback(
             _log_init_norms,
@@ -1102,7 +1136,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         log_data["norm/actor_gnorm"] = actor_gnorm
         log_data["norm/critic_gnorm"] = critic_gnorm
 
-        wandb.log(log_data, step=state.time_steps[0])
+        wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])
 
     # Set up the experiment
     if cfg.env.type == "brax":

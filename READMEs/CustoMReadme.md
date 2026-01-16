@@ -1,3 +1,20 @@
+# low dim
+ArcrobotSwingup
+PendulumSwingup
+FingerSpin
+AcrobotSwingupSparse
+CartpoleSwingupSparse
+
+# control 
+FishSwim
+CheetahRun
+HopperHop 
+HopperStand
+WalkerRun
+WalkerWalk
+WalkerStand
+
+
 # env names
 PendulumSwingup
 AcrobotSwingup
@@ -11,6 +28,17 @@ CheetahRun
 FingerSpin
 FingerTurnEasy
 FingerTurnHard
+
+HumanoidRun
+HumanoidStand
+HumanoidWalk
+    HopperHop
+    HopperStand
+    ReacherEasy
+    ReacherHard
+    WalkerRun
+    WalkerStand
+    WalkerWalk
 
 
 python -m src.jaxrl.DiffReppo env=hopper cfg.normalize_env=true cfg.num_envs=1 cfg.num_steps=1 cfg.num_diffusion_steps=10

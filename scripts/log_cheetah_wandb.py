@@ -209,6 +209,24 @@ def log_video_to_wandb(
 
 def main() -> None:
     #python scripts/log_cheetah_wandb.py --mode online --fps 30
+    #python scripts/log_cheetah_wandb.py --mode online --fps 30 --env-name FingerTurnEasy
+    # G1JoystickFlatTerrain
+    #  "G1JoystickRoughTerrain",
+     #               "G1JoystickFlatTerrain",
+     #               "T1JoystickRoughTerrain",
+      #              "T1JoystickFlatTerrain",
+
+#       CartpoleSwingup
+# CartpoleSwingupSparse
+# CheetahRun
+# FingerSpin
+# FingerTurnEasy
+# FingerTurnHard
+
+# AcrobotSwingup
+# AcrobotSwingupSparse
+# BallInCup
+
     parser = argparse.ArgumentParser(
         description="Render a MJX Cheetah rollout and log it to wandb."
     )
@@ -217,13 +235,13 @@ def main() -> None:
     parser.add_argument(
         "--num_steps",
         type=int,
-        default=100,
+        default=20,
         help="Environment episode length before a forced reset.",
     )
     parser.add_argument(
         "--num_video_steps",
         type=int,
-        default=1000,
+        default=20,
         help="Number of steps to render/log (defaults to --num_steps).",
     )
     parser.add_argument("--project", default="cheetah_video", help="wandb project name.")

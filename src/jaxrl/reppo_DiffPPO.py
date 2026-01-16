@@ -2,7 +2,7 @@ import logging
 import math
 import time
 import typing
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import functools
 
 import distrax
@@ -44,6 +44,40 @@ from src.jaxrl.reppo_DMERL_new import randomize_env_steps
 
 
 logging.basicConfig(level=logging.INFO)
+
+
+def _sectioned_wandb_key(key: str) -> str:
+    if key.startswith("/"):
+        key = key.lstrip("/")
+    if key.startswith("train/"):
+        suffix = key.split("/", 1)[1]
+        if suffix.startswith(("temp", "entropy", "target_entropy")):
+            return f"temperature/{suffix}"
+        if suffix.startswith(("lagrangian", "kl")):
+            return f"lagrangian/{suffix}"
+        if suffix.startswith("target_value_"):
+            return f"target_value/{suffix}"
+        return f"train/{suffix}"
+    if key.startswith("eval/"):
+        suffix = key.split("/", 1)[1]
+        return f"eval/{suffix}"
+    if key.startswith("norm_init/"):
+        suffix = key.split("/", 1)[1]
+        return f"norm_init/{suffix}"
+    if key.startswith("norm/"):
+        suffix = key.split("/", 1)[1]
+        return f"norm/{suffix}"
+    if key.startswith("figures/"):
+        suffix = key.split("/", 1)[1]
+        return f"figures/{suffix}"
+    if key.startswith("step_metrics/"):
+        suffix = key.split("/", 1)[1]
+        return f"step_metrics/{suffix}"
+    return f"system/{key}"
+
+
+def _sectioned_wandb_log(log_data: dict[str, Any]) -> dict[str, Any]:
+    return {_sectioned_wandb_key(key): value for key, value in log_data.items()}
 
 
 def require(cfg, key):
@@ -118,8 +152,13 @@ class PPOConfig(struct.PyTreeNode):
     use_kl_regularization: bool = False
     actor_kl_clip_mode: str = "clipped"
     use_clipped_objective: bool = True
+    temp_lagrangian_optim: str = "adam"
     temp_lagrangian_adam_gamma1: float = 0.9
     temp_lagrangian_adam_gamma2: float = 0.999
+    use_temp_lagrangian_ema_optim: bool = False
+    use_temp_lagrangian_post_adam_ema: bool = False
+    temp_lagrangian_ema_decay: float = 0.99
+    temperature_lr: float | None = None
     weight_decay: float = 0.0
     num_collection_step_factor: float = 1.0
     use_temp_lagrangian_mlp: bool = False
@@ -131,6 +170,8 @@ class Transition(struct.PyTreeNode):
     critic_obs: jax.Array
     action: jax.Array
     next_emb: jax.Array
+    next_state_emb: jax.Array
+    next_emb_mask: jax.Array
     reward: jax.Array
     soft_reward: jax.Array
     log_prob: jax.Array
@@ -435,6 +476,46 @@ class ReppoPPOTrainer:
                     )
                 return tx
 
+            def _ema_optimizer(lr_val, decay: float):
+                return optax.chain(
+                    optax.ema(decay=decay),
+                    optax.scale(-lr_val),
+                )
+
+            def _select_special_optimizer(name: str, b1: float, b2: float):
+                if cfg.use_temp_lagrangian_ema_optim and cfg.use_temp_lagrangian_post_adam_ema:
+                    raise ValueError(
+                        "use_temp_lagrangian_ema_optim and use_temp_lagrangian_post_adam_ema "
+                        "cannot both be true."
+                    )
+                if cfg.use_temp_lagrangian_ema_optim:
+                    return lambda lr_val: _ema_optimizer(
+                        lr_val, decay=cfg.temp_lagrangian_ema_decay
+                    )
+
+                name = name.lower()
+                if name == "adam":
+                    base_adam = functools.partial(
+                        optax.adam,
+                        b1=b1,
+                        b2=b2,
+                    )
+                    if cfg.use_temp_lagrangian_post_adam_ema:
+                        return lambda lr_val: optax.chain(
+                            base_adam(lr_val),
+                            optax.ema(decay=cfg.temp_lagrangian_ema_decay),
+                        )
+                    return base_adam
+                if name == "sgd":
+                    if cfg.use_temp_lagrangian_post_adam_ema:
+                        raise ValueError(
+                            "use_temp_lagrangian_post_adam_ema requires temp_lagrangian_optim='adam'."
+                        )
+                    return optax.sgd
+                raise ValueError(
+                    f"Unknown temp/lagrangian optimizer '{name}', expected 'adam' or 'sgd'."
+                )
+
             def _label_weight_decay(params):
                 flat = flatten_dict(params)
                 labels = {}
@@ -462,16 +543,20 @@ class ReppoPPOTrainer:
             else:
                 temp_lagrangian_adam_gamma1 = cfg.temp_lagrangian_adam_gamma1
                 temp_lagrangian_adam_gamma2 = cfg.temp_lagrangian_adam_gamma2
-            special_optimizer = functools.partial(
-                optax.adam,
-                b1=temp_lagrangian_adam_gamma1,
-                b2=temp_lagrangian_adam_gamma2,
+            temp_lagrangian_adam_gamma1 = max(temp_lagrangian_adam_gamma1, 0.9)
+            temp_lagrangian_adam_gamma2 = max(temp_lagrangian_adam_gamma2, 0.999)
+            special_optimizer = _select_special_optimizer(
+                cfg.temp_lagrangian_optim,
+                temp_lagrangian_adam_gamma1,
+                temp_lagrangian_adam_gamma2,
             )
             tx_cfg = {
                 "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
                 "no_decay": _adam_with_decay(lr, weight_decay=0.0),
                 "temp_lagrangian": _adam_with_decay(
-                    lr, weight_decay=0.0, optim=special_optimizer
+                    cfg.temperature_lr if cfg.temperature_lr is not None else lr,
+                    weight_decay=0.0,
+                    optim=special_optimizer,
                 ),
             }
             optimizer = optax.multi_transform(tx_cfg, decay_labels)
@@ -561,17 +646,20 @@ class ReppoPPOTrainer:
                     reward
                     - log_ratio.squeeze() * entropy_scale
                 )
+            next_features = (
+                jax.lax.stop_gradient(
+                    model.critic_module.forward(next_critic_obs)[0]
+                )
+                if cfg.use_categorical_value
+                else jnp.zeros((cfg.num_envs, cfg.critic_hidden_dim))
+            )
             transition = Transition(
                 obs=obs,
                 critic_obs=critic_obs,
                 action=action,
-                next_emb=(
-                    jax.lax.stop_gradient(
-                        model.critic_module.forward(next_critic_obs)[0]
-                    )
-                    if cfg.use_categorical_value
-                    else jnp.zeros((cfg.num_envs, cfg.critic_hidden_dim))
-                ),
+                next_emb=next_features,
+                next_state_emb=next_features,
+                next_emb_mask=jnp.ones_like(reward),
                 reward=reward,
                 soft_reward=soft_reward,
                 log_prob=gen_log_prob,
@@ -643,6 +731,29 @@ class ReppoPPOTrainer:
             reverse=True,
         )
         target_values = advantages + batch.value
+        target_vals_flat = target_values.reshape(-1)
+        target_vals_finite = jnp.nan_to_num(
+            target_vals_flat,
+            nan=0.0,
+            posinf=cfg.vmax,
+            neginf=cfg.vmin,
+        )
+        target_value_mean = jnp.mean(target_vals_finite)
+        target_value_min = jnp.min(target_vals_finite)
+        target_value_max = jnp.max(target_vals_finite)
+        shift_steps = self.cfg.diffusion.diff_steps
+        time_idx = jnp.arange(self.num_collection_steps)
+        shifted_idx = jnp.minimum(
+            time_idx + shift_steps, self.num_collection_steps - 1
+        )
+        next_state_emb = jnp.take(batch.next_emb, shifted_idx, axis=0)
+        valid_shift = (time_idx + shift_steps) <= (self.num_collection_steps - 1)
+        next_emb_mask = jnp.broadcast_to(
+            valid_shift[:, None], (self.num_collection_steps, cfg.num_envs)
+        )
+        batch = batch.replace(
+            next_state_emb=next_state_emb, next_emb_mask=next_emb_mask
+        )
 
         data = (batch, advantages, target_values)
         data = jax.tree.map(
@@ -681,23 +792,52 @@ class ReppoPPOTrainer:
                                 critic_pred.reshape(-1, 1),
                                 target_values.reshape(-1, 1),
                             )
-                        _, pred, pred_rew, _, value = model.critic_module.forward(
-                            minibatch.critic_obs
+                        _, pred, pred_rew, pred_next_diff_state, value = (
+                            model.critic_module.forward(minibatch.critic_obs)
                         )
-                        aux_loss = optax.squared_error(pred, minibatch.next_emb)
+                        aux_loss = optax.squared_error(
+                            pred, minibatch.next_state_emb
+                        )
+                        aux_next_diff_loss = optax.squared_error(
+                            pred_next_diff_state, minibatch.next_emb
+                        )
                         aux_rew_loss = optax.squared_error(
                             pred_rew, minibatch.reward.reshape(-1, 1)
                         )
-                        aux_loss = jnp.mean(
+                        diff_steps = jnp.asarray(
+                            cfg.diffusion.diff_steps - 1,
+                            dtype=minibatch.obs["diff_time_step"].dtype,
+                        )
+                        is_last_step = (
+                            minibatch.obs["diff_time_step"][..., 0] == diff_steps
+                        ).reshape(-1, 1)
+                        aux_weight = is_last_step.astype(aux_loss.dtype)
+                        masked_aux_terms = jnp.concatenate(
+                            [aux_loss, aux_rew_loss], axis=-1
+                        )
+                        masked_aux_loss = jnp.mean(
                             (1 - minibatch.done.reshape(-1, 1))
-                            * jnp.concatenate([aux_loss, aux_rew_loss], axis=-1),
+                            * aux_weight
+                            * masked_aux_terms,
                             axis=-1,
+                        )
+                        aux_next_diff_loss = jnp.mean(
+                            (1 - minibatch.done.reshape(-1, 1))
+                            * aux_next_diff_loss,
+                            axis=-1,
+                        )
+                        alpha = 0.9
+                        aux_loss = (
+                            alpha
+                            * jnp.sum(masked_aux_loss)
+                            / jnp.maximum(jnp.sum(aux_weight), 1.0)
+                            + (1 - alpha) * jnp.mean(aux_next_diff_loss)
                         )
                         critic_loss = optax.squared_error(value, target_values)
                         critic_loss = jnp.mean(critic_loss)
                         value_loss = jnp.mean(
-                            (1.0 - minibatch.truncated)
-                            * (critic_update_loss + cfg.aux_loss_mult * aux_loss)
+                            (1.0 - minibatch.truncated) * (critic_update_loss)
+                            + cfg.aux_loss_mult * aux_loss
                         )
                     else:
                         value = model.critic(minibatch.critic_obs)
@@ -859,6 +999,9 @@ class ReppoPPOTrainer:
                         mean_advantages=adv_base.mean(),
                         mean_action=minibatch.action.mean(),
                         reward_mean=minibatch.reward.mean()*self.diffusion_steps,
+                        target_value_mean=target_value_mean,
+                        target_value_min=target_value_min,
+                        target_value_max=target_value_max,
                         clip_ratio=clip_fraction,
                         critic_update_loss=(
                             jnp.mean(critic_update_loss)
@@ -871,7 +1014,10 @@ class ReppoPPOTrainer:
                             else jnp.array(0.0)
                         ),
                         rew_aux_loss=(
-                            jnp.mean(aux_rew_loss)
+                            jnp.mean(
+                                aux_rew_loss
+                                * aux_weight.astype(aux_rew_loss.dtype)
+                            )
                             if cfg.use_categorical_value
                             else jnp.array(0.0)
                         ),
@@ -1064,7 +1210,7 @@ def run(cfg: DictConfig):
         }
         if advantages_hist is not None:
             log_data["train/advantages"] = advantages_hist
-        wandb.log(log_data, step=state.time_steps[0])
+        wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])
 
     logging.info(OmegaConf.to_yaml(cfg))
 
@@ -1184,6 +1330,9 @@ def tune(cfg: DictConfig):
 
 @hydra.main(version_base=None, config_path="../../config", config_name="diff_ppo")
 def main(cfg: DictConfig):
+    cfg.hyperparameters = OmegaConf.merge(
+        cfg.hyperparameters, cfg.experiment_overrides.hyperparameters
+    )
     if cfg.tune:
         tune(cfg)
     else:

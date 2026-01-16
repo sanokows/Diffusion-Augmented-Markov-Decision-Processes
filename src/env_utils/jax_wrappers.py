@@ -57,7 +57,6 @@ class MjxGymnaxWrapper(Environment):
             self.dict_obs = False
         else:
             self.dict_obs = True
-            raise ValueError("Dict observations not supported yet.")
 
         if asymmetric_observation:
             self.dict_obs_key = "privileged_state"
@@ -129,7 +128,9 @@ class MjxGymnaxWrapper(Environment):
                 jnp.isfinite(critic_obs), critic_obs, prev_critic_obs
             )
             min_reward = jnp.finfo(state.reward.dtype).min
-            reward = jnp.where(jnp.isfinite(state.reward), state.reward, min_reward)
+            max_reward = jnp.finfo(state.reward.dtype).max
+            avrg_reward = min_reward / 2 + max_reward / 2
+            reward = jnp.where(jnp.isfinite(state.reward), state.reward, avrg_reward)
             done = (state.done > 0.5) | has_nan
             return (
                 obs,

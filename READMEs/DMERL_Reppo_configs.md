@@ -1,6 +1,23 @@
 ### AcrobotSwingup DMERL
 python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=6e-4 hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3  hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
 
+### CheetahRun DMERL
+python -m src.jaxrl.reppo_DMERL_new env.name=CheetahRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=6e-4 hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3  hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
+
+### HopperStand 
+#### best run so far
+python -m src.jaxrl.reppo_DMERL_new env.name=HopperStand hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=1e-3 hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
+
+#### not workign so well
+python -m src.jaxrl.reppo_DMERL_new env.name=HopperStand hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=1e-3 hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=2.5  hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl hyperparameters.use_temp_lagrangian_post_adam_ema=true hyperparameters.temp_lagrangian_ema_decay=0.999
+
+
+### HopperHop ### TODO try out other optimizer, larger smoothing
+python -m src.jaxrl.reppo_DMERL_new env.name=HopperHop hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=1e-3 hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
+
+### WalkerRun
+python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=1e-3 hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=2.5 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
+
 ### AcrobotSwingup DMERL
 python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=3e-4 hyperparameters.temperature_lr=3e-4 hyperparameters.lagrangian_lr=3e-4 hyperparameters.ent_target_mult=3  hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl
 
@@ -9,6 +26,9 @@ python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingupSparse hyperparameter
 
 ### HumanoidRun DMERL
 python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=1e-3 hyperparameters.vmin=-20 hyperparameters.vmax=150 hyperparameters.temperature_lr=1e-3  hyperparameters.lagrangian_lr=1e-3  hyperparameters.ent_target_mult=3 hyperparameters.num_bins=171 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98  hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data_DMERL
+
+### HumanoidWalk DMERL
+python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=6e-4 hyperparameters.vmin=-20 hyperparameters.vmax=150 hyperparameters.temperature_lr=6e-4  hyperparameters.lagrangian_lr=6e-4  hyperparameters.ent_target_mult=2.5 hyperparameters.num_bins=171 hyperparameters.gamma=0.999 hyperparameters.lmbda=0.98  hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_humanoid experiment_overrides=mjx_dmc_large_data_dmerl
 
 
 ### run due to empty gpu

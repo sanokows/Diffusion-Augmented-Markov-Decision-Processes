@@ -283,6 +283,9 @@ def make_critic_update_fn(cfg: DictConfig, train_state: TrainState):
             "qf_max": targets.max().detach(),
             "qf_min": targets.min().detach(),
             "qf_mean": targets.mean().detach(),
+            "target_max": targets.max().detach(),
+            "target_min": targets.min().detach(),
+            "target_mean": targets.mean().detach(),
             "embedding_loss": embedding_loss.detach(),
         }
         return logs_dict

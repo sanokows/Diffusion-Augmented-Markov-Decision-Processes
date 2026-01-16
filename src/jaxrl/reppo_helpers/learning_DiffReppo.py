@@ -16,6 +16,9 @@ from src.jaxrl import utils
 def compute_action_q_grads(actor_model, critic_model, obs, critic_obs):
     """Compute time-interpolated gradient between prior and Q wrt actions."""
     actions = obs["orig_actions"]
+    # Keep actions within arctanh domain to avoid inf/NaN in prior terms.
+    clip_limit = jnp.arctanh(jnp.asarray(0.999, dtype=actions.dtype))
+    actions = jnp.clip(actions, -clip_limit, clip_limit)
     steps = obs["diff_time_step"][..., 0]
     diff_steps = max(actor_model.diffusion_model.diff_steps - 1, 1)
     time_norm = jnp.clip(steps.astype(jnp.float32) / diff_steps, 0.0, 1.0)
@@ -153,14 +156,14 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         critic_current_model = nnx.merge(
             updated_state.critic.graphdef, updated_state.critic.params
         )
-        critic_for_actions = (
+        critic_for_target = (
             critic_current_model if use_current_critic_for_actions else critic_rollout_model
         )
         obs_for_actions = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model, critic_for_actions, use_langevin
+            minibatch.obs, minibatch.critic_obs, actor_model, critic_current_model, use_langevin
         )
         obs_for_target = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model, critic_rollout_model, use_langevin
+            minibatch.obs, minibatch.critic_obs, actor_model, critic_for_target, use_langevin
         )
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
@@ -189,35 +192,67 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         kl = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
         lagrangian = actor_model.lagrangian()
 
-        if cfg.actor_kl_clip_mode == "full":
-            actor_loss_val = (
-                log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
-                - value
-                + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
-            )
-        elif cfg.actor_kl_clip_mode == "clipped":
-            actor_loss_val = jnp.where(
-                kl < cfg.kl_bound,
-                log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature()) - value,
-                kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
-            )
-        elif cfg.actor_kl_clip_mode == "value":
-            actor_loss_val = (
-                log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
-                - value
-            )
-        else:
-            raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
+        clip_ratio = jnp.mean((kl >= cfg.kl_bound).astype(jnp.float32))
 
         target_entropy = action_size_target + entropy
-        target_entropy_loss = (
-             actor_model.temperature()
-            * jax.lax.stop_gradient(target_entropy)
-        ).mean()
-        lagrangian_loss = (
-            -lagrangian
-            * jax.lax.stop_gradient(kl - cfg.kl_bound)
-        ).mean()
+        kl_constraint = kl - cfg.kl_bound
+        if cfg.use_augmented_lagrangian_dual:
+            if cfg.actor_kl_clip_mode == "full":
+                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
+            elif cfg.actor_kl_clip_mode == "clipped":
+                actor_loss_val = jnp.where(
+                    kl < cfg.kl_bound,
+                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature()) - value + 0.5* cfg.augmented_lagrangian_entropy_coef* jnp.square(target_entropy),
+                    kl * jax.lax.stop_gradient(lagrangian) * + 0.5 * cfg.augmented_lagrangian_kl_coef * jnp.square(kl_constraint),
+                )
+            elif cfg.actor_kl_clip_mode == "value":
+                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
+            else:
+                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
+
+            target_entropy_loss = (
+                actor_model.temperature() * 0.5
+                * cfg.augmented_lagrangian_entropy_coef
+                * jax.lax.stop_gradient(target_entropy)
+            ).mean()
+            lagrangian_loss = (
+                -lagrangian*0.5
+                * cfg.augmented_lagrangian_kl_coef
+                * jax.lax.stop_gradient(kl_constraint)
+                + 0.5
+                * cfg.augmented_lagrangian_kl_coef
+                * jnp.square(kl_constraint)
+            ).mean()
+        else:
+            if cfg.actor_kl_clip_mode == "full":
+                actor_loss_val = (
+                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
+                    - value
+                    + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
+                )
+            elif cfg.actor_kl_clip_mode == "clipped":
+                actor_loss_val = jnp.where(
+                    kl < cfg.kl_bound,
+                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature()) - value,
+                    kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
+                )
+            elif cfg.actor_kl_clip_mode == "value":
+                actor_loss_val = (
+                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
+                    - value
+                )
+            else:
+                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
+
+            target_entropy_loss = (
+                actor_model.temperature()
+                * jax.lax.stop_gradient(target_entropy)
+            ).mean()
+            lagrangian_loss = (
+                -lagrangian
+                * jax.lax.stop_gradient(kl_constraint)
+            ).mean()
+
         loss = jnp.mean(actor_loss_val)
         if cfg.update_entropy_lagrangian:
             loss += target_entropy_loss
@@ -242,7 +277,9 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
             sto_cost=0.0,
             terminal_cost=0.0,
             entropy=entropy,
+            entropy_target=-action_size_target,
             entropy_loss=target_entropy_loss,
+            kl_clip_ratio=clip_ratio,
             target_values=target_vals.mean(),
             actor_pnorm=actor_pnorm,
             friction=friction_detached.mean(),
@@ -396,6 +433,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         actor_WPO_loss = jnp.mean((jax.lax.stop_gradient(log_prob_action_grad - stop_q_action_grad/temperature)**2).sum(axis=-1))
 
+        clip_ratio = jnp.mean((kl_clip_value >= cfg.kl_bound).astype(jnp.float32))
         if cfg.actor_kl_clip_mode == "full":
             actor_loss_val = (
                 actor_Q_loss
@@ -413,18 +451,50 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
         target_entropy = action_size_target + entropy
-        target_entropy_loss = (
-            actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
-        ).mean()
-        lagrangian_loss = (
-            -lagrangian * jax.lax.stop_gradient(kl - cfg.kl_bound)
-        ).mean()
+        kl_constraint = kl - cfg.kl_bound
+        if cfg.use_augmented_lagrangian_dual:
+            target_entropy_loss = (
+                actor_model.temperature()
+                * jax.lax.stop_gradient(target_entropy)
+                + 0.5
+                * cfg.augmented_lagrangian_entropy_coef
+                * jnp.square(target_entropy)
+            ).mean()
+            lagrangian_loss = (
+                -lagrangian
+                * jax.lax.stop_gradient(kl_constraint)
+                + 0.5
+                * cfg.augmented_lagrangian_kl_coef
+                * jnp.square(kl_constraint)
+            ).mean()
+        else:
+            target_entropy_loss = (
+                actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
+            ).mean()
+            lagrangian_loss = (
+                -lagrangian * jax.lax.stop_gradient(kl_constraint)
+            ).mean()
+        entropy_penalty = jnp.array(0.0)
+        kl_penalty = jnp.array(0.0)
+        if cfg.use_augmented_lagrangian:
+            if cfg.update_entropy_lagrangian:
+                entropy_penalty = 0.5 * cfg.augmented_lagrangian_entropy_coef * jnp.square(
+                    target_entropy
+                )
+                entropy_penalty = entropy_penalty.mean()
+            if cfg.update_kl_lagrangian:
+                kl_penalty = 0.5 * cfg.augmented_lagrangian_kl_coef * jnp.square(
+                    kl - cfg.kl_bound
+                )
+                kl_penalty = kl_penalty.mean()
 
         loss = jnp.mean(actor_loss_val)
         if cfg.update_entropy_lagrangian:
             loss += target_entropy_loss
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
+        if cfg.use_augmented_lagrangian:
+            loss += entropy_penalty + kl_penalty
 
         actor_pnorm = utils.tree_norm(params)
         friction = actor_model.diffusion_model.friction.value
@@ -447,6 +517,9 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             terminal_cost=0.0,
             entropy=entropy,
             entropy_loss=target_entropy_loss,
+            entropy_penalty=entropy_penalty,
+            kl_penalty=kl_penalty,
+            kl_clip_ratio=clip_ratio,
             target_values=target_vals.mean(),
             actor_pnorm=actor_pnorm,
             friction=friction_detached.mean(),

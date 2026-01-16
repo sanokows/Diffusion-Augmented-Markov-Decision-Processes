@@ -1,5 +1,6 @@
 defaults:
   - env: mjx_dmc
+  - experiment_overrides: default
   - _self_
 
 hyperparameters:
@@ -18,8 +19,13 @@ hyperparameters:
   kl_action_rep: 1
   reduce_kl: true
   reverse_kl: false
+  temp_lagrangian_optim: "adam"
   temp_lagrangian_adam_gamma1: 0.95
   temp_lagrangian_adam_gamma2: 0.9995
+  use_temp_lagrangian_ema_optim: false
+  use_temp_lagrangian_post_adam_ema: false
+  temp_lagrangian_ema_decay: 0.99
+  temperature_lr: null
   total_time_steps: 50_000_000
   num_steps: 64
   num_collection_step_factor: 1

@@ -11,6 +11,7 @@ hyperparameters:
   max_episode_steps: 1000
   eval_interval: 2
   num_eval: 20
+  log_torso_com: false
 
   # optimization settings (seem very stable)
   lr: 1e-4
@@ -20,8 +21,11 @@ hyperparameters:
   temperature_lr: 1e-4
   lagrangian_lr: 1e-4
   temp_lagrangian_optim: "adam"
-  temp_lagrangian_adam_gamma1: 0.95
-  temp_lagrangian_adam_gamma2: 0.9995
+  temp_lagrangian_adam_gamma1: 0.9
+  temp_lagrangian_adam_gamma2: 0.999
+  use_temp_lagrangian_ema_optim: false
+  use_temp_lagrangian_post_adam_ema: false
+  temp_lagrangian_ema_decay: 0.99
   project_unit_ball: false
   project_only_if_exceeds: false
   anneal_lr: false
@@ -78,11 +82,14 @@ hyperparameters:
   use_W2_kl: false
   kl_action_rep: 4
   update_kl_lagrangian: true
+  use_augmented_lagrangian_dual: false
+  augmented_lagrangian_kl_coef: 1.0
   actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
   ## entropy settings
   ent_start: 0.01
   ent_target_mult: 3.
   update_entropy_lagrangian: true
+  augmented_lagrangian_entropy_coef: 1.0
   # optionally learn temperature/kl multipliers with a tiny MLP
   use_temp_lagrangian_mlp: false
   temp_lagrangian_hidden: 32

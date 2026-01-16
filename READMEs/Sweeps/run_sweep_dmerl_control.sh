@@ -2,14 +2,13 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    CartpoleBalance
-    CartpoleBalanceSparse
-    CartpoleSwingup
-    CartpoleSwingupSparse
     CheetahRun
-    FingerSpin
-    FingerTurnEasy
-    FingerTurnHard
+    FishSwim
+    HopperHop
+    HopperStand
+    WalkerRun
+    WalkerStand
+    WalkerWalk
     # Add more env names here
 )
 
@@ -48,22 +47,14 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FinalRuns" \
+        wandb.project_suffix="_FR_16_01" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
-        hyperparameters.lr=6e-4 \
-        hyperparameters.temperature_lr=6e-4 \
-        hyperparameters.lagrangian_lr=6e-4 \
-        hyperparameters.ent_target_mult=2.5 \
-        hyperparameters.gamma=0.9992 \
-        hyperparameters.lmbda=0.98 \
-        hyperparameters.diffusion.learn_friction=true \
-        hyperparameters.diffusion.learn_dt=true \
-        hyperparameters.diffusion.per_step_dt=true \
         env=mjx_dmc \
-        num_trials=3 \
-        experiment_overrides=mjx_dmc_large_data_dmerl &
+        num_trials=1 \
+        seed=0 \
+        experiment_overrides=mjx_dmc_large_data_dmerl_control &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

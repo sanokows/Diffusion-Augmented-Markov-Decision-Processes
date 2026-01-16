@@ -11,4 +11,18 @@ hyperparameters:
   vmin: -100
   vmax: 200
   num_bins: 301
-  num_eval: 100
+  num_eval: 50
+  
+  lr: 1e-3
+  temperature_lr: 3e-4
+  lagrangian_lr: 3e-4
+  ent_target_mult: 2.5
+  gamma: 0.999
+  lmbda: 0.98
+  diffusion:
+    learn_friction: true
+    learn_dt: true
+    per_step_dt: true
+
+
+
