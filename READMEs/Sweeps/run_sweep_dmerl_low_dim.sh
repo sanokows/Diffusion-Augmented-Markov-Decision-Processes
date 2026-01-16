@@ -4,7 +4,6 @@
 ENV_NAMES=(
     ArcrobotSwingup
     PendulumSwingup
-    FingerSpin
     CartpoleSwingupSparse
     AcrobotSwingupSparse
     # Add more env names here

@@ -9,6 +9,7 @@ ENV_NAMES=(
     WalkerRun
     WalkerStand
     WalkerWalk
+    FingerSpin
     # Add more env names here
 )
 

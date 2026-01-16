@@ -5,7 +5,6 @@ ENV_NAMES=(
     AcrobotSwingup
     AcrobotSwingupSparse
     PendulumSwingup
-    CheetahRun
     AcrobotSwingupSparse
     # Add more env names here
 )

@@ -9,6 +9,7 @@ ENV_NAMES=(
     WalkerRun
     WalkerStand
     WalkerWalk
+    FingerSpin
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
