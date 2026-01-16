@@ -1,5 +1,5 @@
 # low dim
-ArcrobotSwingup
+AcrobotSwingup
 PendulumSwingup
 FingerSpin
 AcrobotSwingupSparse
