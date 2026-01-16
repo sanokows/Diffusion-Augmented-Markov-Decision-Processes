@@ -7,6 +7,8 @@ sbatch ./READMEs/Clusters/Meluxina/dmerl_hyper.sh
 sbatch ./READMEs/Clusters/Meluxina/dmerl_runs.sh
 sbatch ./READMEs/Clusters/Meluxina/dmerl_low_dim.sh
 sbatch ./READMEs/Clusters/Meluxina/dmerl_control.sh
+sbatch ./READMEs/Clusters/Meluxina/dmerl_WPO_control.sh
+sbatch ./READMEs/Clusters/Meluxina/dmerl_WPO_low_dim.sh
 sbatch ./READMEs/Clusters/Meluxina/dime_runs_2.sh
 ```
 

@@ -8,7 +8,7 @@ python -m src.jaxrl.reppo_DiffPPO env.name=CheetahRun hyperparameters.num_eval=1
 
 
 ### HopperStand DiffPPO works well!
-python -m src.jaxrl.reppo_DiffPPO env.name=HopperStand hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=8 hyperparameters.lr=2e-3 hyperparameters.temperature_lr=3e-4 hyperparameters.ent_target_mult=4 hyperparameters.entropy_coef=0.004 hyperparameters.update_entropy_lagrangian=true hyperparameters.num_envs=1024 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.use_categorical_value=true hyperparameters.vmin=-10 hyperparameters.vmax=150 hyperparameters.num_bins=301 hyperparameters.num_epochs=8 hyperparameters.aux_loss_mult=0.001 hyperparameters.lmbda=0.98
+python -m src.jaxrl.reppo_DiffPPO env.name=HopperStand hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=8 hyperparameters.lr=1e-3 hyperparameters.temperature_lr=3e-4 hyperparameters.ent_target_mult=4 hyperparameters.entropy_coef=0.004 hyperparameters.update_entropy_lagrangian=true hyperparameters.num_envs=1024 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.use_categorical_value=true hyperparameters.vmin=-100 hyperparameters.vmax=200 hyperparameters.num_bins=301 hyperparameters.num_epochs=8 hyperparameters.aux_loss_mult=0.01 hyperparameters.lmbda=0.98 hyperparameters.gamma=0.9995
 
 python -m src.jaxrl.reppo_DiffPPO env.name=HopperStand hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_DiffPPO_control
 

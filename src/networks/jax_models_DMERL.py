@@ -20,7 +20,6 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model)
 
     # Forward kernel
-    drift = diffusion_model.drift_fn(step, x)
     # fwd_mean = x + eta * (drift + (ode_coef * diffusion_model.forward_model(step, x, obs))) if ode else x + eta * (drift + diffusion_model.forward_model(step, x, obs))
     fwd_mean = x + eta * mu
 
@@ -42,6 +41,9 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
 
     # log_w = bwd_log_prob - fwd_log_prob
     # jax.debug.print("step: {s}, log_w before: {lw}, bwd_log_prob: {bp}, fwd_log_prob: {fp}", s=step, lw=log_w, bp=bwd_log_prob, fp=fwd_log_prob)
+    ### print the shapes of x mue and scale
+    #jax.debug.print("step: {s}, x shape: {xsh}, mu shape: {msh}, scale shape: {ssh}", s=step, xsh=x.shape, msh=mu.shape, ssh=scale.shape)
+
 
     key, key_gen = jax.random.split(key_gen)
     out_dict = {
@@ -1162,9 +1164,19 @@ class DiffusionModel(nnx.Module):
 
         # Initialize dt parameters
         if per_step_dt:
-                self.dt = nnx.Param(inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps))))
+            if (not learn_friction) and learn_dt and per_dim_friction:
+                dt_schedule_vals = dt_schedule(jnp.arange(diff_steps))[:, None]
+                dt_init = jnp.ones((diff_steps, action_dim)) * dt * dt_schedule_vals
+                self.dt = nnx.Param(inverse_softplus(dt_init))
+            else:
+                self.dt = nnx.Param(
+                    inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps)))
+                )
         else:
-            self.dt = nnx.Param(jnp.ones(1) * inverse_softplus(dt))
+            if (not learn_friction) and learn_dt and per_dim_friction:
+                self.dt = nnx.Param(jnp.ones(action_dim) * inverse_softplus(dt))
+            else:
+                self.dt = nnx.Param(jnp.ones(1) * inverse_softplus(dt))
         
         # Initialize friction parameters
         if per_dim_friction:
@@ -1283,6 +1295,7 @@ class DiffusionModel(nnx.Module):
             friction_value = jax.lax.stop_gradient(friction_value)
         dt = self.delta_t_fn(step)
         sigma_square = 1.0 / friction_value
+
         eta = dt * sigma_square
         log_scale = 0.5 * jnp.log(2.0 * eta)
         scale = jnp.sqrt(2*eta)

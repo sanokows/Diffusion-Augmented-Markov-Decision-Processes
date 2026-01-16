@@ -452,49 +452,21 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         target_entropy = action_size_target + entropy
         kl_constraint = kl - cfg.kl_bound
-        if cfg.use_augmented_lagrangian_dual:
-            target_entropy_loss = (
-                actor_model.temperature()
-                * jax.lax.stop_gradient(target_entropy)
-                + 0.5
-                * cfg.augmented_lagrangian_entropy_coef
-                * jnp.square(target_entropy)
-            ).mean()
-            lagrangian_loss = (
-                -lagrangian
-                * jax.lax.stop_gradient(kl_constraint)
-                + 0.5
-                * cfg.augmented_lagrangian_kl_coef
-                * jnp.square(kl_constraint)
-            ).mean()
-        else:
-            target_entropy_loss = (
-                actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
-            ).mean()
-            lagrangian_loss = (
-                -lagrangian * jax.lax.stop_gradient(kl_constraint)
-            ).mean()
+
+        target_entropy_loss = (
+            actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
+        ).mean()
+        lagrangian_loss = (
+            -lagrangian * jax.lax.stop_gradient(kl_constraint)
+        ).mean()
         entropy_penalty = jnp.array(0.0)
         kl_penalty = jnp.array(0.0)
-        if cfg.use_augmented_lagrangian:
-            if cfg.update_entropy_lagrangian:
-                entropy_penalty = 0.5 * cfg.augmented_lagrangian_entropy_coef * jnp.square(
-                    target_entropy
-                )
-                entropy_penalty = entropy_penalty.mean()
-            if cfg.update_kl_lagrangian:
-                kl_penalty = 0.5 * cfg.augmented_lagrangian_kl_coef * jnp.square(
-                    kl - cfg.kl_bound
-                )
-                kl_penalty = kl_penalty.mean()
 
         loss = jnp.mean(actor_loss_val)
         if cfg.update_entropy_lagrangian:
             loss += target_entropy_loss
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
-        if cfg.use_augmented_lagrangian:
-            loss += entropy_penalty + kl_penalty
 
         actor_pnorm = utils.tree_norm(params)
         friction = actor_model.diffusion_model.friction.value

@@ -826,7 +826,7 @@ class ReppoPPOTrainer:
                             * aux_next_diff_loss,
                             axis=-1,
                         )
-                        alpha = 0.9
+                        alpha = 0.1
                         aux_loss = (
                             alpha
                             * jnp.sum(masked_aux_loss)
