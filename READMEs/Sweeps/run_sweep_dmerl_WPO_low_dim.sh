@@ -48,9 +48,9 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
+        hyperparameters.train_mode=WPO \
         env=mjx_dmc \
         seed=0 \
-        train_mode=WPO \
         num_trials=1 \
         experiment_overrides=mjx_dmc_large_data_dmerl_control &
     GPU_PIDS[$GPU_ID]=$!
