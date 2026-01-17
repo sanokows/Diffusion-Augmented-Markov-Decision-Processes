@@ -5,7 +5,7 @@
 #SBATCH --ntasks-per-node=1                # 8 tasks per node
 #SBATCH --gpus-per-node=4                  # request 4 GPUs on this node
 #SBATCH --cpus-per-task=8                 # 32 CPU cores for the task
-#SBATCH --time=24:00:00                    # walltime limit (HH:MM:SS)
+#SBATCH --time=12:00:00                    # walltime limit (HH:MM:SS)
 #SBATCH --partition=gpu                    # GPU partition
 #SBATCH --account=p201037                  # project account
 #SBATCH --qos=default                      # quality of service
