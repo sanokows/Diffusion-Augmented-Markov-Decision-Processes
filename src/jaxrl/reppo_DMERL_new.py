@@ -611,7 +611,7 @@ class ReppoDMERLTrainer:
                 learn_friction=cfg.diffusion.learn_friction,
                 learn_mass_matrix=cfg.diffusion.learn_mass_matrix,
                 langevin_param=langevin_param,
-                train_mode=getattr(cfg, "train_mode", "reparam"),
+                train_mode=cfg.train_mode,
                 dt_schedule=dt_schedule,
                 rngs=nnx.Rngs(model_key),
             )
@@ -1167,7 +1167,7 @@ class ReppoDMERLTrainer:
         )
         selected_actor_loss = (
             actor_WPO_loss_fn
-            if getattr(cfg, "train_mode", "reparam") == "WPO"
+            if cfg.train_mode == "WPO"
             else actor_loss_fn
         )
         if selected_actor_loss is actor_WPO_loss_fn:
@@ -1235,7 +1235,7 @@ class ReppoDMERLTrainer:
         train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
         norm_state = train_state.last_env_state if cfg.normalize_env else None
         eval_key, init_seed_key = jax.random.split(eval_key)
-        if getattr(cfg, "train_mode", "reparam") == "WPO":
+        if cfg.train_mode == "WPO":
             eval_metrics = self.sde_eval_fn(init_seed_key, train_state, norm_state)
         else:
             eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
@@ -1537,9 +1537,10 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 *cfg.tags,
             ],
             config=run_config,
-            name=f"{cfg.name}-{cfg.env.name.lower()}-{getattr(cfg, 'train_mode', 'reparam')}",
+            name=f"{cfg.name}-{cfg.env.name.lower()}-{getattr(cfg.hyperparameters, 'train_mode', 'reparam')}",
             save_code=True,
         )
+
         trainer._init_step_sizes()
         logging.info(OmegaConf.to_yaml(cfg))
         key = jax.random.PRNGKey(cfg.seed)

@@ -45,7 +45,7 @@ python -m src.jaxrl.DiffReppo env=hopper cfg.normalize_env=true cfg.num_envs=1 c
 
 salloc -A EU-25-100 -p qgpu_exp --exclude=acn13
 salloc -A EU-25-100 -p qgpu_free
-salloc -A EU-25-100 -p qgpu --time=02:00:00
+salloc -A EU-25-100 -p qgpu --time=01:30:00
 python config.py --RL_algo DiffPPO
 
 ### TODO check if diffusion is initialized so that it maps to prior
