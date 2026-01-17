@@ -10,6 +10,7 @@ import optax
 import optuna
 from flax import nnx, struct
 from flax.struct import PyTreeNode
+from flax.traverse_util import flatten_dict, unflatten_dict
 from gymnax.environments.environment import Environment, EnvParams, EnvState
 from jax import numpy as jnp
 from jax.random import PRNGKey
@@ -97,6 +98,8 @@ class Transition(struct.PyTreeNode):
 
 class ReppoConfig(struct.PyTreeNode):
     lr: float
+    temperature_lr: float | None = None
+    temperature_lagragian_lr: float | None = None
     gamma: float
     total_time_steps: int
     num_steps: int
@@ -431,27 +434,55 @@ def make_init(
             num_updates = num_iterations * cfg.num_epochs * cfg.num_mini_batches
             lr = optax.linear_schedule(cfg.lr, 0, num_updates)
 
+        def _resolve_special_lr(special_lr: float | None, base_lr: float) -> float:
+            return base_lr if special_lr is None else special_lr
+
+        def _label_actor_params(params):
+            flat = flatten_dict(params)
+            labels = {}
+            for k in flat.keys():
+                leaf_name = k[-1]
+                if "temperature" in leaf_name:
+                    labels[k] = "temperature"
+                elif "lagrangian" in leaf_name:
+                    labels[k] = "lagrangian"
+                else:
+                    labels[k] = "default"
+            return unflatten_dict(labels)
+
+        actor_param_tree = nnx.to_pure_dict(nnx.state(actor_networks))
+        actor_labels = _label_actor_params(actor_param_tree)
+        lagrangian_lr = _resolve_special_lr(cfg.temperature_lagragian_lr, lr)
+        temperature_lr = lagrangian_lr
+
+        actor_tx_cfg = {
+            "default": optax.adam(lr),
+            "temperature": optax.adam(temperature_lr),
+            "lagrangian": optax.adam(lagrangian_lr),
+        }
+        actor_optimizer = optax.multi_transform(actor_tx_cfg, actor_labels)
         if cfg.max_grad_norm is not None:
             actor_optimizer = optax.chain(
                 optax.clip_by_global_norm(cfg.max_grad_norm),
-                optax.adam(lr)
+                actor_optimizer,
             )
+
+        if cfg.max_grad_norm is not None:
             critic_optimizer = optax.chain(
                 optax.clip_by_global_norm(cfg.max_grad_norm),
-                optax.adam(lr)
+                optax.adam(lr),
             )
         else:
-            actor_optimizer = optax.adam(lr)
             critic_optimizer = optax.adam(lr)
 
         actor_trainstate = nnx.TrainState.create(
             graphdef=nnx.graphdef(actor_networks),
-            params=nnx.state(actor_networks),
+            params=actor_param_tree,
             tx=actor_optimizer,
         )
         actor_target_trainstate = nnx.TrainState.create(
             graphdef=nnx.graphdef(actor_target_networks),
-            params=nnx.state(actor_target_networks),
+            params=nnx.to_pure_dict(nnx.state(actor_target_networks)),
             tx=optax.set_to_zero(),
         )
         critic_trainstate = nnx.TrainState.create(
