@@ -98,7 +98,6 @@ class Transition(struct.PyTreeNode):
 
 class ReppoConfig(struct.PyTreeNode):
     lr: float
-    temperature_lr: float 
     temperature_lagragian_lr: float 
     gamma: float
     total_time_steps: int
