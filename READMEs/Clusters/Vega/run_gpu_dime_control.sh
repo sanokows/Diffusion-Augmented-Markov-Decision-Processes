@@ -11,8 +11,8 @@
 #SBATCH --account=d2023d12-053-users
 #SBATCH --signal=INT@60
 
-conda activate REPPO
-cd /ceph/hpc/home/eusebastians/code/DMERL
+# conda activate REPPO
+# cd /ceph/hpc/home/eusebastians/code/DMERL
 
 which python
 python -c "import sys; print(sys.executable)"

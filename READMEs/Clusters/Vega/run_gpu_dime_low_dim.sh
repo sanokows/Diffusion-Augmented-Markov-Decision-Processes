@@ -11,12 +11,12 @@
 #SBATCH --account=d2023d12-053-users
 #SBATCH --signal=INT@60
 
-conda activate REPPO
-cd /ceph/hpc/home/eusebastians/code/DMERL
+# cd /ceph/hpc/home/eusebastians/code/DMERL
+# conda activate REPPO
 
 which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/run_sweep_dmerl_low_dim.sh
-sh ./READMEs/Sweeps/run_sweep_dmerl_low_dim.sh
+chmod +x ./READMEs/Sweeps/run_sweep_dime_low_dim.sh
+sh ./READMEs/Sweeps/run_sweep_dime_low_dim.sh

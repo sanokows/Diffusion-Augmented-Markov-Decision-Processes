@@ -1,5 +1,5 @@
 
-salloc --partition=gpu --nodes=1  --time=00:00:30 --gres=gpu:4 --account d2025d09-019-users
+salloc --partition=gpu --nodes=1  --time=01:00:30 --gres=gpu:1 --account d2025d09-019-users
 
 
 --account d2023d12-053-users
