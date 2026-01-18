@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="dime_low_dim"
+#SBATCH --job-name="WPO_hard_envs"
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
