@@ -16,6 +16,13 @@ python -m src.jaxrl.reppo env.name=FingerSpin env=mjx_dmc experiment_overrides=m
 ### AcrobotSwingupSparse
 python -m src.jaxrl.reppo env.name=AcrobotSwingupSparse env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
 
+### vary aux_loss
+python -m src.jaxrl.reppo env.name=AcrobotSwingupSparse env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5 hyperparameters.aux_loss_mult=0.01
+
+python -m src.jaxrl.reppo env.name=AcrobotSwingupSparse env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5 hyperparameters.aux_loss_mult=0.0
+
+### AcrobotSwingup
+python -m src.jaxrl.reppo env.name=AcrobotSwingup env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
 
 
 

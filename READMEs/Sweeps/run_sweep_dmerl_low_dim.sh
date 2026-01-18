@@ -49,8 +49,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
         env=mjx_dmc \
-        seed=0 \
-        num_trials=1 \
+        seed=1 \
+        num_trials=4 \
         experiment_overrides=mjx_dmc_large_data_dmerl_control &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))

@@ -14,5 +14,7 @@ flag --account
 ```
 sbatch ./READMEs/Clusters/Vega/run_gpu_dime_control.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dime_low_dim.sh
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_control.sh
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_low_dim.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_WPO_hyper.sh
 ```

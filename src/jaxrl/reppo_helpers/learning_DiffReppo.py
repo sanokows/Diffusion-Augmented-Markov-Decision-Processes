@@ -431,7 +431,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             axis=-1,
         )
 
-        actor_WPO_loss = jnp.mean((jax.lax.stop_gradient(log_prob_action_grad - stop_q_action_grad/temperature)**2).sum(axis=-1))
+        actor_WPO_loss = temperature*jnp.mean((jax.lax.stop_gradient(log_prob_action_grad - stop_q_action_grad/temperature)**2).sum(axis=-1))
 
         clip_ratio = jnp.mean((kl_clip_value >= cfg.kl_bound).astype(jnp.float32))
         if cfg.actor_kl_clip_mode == "full":

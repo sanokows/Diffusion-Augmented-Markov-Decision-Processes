@@ -21,3 +21,6 @@ python -m src.jaxrl.reppo_DiffPPO env.name=WalkerWalk hyperparameters.num_eval=1
 
 ### WalkerRun DiffPPO
 python -m src.jaxrl.reppo_DiffPPO env.name=WalkerRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=16 hyperparameters.lr=1e-4 hyperparameters.entropy_coef=0.004 hyperparameters.update_entropy_lagrangian=true  hyperparameters.num_envs=1024 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true
+
+### soft reward normalization
+python -m src.jaxrl.reppo_DiffPPO env.name=WalkerRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.num_mini_batches=16 hyperparameters.lr=1e-3 hyperparameters.temperature_lr=3e-4  hyperparameters.entropy_coef=0.004 hyperparameters.update_entropy_lagrangian=true  hyperparameters.num_envs=1024 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.normalize_soft_reward=true hyperparameters.use_categorical_value=true hyperparameters.hl_gauss=false

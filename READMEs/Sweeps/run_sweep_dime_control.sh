@@ -64,8 +64,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.lr=3e-4 \
         hyperparameters.temperature_lagragian_lr=1e-4 \
         env=mjx_dmc \
-        seed=0 \
-        num_trials=1 \
+        seed=1 \
+        num_trials=4 \
         experiment_overrides=mjx_dmc_large_data &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))

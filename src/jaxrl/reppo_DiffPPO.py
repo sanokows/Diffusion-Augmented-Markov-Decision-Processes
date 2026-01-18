@@ -39,7 +39,12 @@ from src.networks.jax_models_DMERL import (
     sde_integrator,
 )
 from src.jaxrl import utils
-from src.jaxrl.normalization import DictNormalizationState, DictNormalizer
+from src.jaxrl.normalization import (
+    DictNormalizationState,
+    DictNormalizer,
+    NormalizationState,
+    Normalizer,
+)
 from src.jaxrl.reppo_DMERL_new import randomize_env_steps
 
 
@@ -123,6 +128,7 @@ class PPOConfig(struct.PyTreeNode):
     normalize_advantages: bool
     normalize_env: bool
     anneal_lr: bool
+    normalize_soft_reward: bool = False
     diffusion: DictConfig | dict | None = None
     num_eval: int = 25
     max_episode_steps: int = 1000
@@ -189,6 +195,7 @@ class PPOTrainState(nnx.TrainState):
     last_critic_obs: jax.Array
     normalization_state: DictNormalizationState | None = None
     critic_normalization_state: DictNormalizationState | None = None
+    reward_normalization_state: NormalizationState | None = None
 
 
 class PPONetworks(nnx.Module):
@@ -364,6 +371,7 @@ class ReppoPPOTrainer:
         )
         self.num_minibatches = cfg.num_mini_batches * self.diffusion_steps
         self.normalizer = DictNormalizer()
+        self.reward_normalizer = Normalizer()
         self.num_train_steps = cfg.total_time_steps // int(cfg.num_steps * cfg.num_envs * cfg.num_collection_step_factor) 
         self.eval_interval = int(self.num_train_steps // cfg.num_eval)
 
@@ -584,6 +592,12 @@ class ReppoPPOTrainer:
             else:
                 norm_state = None
                 critic_norm_state = None
+            if cfg.normalize_soft_reward:
+                reward_norm_state = self.reward_normalizer.init(
+                    jnp.zeros((cfg.num_envs,), dtype=jnp.float32)
+                )
+            else:
+                reward_norm_state = None
 
             return PPOTrainState.create(
                 iteration=0,
@@ -596,6 +610,7 @@ class ReppoPPOTrainer:
                 last_critic_obs=critic_obs,
                 normalization_state=norm_state,
                 critic_normalization_state=critic_norm_state,
+                reward_normalization_state=reward_norm_state,
             )
 
         return init
@@ -645,6 +660,16 @@ class ReppoPPOTrainer:
                 soft_reward = (
                     reward
                     - log_ratio.squeeze() * entropy_scale
+                )
+            if cfg.normalize_soft_reward:
+                reward_norm_state = self.reward_normalizer.update(
+                    train_state.reward_normalization_state, soft_reward
+                )
+                soft_reward = self.reward_normalizer.normalize(
+                    reward_norm_state, soft_reward
+                )
+                train_state = train_state.replace(
+                    reward_normalization_state=reward_norm_state
                 )
             next_features = (
                 jax.lax.stop_gradient(
