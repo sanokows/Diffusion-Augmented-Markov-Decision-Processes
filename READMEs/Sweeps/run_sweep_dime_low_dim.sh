@@ -3,8 +3,8 @@
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
     AcrobotSwingup
-    AcrobotSwingupSparse
     PendulumSwingup
+    CartpoleSwingupSparse
     AcrobotSwingupSparse
     # Add more env names here
 )
