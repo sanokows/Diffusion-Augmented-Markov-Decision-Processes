@@ -18,8 +18,8 @@ hyperparameters:
   lr: 1e-3
   temperature_lr: 3e-4
   lagrangian_lr: 3e-4
-  ent_target_mult: 4
-  tanh_transform: true
+  ent_target_mult: 1.7
+  tanh_transform: false
   gamma: 0.999
   lmbda: 0.98
   diffusion:
