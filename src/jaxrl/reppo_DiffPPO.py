@@ -147,6 +147,7 @@ class PPOConfig(struct.PyTreeNode):
     hl_gauss: bool = False
     aux_loss_mult: float = 0.0
     action_clip_value: float = 1.0
+    tanh_transform: bool = False
     kl_start: float = 0.1
     kl_bound: float = 1.0
     kl_action_rep: int = 1
@@ -297,6 +298,7 @@ class PPONetworks(nnx.Module):
             kl_start=require(cfg, "kl_start"),
             ent_start=require(cfg, "ent_start"),
             action_clip_value=require(cfg, "action_clip_value"),
+            tanh_transform=require(cfg, "tanh_transform"),
             use_temp_lagrangian_mlp=require(cfg, "use_temp_lagrangian_mlp"),
             temp_lagrangian_hidden=require(cfg, "temp_lagrangian_hidden"),
             rngs=rngs,

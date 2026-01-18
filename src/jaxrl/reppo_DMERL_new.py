@@ -188,6 +188,7 @@ class ReppoConfig(struct.PyTreeNode):
     use_temp_lagrangian_post_adam_ema: bool = False
     temp_lagrangian_ema_decay: float = 0.99
     action_clip_value: float = 1.0
+    tanh_transform: bool = False
     use_temp_lagrangian_mlp: bool = False
     temp_lagrangian_hidden: int = 32
     env_action_clip_value: float = 1.0
@@ -626,6 +627,7 @@ class ReppoDMERLTrainer:
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
                 action_clip_value=cfg.action_clip_value,
+                tanh_transform=cfg.tanh_transform,
                 use_temp_lagrangian_mlp=cfg.use_temp_lagrangian_mlp,
                 temp_lagrangian_hidden=cfg.temp_lagrangian_hidden,
                 rngs=nnx.Rngs(actor_key),
@@ -639,6 +641,7 @@ class ReppoDMERLTrainer:
                 ent_start=cfg.ent_start,
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
+                tanh_transform=cfg.tanh_transform,
                 use_temp_lagrangian_mlp=cfg.use_temp_lagrangian_mlp,
                 temp_lagrangian_hidden=cfg.temp_lagrangian_hidden,
                 rngs=nnx.Rngs(actor_target_key),

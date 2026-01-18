@@ -1164,14 +1164,9 @@ class DiffusionModel(nnx.Module):
 
         # Initialize dt parameters
         if per_step_dt:
-            if (not learn_friction) and learn_dt and per_dim_friction:
-                dt_schedule_vals = dt_schedule(jnp.arange(diff_steps))[:, None]
-                dt_init = jnp.ones((diff_steps, action_dim)) * dt * dt_schedule_vals
-                self.dt = nnx.Param(inverse_softplus(dt_init))
-            else:
-                self.dt = nnx.Param(
-                    inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps)))
-                )
+            self.dt = nnx.Param(
+                inverse_softplus(jnp.ones(diff_steps) * dt * dt_schedule(jnp.arange(diff_steps)))
+            )
         else:
             if (not learn_friction) and learn_dt and per_dim_friction:
                 self.dt = nnx.Param(jnp.ones(action_dim) * inverse_softplus(dt))
@@ -1399,12 +1394,14 @@ class DMERLActor(nnx.Module):
         kl_start: float = 0.1,
         ent_start: float = 0.1,
         action_clip_value: float = 1.0,
+        tanh_transform: bool = False,
         use_temp_lagrangian_mlp: bool = False,
         temp_lagrangian_hidden: int = 32,
         *,
         rngs: nnx.Rngs | None = None,
     ):
         self.action_clip_value = action_clip_value
+        self.tanh_transform = tanh_transform
         self.action_dim = action_dim
         self.observation_dim = observation_dim
         self.diffusion_model = diffusion_model
@@ -1469,11 +1466,11 @@ class DMERLActor(nnx.Module):
     
     def _eval_log_prob(self, current_x, step, obs, actions):
         out_dict = evaluate_one_step_log_prob(self.diffusion_model, current_x, step, obs, actions, stop_grad=False)
-        #gen_log_prob = out_dict["gen_log_prob"]
-        #is_last_step = self.diff_steps - 1 == step
-        #gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(actions).sum(), gen_log_prob)
-        #gen_log_prob_new = gen_log_prob_new
-        #out_dict["gen_log_prob"] = gen_log_prob_new
+        if(self.tanh_transform):
+            gen_log_prob = out_dict["gen_log_prob"]
+            is_last_step = self.diff_steps - 1 == step
+            gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(actions).sum(), gen_log_prob)
+            out_dict["gen_log_prob"] = gen_log_prob_new
         return out_dict
     
     def vmap_eval_log_prob(self, obs, actions):
@@ -1490,9 +1487,11 @@ class DMERLActor(nnx.Module):
         out_dict, key = integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
         x_new = out_dict["x_new"]
         gen_log_prob = out_dict["gen_log_prob"]
-        is_last_step = self.diff_steps - 1 == step
-        #gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
-        gen_log_prob_new = gen_log_prob
+        if(self.tanh_transform):
+            is_last_step = self.diff_steps - 1 == step
+            gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+        else:
+            gen_log_prob_new = gen_log_prob
         # Clip logits so tanh(action) always respects action_clip_value on the final step.
         # clip_limit = jnp.arctanh(jnp.asarray(self.action_clip_value, dtype=x_new.dtype))
         # clipped_x_new = jnp.clip(x_new, -clip_limit, clip_limit)

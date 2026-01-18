@@ -40,6 +40,7 @@ hyperparameters:
   num_eval: 20
   max_episode_steps: 1000
   env_action_clip_value: 1.0
+  tanh_transform: false
 
   # critic architecture settings (need to be increased for MJX humanoid)
   critic_hidden_dim: 512
