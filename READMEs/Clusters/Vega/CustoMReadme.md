@@ -17,4 +17,8 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_dime_low_dim.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_control.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_low_dim.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_WPO_hyper.sh
+
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_hard_envs.sh
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_hard_envs.sh
+
 ```
