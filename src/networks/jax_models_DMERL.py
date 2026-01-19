@@ -1485,19 +1485,21 @@ class DMERLActor(nnx.Module):
 
     def _sample_next_step(self, key, current_x, step, obs):
         out_dict, key = integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
-        x_new = out_dict["x_new"]
-        gen_log_prob = out_dict["gen_log_prob"]
+
         if(self.tanh_transform):
+            x_new = out_dict["x_new"]
+            gen_log_prob = out_dict["gen_log_prob"]
             is_last_step = self.diff_steps - 1 == step
             gen_log_prob_new = jnp.where(is_last_step, gen_log_prob - distrax.Tanh().forward_log_det_jacobian(x_new).sum(), gen_log_prob)
+            out_dict["x_new"] = x_new
+            out_dict["gen_log_prob"] = gen_log_prob_new
         else:
-            gen_log_prob_new = gen_log_prob
+            pass
         # Clip logits so tanh(action) always respects action_clip_value on the final step.
         # clip_limit = jnp.arctanh(jnp.asarray(self.action_clip_value, dtype=x_new.dtype))
         # clipped_x_new = jnp.clip(x_new, -clip_limit, clip_limit)
         # out_dict["x_new"] = jnp.where(is_last_step, clipped_x_new, x_new)
-        out_dict["x_new"] = x_new
-        out_dict["gen_log_prob"] = gen_log_prob_new
+
 
         return out_dict, key
     

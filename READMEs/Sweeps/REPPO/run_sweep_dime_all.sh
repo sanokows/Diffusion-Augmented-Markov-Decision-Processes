@@ -49,7 +49,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         wait "${GPU_PIDS[$GPU_ID]}"
     fi
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
-    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_dime \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo \
         env.name="$ENV_NAME" \
         wandb.project_suffix="_FR_19_01" \
         hyperparameters.num_eval=50 \
