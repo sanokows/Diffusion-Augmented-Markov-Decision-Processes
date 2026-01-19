@@ -249,7 +249,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
 
             target_entropy_loss = (
                 actor_model.temperature()
-                * jax.lax.stop_gradient(target_entropy)
+                * jax.lax.stop_gradient(target_entropy) ### should ther ebe a stop grad for WPO?
             ).mean()
             lagrangian_loss = (
                 -lagrangian
