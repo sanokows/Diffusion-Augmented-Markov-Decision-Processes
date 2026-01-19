@@ -203,6 +203,7 @@ class ReppoConfig(struct.PyTreeNode):
     hl_gauss: bool = False
     kl_bound: float = 1.0
     aux_loss_mult: float = 0.0
+    aux_loss_alpha: float = 0.9
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
     use_augmented_lagrangian_dual: bool = False

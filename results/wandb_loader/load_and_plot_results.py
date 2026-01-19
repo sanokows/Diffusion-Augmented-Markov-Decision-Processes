@@ -13,19 +13,20 @@ import wandb
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]  # ["frame", "_step", "step", "global_step", "time_step", "time_steps"]
 ENV_NAMES = [
-    "PendulumSwingup",
     "AcrobotSwingup",
-    "AcrobotSwingupSparse",
-    "BallInCup",
-    "CartpoleBalance",
-    "CartpoleBalanceSparse",
-    "CartpoleSwingup",
+    "PendulumSwingup",
     "CartpoleSwingupSparse",
-    "CheetahRun",
-    "FingerSpin",
-    "FingerTurnEasy",
-    "FingerTurnHard",
+    "AcrobotSwingupSparse",
+     "CheetahRun",
+    "FishSwim",
+    "HopperHop",
+    "HopperStand",
+    "WalkerRun",
+    "WalkerStand",
+    "WalkerWalk",
+    "FingerSpin"   
 ]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -39,7 +40,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional W&B project name. If omitted, loops over ENV_NAMES using "
-            "dime_<env_name>_FinalRuns."
+            "dime_<env_name>_FR_16_01."
         ),
     )
     parser.add_argument("--entity", default="sanokows", help="W&B entity (team/user).")
@@ -64,6 +65,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-name-contains",
         default=None,
+        help="Optional substring to filter runs by name.",
+    )
+    parser.add_argument(
+        "--run-name",
+        default="reppo-dime",
         help="Optional substring to filter runs by name.",
     )
     parser.add_argument(
@@ -124,13 +130,14 @@ def main() -> int:
     args = parse_args()
     api = wandb.Api()
     if args.project is None:
-        projects = [f"dime_{env_name}_FinalRuns" for env_name in ENV_NAMES]
+        projects = [f"dime_{env_name}_FR_16_01" for env_name in ENV_NAMES]
     else:
         projects = [args.project]
 
     figures_dir = os.path.join("results", "wandb_loader", "Figures")
     os.makedirs(figures_dir, exist_ok=True)
     filters = {"state": args.state} if args.state else {}
+    overall_records = []
 
     for project in projects:
         project_path = resolve_project_path(api, args.entity, project)
@@ -152,8 +159,11 @@ def main() -> int:
         skipped = 0
 
         for run in runs:
-            print(run.name or run.id)
-            if args.run_name_contains and args.run_name_contains not in run.name:
+            run_name = run.name or run.id
+            print(run_name)
+            if args.run_name and args.run_name not in run_name:
+                continue
+            if args.run_name_contains and args.run_name_contains not in run_name:
                 continue
 
             df = load_run_history(run, args.y_key, args.x_key)
@@ -174,6 +184,7 @@ def main() -> int:
             continue
 
         data = pd.concat(records, ignore_index=True)
+        overall_records.append(data)
         grouped = data.groupby(["group", "step"])["value"]
         mean = grouped.mean().reset_index()
         stderr = grouped.sem().reset_index().rename(columns={"value": "stderr"})
@@ -209,6 +220,34 @@ def main() -> int:
 
         if skipped:
             print(f"Skipped {skipped} runs without usable data in {project}.")
+
+    if len(projects) > 1 and overall_records:
+        overall_data = pd.concat(overall_records, ignore_index=True)
+        overall_grouped = overall_data.groupby("step")["value"]
+        overall_mean = overall_grouped.mean().reset_index()
+        overall_stderr = overall_grouped.sem().reset_index().rename(columns={"value": "stderr"})
+        overall_merged = overall_mean.merge(overall_stderr, on="step", how="left")
+
+        plt.figure(figsize=(9, 5))
+        overall_merged = overall_merged.sort_values("step")
+        plt.plot(overall_merged["step"], overall_merged["value"], label="All environments")
+        if overall_merged["stderr"].notna().any():
+            plt.fill_between(
+                overall_merged["step"],
+                overall_merged["value"] - overall_merged["stderr"],
+                overall_merged["value"] + overall_merged["stderr"],
+                alpha=0.2,
+            )
+
+        plt.xlabel("env calls (step)")
+        plt.ylabel(args.y_key)
+        plt.title(f"All environments: {args.y_key}")
+        plt.legend(loc="best", fontsize=8)
+        plt.tight_layout()
+
+        output_path = os.path.join(figures_dir, "all_envs_avg_eval_return.png")
+        plt.savefig(output_path, dpi=200)
+        print(f"Saved plot to {output_path}")
     return 0
 
 

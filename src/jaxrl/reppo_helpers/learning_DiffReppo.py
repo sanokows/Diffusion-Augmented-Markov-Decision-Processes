@@ -124,8 +124,11 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             (1 - minibatch.done.reshape(-1, 1)) * aux_next_diff_loss,
             axis=-1,
         )
-        alpha = 0.9
-        aux_loss = alpha*jnp.sum(masked_aux_loss)/jnp.maximum(jnp.sum(aux_weight), 1.0) + (1-alpha)*jnp.mean(aux_next_diff_loss)
+        alpha = cfg.aux_loss_alpha
+        aux_loss = (
+            alpha * jnp.sum(masked_aux_loss) / jnp.maximum(jnp.sum(aux_weight), 1.0)
+            + (1 - alpha) * jnp.mean(aux_next_diff_loss)
+        )
         critic_loss = optax.squared_error(value, target_vals)
         critic_loss = jnp.mean(critic_loss)
         loss = jnp.mean(

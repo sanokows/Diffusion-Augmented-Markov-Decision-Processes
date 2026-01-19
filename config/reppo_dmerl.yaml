@@ -99,6 +99,7 @@ hyperparameters:
   lagrangian_lr_mult: 1.0
   ## auxiliary loss settings
   aux_loss_mult: 1.0
+  aux_loss_alpha: 0.9
 
   # DIME diffusion settings
   diffusion:
