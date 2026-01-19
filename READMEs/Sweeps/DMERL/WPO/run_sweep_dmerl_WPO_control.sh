@@ -54,9 +54,9 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.diffusion.diff_steps=8 \
         hyperparameters.train_mode=WPO \
         env=mjx_dmc \
-        num_trials=1 \
+        num_trials=5 \
         seed=0 \
-        experiment_overrides=mjx_dmc_large_data_dmerl_WPO_control &
+        experiment_overrides=mjx_dmc_large_data_dmerl_WPO_hard_envs.yaml &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

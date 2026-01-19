@@ -51,8 +51,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.train_mode=WPO \
         env=mjx_dmc \
         seed=0 \
-        num_trials=1 \
-        experiment_overrides=mjx_dmc_large_data_dmerl_WPO_control &
+        num_trials=5 \
+        experiment_overrides=mjx_dmc_large_data_dmerl_WPO_hard_envs.yaml &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

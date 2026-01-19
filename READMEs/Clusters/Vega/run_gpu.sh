@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=gpu
 #SBATCH --mem=4GB
-#SBATCH --account=d2023d12-053-users
+#SBATCH --account=d2025d09-019-users
 #SBATCH --signal=INT@60
 
 conda activate REPPO

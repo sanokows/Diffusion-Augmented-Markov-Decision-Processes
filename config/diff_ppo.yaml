@@ -55,7 +55,8 @@ hyperparameters:
   vmax: ${env.vmax}
   num_bins: 151
   hl_gauss: True
-  aux_loss_mult: 1.0
+  aux_loss_mult: 0.15
+  aux_loss_alpha: 0.95
 
   diffusion:
     name: "dis"

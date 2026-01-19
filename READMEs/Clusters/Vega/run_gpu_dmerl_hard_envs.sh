@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=gpu
 #SBATCH --mem=16GB
-#SBATCH --account=d2023d12-053-users
+#SBATCH --account=d2025d09-019-users
 #SBATCH --signal=INT@60
 
 # conda activate REPPO
@@ -18,5 +18,5 @@ which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/run_sweep_dmerl_hard_envs.sh
-sh ./READMEs/Sweeps/run_sweep_dmerl_hard_envs.sh
+chmod +x ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_hard_envs.sh
+sh ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_hard_envs.sh

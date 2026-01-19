@@ -146,6 +146,7 @@ class PPOConfig(struct.PyTreeNode):
     num_bins: int = 51
     hl_gauss: bool = False
     aux_loss_mult: float = 0.0
+    aux_loss_alpha: float = 0.9
     action_clip_value: float = 1.0
     tanh_transform: bool = False
     kl_start: float = 0.1
@@ -853,7 +854,7 @@ class ReppoPPOTrainer:
                             * aux_next_diff_loss,
                             axis=-1,
                         )
-                        alpha = 0.1
+                        alpha = cfg.aux_loss_alpha
                         aux_loss = (
                             alpha
                             * jnp.sum(masked_aux_loss)
@@ -903,14 +904,16 @@ class ReppoPPOTrainer:
                     )
                     if (cfg.normalize_advantages):
                         mean = jax.lax.stop_gradient(jnp.mean(unnormed_advantages))
-                        sdt = jax.lax.stop_gradient(jnp.std(unnormed_advantages)) #+ e-8
+                        sdt = jax.lax.stop_gradient(jnp.std(unnormed_advantages)) + 1e-8
                         adv_base = (unnormed_advantages - mean) / (
                             sdt
                         )
                     else:
-                        adv_base = unnormed_advantages
-                        mean = 0.
-                        sdt = 1.
+                        mean = jax.lax.stop_gradient(jnp.mean(unnormed_advantages))
+                        sdt = 1
+                        adv_base = (unnormed_advantages - mean) / (
+                            sdt
+                        )
 
                     adv_base = jax.lax.stop_gradient(adv_base)  ### when forward process is learned things have to be adapted
 
