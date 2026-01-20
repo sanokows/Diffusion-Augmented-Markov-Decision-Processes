@@ -2,10 +2,6 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    CheetahRun
-    FishSwim
-    HopperHop
-    HopperStand
     WalkerRun
     WalkerStand
     WalkerWalk
@@ -48,7 +44,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_19_01" \
+        wandb.project_suffix="_FR_20_01" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \

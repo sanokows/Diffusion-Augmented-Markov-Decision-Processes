@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="dime_low_dim"
+#SBATCH --job-name="WPO_control_2"
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
@@ -18,5 +18,5 @@ which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/run_sweep_dmerl_WPO_hyper.sh
-sh ./READMEs/Sweeps/run_sweep_dmerl_WPO_hyper.sh
+chmod +x ./READMEs/Sweeps/DMERL/WPO/run_sweep_dmerl_WPO_control_1.sh
+sh ./READMEs/Sweeps/DMERL/WPO/run_sweep_dmerl_WPO_control_1.sh

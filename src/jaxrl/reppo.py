@@ -12,6 +12,7 @@ import optuna
 import plotly.graph_objs as go
 from flax import nnx, struct
 from flax.struct import PyTreeNode
+from flax.traverse_util import flatten_dict, unflatten_dict
 from gymnax.environments.environment import Environment, EnvParams, EnvState
 from jax import numpy as jnp
 from jax import tree_util
@@ -124,6 +125,10 @@ class ReppoConfig(struct.PyTreeNode):
     train_mode: str = "reparam"
     disable_wpo_fisher_preconditioning: bool = False
     disable_temperature: bool = False
+    temperature_lr: float = 3e-4
+    temperature_lr_mult: float = 1.0
+    lagrangian_lr: float = 3e-4
+    lagrangian_lr_mult: float = 1.0
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -278,32 +283,69 @@ def make_init(
             num_updates = num_iterations * cfg.num_epochs * cfg.num_mini_batches
             lr = optax.linear_schedule(cfg.lr, 0, num_updates)
 
+        def _scale_lr(lr_val, mult: float):
+            if callable(lr_val):
+                return lambda step: lr_val(step) * mult
+            return lr_val * mult
+
+        def _resolve_special_lr(lr_val, special_lr, mult: float):
+            if special_lr is not None:
+                return special_lr
+            return _scale_lr(lr_val, mult)
+
+        def _label_actor_params(params):
+            flat = flatten_dict(params)
+            labels = {}
+            for k in flat.keys():
+                leaf_name = k[-1]
+                if "temperature" in leaf_name:
+                    labels[k] = "temperature"
+                elif "lagrangian" in leaf_name:
+                    labels[k] = "lagrangian"
+                else:
+                    labels[k] = "default"
+            return unflatten_dict(labels)
+
+        temperature_lr = _resolve_special_lr(
+            lr, cfg.temperature_lr, cfg.temperature_lr_mult
+        )
+        lagrangian_lr = _resolve_special_lr(
+            lr, cfg.lagrangian_lr, cfg.lagrangian_lr_mult
+        )
+        actor_param_tree = nnx.to_pure_dict(nnx.state(actor_networks))
+        actor_labels = _label_actor_params(actor_param_tree)
+        actor_optimizer = optax.multi_transform(
+            {
+                "default": optax.adam(lr),
+                "temperature": optax.adam(temperature_lr),
+                "lagrangian": optax.adam(lagrangian_lr),
+            },
+            actor_labels,
+        )
+        critic_optimizer = optax.adam(lr)
         if cfg.max_grad_norm is not None:
             actor_optimizer = optax.chain(
                 optax.clip_by_global_norm(cfg.max_grad_norm),
-                optax.adam(lr)
+                actor_optimizer,
             )
             critic_optimizer = optax.chain(
                 optax.clip_by_global_norm(cfg.max_grad_norm),
-                optax.adam(lr)
+                critic_optimizer,
             )
-        else:
-            actor_optimizer = optax.adam(lr)
-            critic_optimizer = optax.adam(lr)
 
         actor_trainstate = nnx.TrainState.create(
             graphdef=nnx.graphdef(actor_networks),
-            params=nnx.state(actor_networks),
+            params=actor_param_tree,
             tx=actor_optimizer,
         )
         actor_target_trainstate = nnx.TrainState.create(
             graphdef=nnx.graphdef(actor_target_networks),
-            params=nnx.state(actor_target_networks),
+            params=nnx.to_pure_dict(nnx.state(actor_target_networks)),
             tx=optax.set_to_zero(),
         )
         critic_trainstate = nnx.TrainState.create(
             graphdef=nnx.graphdef(critic_networks),
-            params=nnx.state(critic_networks),
+            params=nnx.to_pure_dict(nnx.state(critic_networks)),
             tx=critic_optimizer,
         )
 
