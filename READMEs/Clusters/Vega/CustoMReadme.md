@@ -21,4 +21,7 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_WPO_hyper.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_hard_envs.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_hard_envs.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_reppo_all.sh
+
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_control_1.sh
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_control_2.sh
 ```
