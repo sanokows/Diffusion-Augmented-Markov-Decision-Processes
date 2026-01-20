@@ -24,6 +24,8 @@ python -m src.jaxrl.reppo env.name=AcrobotSwingupSparse env=mjx_dmc experiment_o
 ### AcrobotSwingup
 python -m src.jaxrl.reppo env.name=AcrobotSwingup env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.ent_target_mult=0.5
 
+python -m src.jaxrl.reppo env.name=AcrobotSwingup env=mjx_dmc experiment_overrides=mjx_dmc_large_data_WPO hyperparameters.train_mode=WPO hyperparameters.lr=6e-4 wandb.project_suffix=_WPO_test hyperparameters.disable_temperature=true
+
 
 
 Easy Tasks:

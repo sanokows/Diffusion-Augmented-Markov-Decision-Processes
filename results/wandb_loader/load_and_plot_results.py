@@ -218,6 +218,38 @@ def main() -> int:
         plt.savefig(output_path, dpi=200)
         print(f"Saved plot to {output_path}")
 
+        per_run_grouped = data.groupby("step")["value"]
+        per_run_mean = per_run_grouped.mean().reset_index()
+        per_run_std = per_run_grouped.std().reset_index().rename(columns={"value": "std"})
+        per_run_merged = per_run_mean.merge(per_run_std, on="step", how="left")
+
+        plt.figure(figsize=(9, 5))
+        for run_id, run_df in data.groupby("run_id"):
+            run_df = run_df.sort_values("step")
+            plt.plot(run_df["step"], run_df["value"], alpha=0.25, linewidth=1)
+
+        per_run_merged = per_run_merged.sort_values("step")
+        plt.plot(per_run_merged["step"], per_run_merged["value"], color="black", label="Mean")
+        if per_run_merged["std"].notna().any():
+            plt.fill_between(
+                per_run_merged["step"],
+                per_run_merged["value"] - per_run_merged["std"],
+                per_run_merged["value"] + per_run_merged["std"],
+                color="black",
+                alpha=0.15,
+                label="Std",
+            )
+
+        plt.xlabel("env calls (step)")
+        plt.ylabel(args.y_key)
+        plt.title(f"{project}: {args.y_key} (per-run + mean/std)")
+        plt.legend(loc="best", fontsize=8)
+        plt.tight_layout()
+
+        output_path = os.path.join(figures_dir, f"{project}_runs_avg_std.png")
+        plt.savefig(output_path, dpi=200)
+        print(f"Saved plot to {output_path}")
+
         if skipped:
             print(f"Skipped {skipped} runs without usable data in {project}.")
 

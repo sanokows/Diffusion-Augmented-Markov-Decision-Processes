@@ -123,6 +123,7 @@ class ReppoConfig(struct.PyTreeNode):
     use_lax_scan: bool = True
     train_mode: str = "reparam"
     disable_wpo_fisher_preconditioning: bool = False
+    disable_temperature: bool = False
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -222,6 +223,7 @@ def make_init(
             use_skip=cfg.use_actor_skip,
             train_mode=cfg.train_mode,
             disable_wpo_fisher_preconditioning=cfg.disable_wpo_fisher_preconditioning,
+            disable_temperature=cfg.disable_temperature,
             rngs=nnx.Rngs(model_key),
         )
         actor_target_networks = SACActorNetworks(
@@ -235,6 +237,7 @@ def make_init(
             use_skip=cfg.use_actor_skip,
             train_mode=cfg.train_mode,
             disable_wpo_fisher_preconditioning=cfg.disable_wpo_fisher_preconditioning,
+            disable_temperature=cfg.disable_temperature,
             rngs=nnx.Rngs(model_key),
         )
 

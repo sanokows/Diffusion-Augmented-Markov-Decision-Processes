@@ -12,11 +12,11 @@ hyperparameters:
   vmax: 200
   num_bins: 301
   num_eval: 50
-  aux_loss_mult: 0.15 ## increase a bit??
+  aux_loss_mult: 0.015
   aux_loss_alpha: 0.95
   train_mode: "WPO"
   
-  lr: 1e-3
+  lr: 2e-3
   temperature_lr: 3e-4
   lagrangian_lr: 3e-4
   ent_target_mult: 2.2

@@ -528,6 +528,7 @@ class SACActorNetworks(nnx.Module):
         use_skip: bool = False,
         train_mode: str = "reparam",
         disable_wpo_fisher_preconditioning: bool = False,
+        disable_temperature: bool = False,
         *,
         rngs: nnx.Rngs,
     ):
@@ -544,9 +545,13 @@ class SACActorNetworks(nnx.Module):
             hidden_skip=use_skip,
             rngs=rngs,
         )
-        start_value = math.log(ent_start)
+        self.disable_temperature = disable_temperature
         kl_start_value = math.log(kl_start)
-        self.temperature_log_param = nnx.Param(jnp.ones(1) * start_value)
+        if self.disable_temperature:
+            self.temperature_log_param = None
+        else:
+            start_value = math.log(ent_start)
+            self.temperature_log_param = nnx.Param(jnp.ones(1) * start_value)
         self.lagrangian_log_param = nnx.Param(jnp.ones(1) * kl_start_value)
         self.min_std = min_std
         if train_mode not in ("reparam", "WPO"):
@@ -591,6 +596,8 @@ class SACActorNetworks(nnx.Module):
         return jnp.tanh(loc)
 
     def temperature(self) -> jax.Array:
+        if self.disable_temperature:
+            return jnp.zeros(1)
         return jnp.exp(self.temperature_log_param.value)
 
     def lagrangian(self) -> jax.Array:
