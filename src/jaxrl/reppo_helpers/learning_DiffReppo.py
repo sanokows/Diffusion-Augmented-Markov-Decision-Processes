@@ -98,11 +98,11 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         _, pred, pred_rew, pred_next_diff_state, value = critic_model.forward(
             minibatch.critic_obs, minibatch.action
         )
-        aux_loss = optax.squared_error(pred, minibatch.next_state_emb)
-        aux_next_diff_loss = optax.squared_error(
+        aux_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(pred, minibatch.next_state_emb)
+        aux_next_diff_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
             pred_next_diff_state, minibatch.next_emb
         )
-        aux_rew_loss = optax.squared_error(
+        aux_rew_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
             pred_rew, minibatch.reward.reshape(-1, 1)
         )
 
@@ -173,8 +173,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         )
         entropy_prior = actor_model.get_prior_entropy()
         log_prob_ratio = gen_log_prob - dest_log_prob
-        
-        value = critic_current_model.critic(minibatch.critic_obs, pred_action)
+    
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
@@ -240,6 +239,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
                     kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
                 )
             elif cfg.actor_kl_clip_mode == "value":
+                value = critic_current_model.critic(minibatch.critic_obs, pred_action)
                 actor_loss_val = (
                     log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
                     - value
@@ -320,45 +320,55 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             _, gen_log_prob, _ = actor_single.vmap_sample_next_step(obs_batched, key)
             return gen_log_prob.squeeze()
 
-        per_sample_grads = jax.vmap(
-            jax.grad(_single_gen_log_prob), in_axes=(None, 0, 0)
-        )(params, obs_for_actions, fisher_keys)
-        def _is_array_like(x):
-            return hasattr(x, "shape") and hasattr(x, "dtype")
+        if cfg.remove_fisher_precond:
+            fisher_actor_model = nnx.merge(updated_state.actor.graphdef, params)
+            actor_model = fisher_actor_model
+        else:
+            per_sample_grads = jax.vmap(
+                jax.grad(_single_gen_log_prob), in_axes=(None, 0, 0)
+            )(params, obs_for_actions, fisher_keys)
 
-        def _skip_fisher(path):
-            for key in path:
-                if isinstance(key, str) and ("temperature" in key or "lagrangian" in key):
-                    return True
-            return False
+            def _is_array_like(x):
+                return hasattr(x, "shape") and hasattr(x, "dtype")
 
-        def _precondition_delta(path, p, p0, g):
-            delta = p - p0
-            if _skip_fisher(path):
-                return delta
-            if not _is_array_like(p):
-                return delta
-            fisher_diag = jnp.mean(jnp.square(g), axis=0)
-            inv_fisher = 1.0 / (fisher_diag + 1e-8)
-            sg_inverse_fisher = jax.lax.stop_gradient(inv_fisher)
-            return delta * sg_inverse_fisher
+            def _skip_fisher(path):
+                for key in path:
+                    if isinstance(key, str) and ("temperature" in key or "lagrangian" in key):
+                        return True
+                return False
 
-        precond_delta = tree_util.tree_map_with_path(
-            _precondition_delta, params, stop_grad_params, per_sample_grads
-        )
+            def _precondition_delta(path, p, p0, g):
+                delta = p - p0
+                if _skip_fisher(path):
+                    return delta
+                if not _is_array_like(p):
+                    return delta
+                fisher_diag = jnp.mean(jnp.square(g), axis=0)
+                inv_fisher = 1.0 / (fisher_diag + 1e-8)
+                sg_inverse_fisher = jax.lax.stop_gradient(inv_fisher)
+                return delta * sg_inverse_fisher
 
-        def _apply_precond(p, p0, d):
-            return p0 + d
+            precond_delta = tree_util.tree_map_with_path(
+                _precondition_delta, params, stop_grad_params, per_sample_grads
+            )
 
-        params = jax.tree.map(_apply_precond, params, stop_grad_params, precond_delta)
-        actor_model = nnx.merge(updated_state.actor.graphdef, params)
+            def _apply_precond(p, p0, d):
+                return p0 + d
+
+            fisher_params = jax.tree.map(
+                _apply_precond, params, stop_grad_params, precond_delta
+            )
+            fisher_actor_model = nnx.merge(updated_state.actor.graphdef, fisher_params)
+            if cfg.kl_bound_fisher_precond:               
+                actor_model = fisher_actor_model
+            else:
+                actor_model = nnx.merge(updated_state.actor.graphdef, params)
+
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
         )
         entropy_prior = actor_model.get_prior_entropy()
         log_prob_ratio = gen_log_prob - dest_log_prob
-        
-        value = critic_current_model.critic(minibatch.critic_obs, pred_action)
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
@@ -372,7 +382,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         def single_log_probs(obs, act):
             batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
-            gen_lp, dest_lp = actor_model.vmap_eval_log_prob(batched_obs, act[None])
+            gen_lp, dest_lp = fisher_actor_model.vmap_eval_log_prob(batched_obs, act[None])
             return jnp.squeeze(gen_lp, axis=0), jnp.squeeze(dest_lp, axis=0)
 
         q_action_grad = jax.vmap(jax.grad(single_q, argnums=1))(
@@ -388,6 +398,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         if use_W2_kl:
             def target_single_log_probs(obs, act):
                 batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
+                ### should new states be sampled here?
                 gen_lp_old, _ = actor_target_model.vmap_eval_log_prob(batched_obs, act[None])
                 return jnp.squeeze(gen_lp_old, axis=0)
 
@@ -404,10 +415,14 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
             if cfg.reverse_kl:
                 def compute_single(k):
-                    return actor_model.rkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+                    return actor_model.rkl_div_one_step(
+                        k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False
+                    )
             else:
                 def compute_single(k):
-                    return actor_model.fkl_div_one_step(k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False)
+                    return actor_model.fkl_div_one_step(
+                        k, obs_for_actions, obs_for_target, actor_target_model, stop_grad=False
+                    )
             kl_log_ratios = jax.vmap(compute_single)(kl_keys)
             kl_log_ratios = kl_log_ratios.mean(axis=0)
             kl_clip_value = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
@@ -449,12 +464,13 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
                 kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
             )
         elif cfg.actor_kl_clip_mode == "value":
+            value = critic_current_model.critic(minibatch.critic_obs, pred_action)
             actor_loss_val = actor_Q_loss - value
         else:
             raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
         target_entropy = action_size_target + entropy
-        kl_constraint = kl - cfg.kl_bound
+        kl_constraint = kl_clip_value - cfg.kl_bound
 
         target_entropy_loss = (
             actor_model.temperature() * jax.lax.stop_gradient(target_entropy)

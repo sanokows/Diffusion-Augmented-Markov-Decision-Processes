@@ -78,6 +78,8 @@ hyperparameters:
   ## kl settings
   kl_start: 0.3
   kl_bound: 0.1 # switched to tighter bounds for MJX
+  kl_bound_fisher_precond: true
+  remove_fisher_precond: true
   reduce_kl: true
   reverse_kl: false # previous default "false"
   use_W2_kl: false

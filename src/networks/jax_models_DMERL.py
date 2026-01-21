@@ -1294,11 +1294,6 @@ class DiffusionModel(nnx.Module):
         eta = dt * sigma_square
         log_scale = 0.5 * jnp.log(2.0 * eta)
         scale = jnp.sqrt(2*eta)
-        # if self.train_mode == "WPO":
-        #     log_scale_sg = jax.lax.stop_gradient(log_scale)
-        #     log_scale = log_scale_sg + (log_scale - log_scale_sg) * 1/2
-        #     scale = jnp.exp(log_scale)
-        #     eta = jnp.exp(2*log_scale)/2
         return (scale, eta, log_scale) #if self.learn_friction else (jax.lax.stop_gradient(scale), jax.lax.stop_gradient(eta), jax.lax.stop_gradient(log_scale))
     
     def return_fisher_scaled_mean_and_scale(self, mu, eta, mode = "forward"):
@@ -1315,17 +1310,6 @@ class DiffusionModel(nnx.Module):
         drift = self.drift_fn(step, x)
         score = model(step, x, obs_dict)
         mu = drift + ode_coeff *score
-        if (self.train_mode == "WPO" and train_mode == True):
-            # if the model is the forward_model() t
-            # if(model == self.forward_model):
-            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="forward")
-            # elif(model == self.backward_model):
-            #     mu, scale, eta = self.return_fisher_scaled_mean_and_scale(mu, eta, mode="backward")
-            # else:
-            #     raise ValueError("model must be either forward_model or backward_model")
-            pass
-        else:
-            pass
         return mu, scale, eta
     
 
@@ -1356,15 +1340,6 @@ class DiffusionModel(nnx.Module):
             obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
             q_grad = obs_dict.get("q_grad") if self.langevin_param else None
             fwd_out = self.fwd_model(x, obs, step, q_grad=q_grad)
-            # if self.train_mode == "WPO":
-            #     friction = self.friction_fn(step, obs_dict)
-            #     dt = self.delta_t_fn(step)
-            #     sigma_square = 1.0 / friction
-            #     eta = dt * sigma_square
-            #     scale = jnp.sqrt(2.0 * eta)
-            #     varsg = jax.lax.stop_gradient(scale ** 2)
-            #     mean_sg = jax.lax.stop_gradient(fwd_out)
-            #     fwd_out = mean_sg + (fwd_out - mean_sg) * varsg
             return fwd_out
         else:
             return jnp.zeros_like(x)

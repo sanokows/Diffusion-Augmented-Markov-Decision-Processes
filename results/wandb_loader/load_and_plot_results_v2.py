@@ -165,6 +165,25 @@ def load_run_history(
     return df
 
 
+def pad_hopperstand_zero_tail(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    values = df["value"].to_numpy()
+    if values.size == 0:
+        return df, False
+    has_good = False
+    tail_start = None
+    for idx, val in enumerate(values):
+        if val > 1:
+            has_good = True
+        if has_good and val == 0 and (values[idx:] == 0).all():
+            tail_start = idx
+            break
+    if tail_start is None or tail_start == 0:
+        return df, False
+    df = df.copy()
+    df.loc[df.index[tail_start:], "value"] = values[tail_start - 1]
+    return df, True
+
+
 def infer_env_from_project(project: str) -> str:
     for env_name in ENV_NAMES:
         if env_name.lower() in project.lower():
@@ -215,6 +234,8 @@ def main() -> int:
 
             for run in runs:
                 raw_name = run.name or run.id
+                if project.endswith("_FR_19_01") and raw_name.strip().endswith("WPO"):
+                    continue
                 if args.run_name_exclude and any(substr in raw_name for substr in args.run_name_exclude):
                     continue
                 if args.run_name_contains and args.run_name_contains not in raw_name:
@@ -224,6 +245,14 @@ def main() -> int:
                 if df is None:
                     skipped += 1
                     continue
+                if env_name == "HopperStand":
+                    df, padded = pad_hopperstand_zero_tail(df)
+                    if padded:
+                        print(
+                            f"Warning: padded zero tail in HopperStand for run "
+                            f"{run.name or run.id}.",
+                            file=sys.stderr,
+                        )
 
                 method_name = clean_method_name(raw_name)
                 df["method"] = method_name

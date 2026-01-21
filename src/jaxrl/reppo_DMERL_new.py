@@ -202,6 +202,8 @@ class ReppoConfig(struct.PyTreeNode):
     num_bins: int = 250
     hl_gauss: bool = False
     kl_bound: float = 1.0
+    kl_bound_fisher_precond: bool = False
+    remove_fisher_precond: bool = False
     aux_loss_mult: float = 0.0
     aux_loss_alpha: float = 0.9
     update_kl_lagrangian: bool = True
