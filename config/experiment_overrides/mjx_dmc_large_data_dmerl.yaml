@@ -11,4 +11,4 @@ hyperparameters:
   vmin: -100
   vmax: 200
   num_bins: 301
-  num_eval: 100
+  num_eval: 50

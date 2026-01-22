@@ -346,6 +346,9 @@ class PPONetworks(nnx.Module):
     def actor_sample_step(self, obs_dict, key) -> tuple[jax.Array, jax.Array, jax.Array]:
         return self.actor_module.vmap_sample_next_step(obs_dict, key)
 
+    def actor_ode_sample_step(self, obs_dict, key) -> tuple[jax.Array, jax.Array, jax.Array]:
+        return self.actor_module.vmap_ode_sample_next_step(obs_dict, key)
+
 
 class ReppoPPOTrainer:
     """Trainer wrapper for PPO using the existing mjx implementation."""
@@ -397,6 +400,21 @@ class ReppoPPOTrainer:
             value = model.critic(obs)
             action, gen_log_prob, _ = model.actor_sample_step(obs, key)
             return action, dict(log_prob=gen_log_prob, value=value)
+
+        return policy
+    
+    def _make_eval_policy(self, train_state: PPOTrainState) -> Policy:
+        normalizer = self.normalizer
+
+        def policy(
+            key: PRNGKey, obs: jax.Array, state: struct.PyTreeNode = None
+        ) -> tuple[jax.Array, jax.Array]:
+            if train_state.normalization_state is not None:
+                obs = normalizer.normalize(train_state.normalization_state, obs)
+            model = nnx.merge(train_state.graphdef, train_state.params)
+            action, gen_log_prob, _ = model.actor_sample_step(obs, key)
+
+            return action, dict(log_prob=None, value=None)
 
         return policy
 
@@ -1116,7 +1134,7 @@ class ReppoPPOTrainer:
             xs=jax.random.split(train_key, eval_interval),
         )
         train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
-        policy = self._make_policy(train_state)
+        policy = self._make_eval_policy(train_state)
         eval_metrics = self.eval_fn(eval_key, policy)
         metrics = {
             "time_step": train_state.time_steps,

@@ -20,8 +20,8 @@ hyperparameters:
   reduce_kl: true
   reverse_kl: false
   temp_lagrangian_optim: "adam"
-  temp_lagrangian_adam_gamma1: 0.95
-  temp_lagrangian_adam_gamma2: 0.9995
+  temp_lagrangian_adam_gamma1: 0.9
+  temp_lagrangian_adam_gamma2: 0.999
   use_temp_lagrangian_ema_optim: false
   use_temp_lagrangian_post_adam_ema: false
   temp_lagrangian_ema_decay: 0.99

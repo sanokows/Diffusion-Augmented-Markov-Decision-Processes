@@ -20,7 +20,7 @@ python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=
 
 
 ### smaller batches less epochs
-python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_small_batch_data_dmerl_hard_envs
+python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs hyperparameters.log_torso_com=true
 
 python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_WPO_hard_envs
 
@@ -52,3 +52,9 @@ python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_ev
 
 ### run due to empty gpu
 CUDA_VISIBLE_DEVICES=2 python -m src.jaxrl.reppo_DMERL_new env.name=CartpoleSwingup wandb.project_suffix="_FinalRuns_DMERL_Reppo" \hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=6e-4 hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3 hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc num_trials=3 experiment_overrides=mjx_dmc_large_data_dmerl 
+
+
+#### rerun these runs and seeds
+finger spin seed 3 and 7?
+walkerrun 2 seeds
+walkerwalk 3 seeds

@@ -173,6 +173,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         )
         entropy_prior = actor_model.get_prior_entropy()
         log_prob_ratio = gen_log_prob - dest_log_prob
+        value = critic_current_model.critic(minibatch.critic_obs, pred_action)
     
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
@@ -239,7 +240,6 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
                     kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
                 )
             elif cfg.actor_kl_clip_mode == "value":
-                value = critic_current_model.critic(minibatch.critic_obs, pred_action)
                 actor_loss_val = (
                     log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
                     - value
@@ -463,9 +463,6 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
                 actor_Q_loss,
                 kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
             )
-        elif cfg.actor_kl_clip_mode == "value":
-            value = critic_current_model.critic(minibatch.critic_obs, pred_action)
-            actor_loss_val = actor_Q_loss - value
         else:
             raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 

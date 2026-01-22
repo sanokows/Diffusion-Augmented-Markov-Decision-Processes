@@ -217,6 +217,9 @@ class ReppoConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
+    log_torso_com: bool = False
+    log_torso_com_num_envs: int = 30
+    log_torso_com_stride: int = 1
     use_actor_norm: bool = True
     num_actor_layers: int = 2
     actor_min_std: float = 0.05
@@ -239,7 +242,6 @@ class ReppoConfig(struct.PyTreeNode):
     project_unit_ball: bool = True
     project_only_if_exceeds: bool = True
     use_current_critic_for_actor_samples: bool = True
-    log_torso_com: bool = False
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -363,7 +365,10 @@ class ReppoDMERLTrainer:
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
-        self.ode_eval_fn = self._make_ode_eval_fn()
+        if(cfg.train_mode == "WPO"):
+            self.eval_fn = self._make_sde_eval_fn(eval_policy=True)
+        else:
+            self.eval_fn = self._make_ode_eval_fn()
 
     def _init_step_sizes(self):
         self.mini_batch_size = (self.num_collection_steps * self.cfg.num_envs) // self.num_minibatches
@@ -384,6 +389,10 @@ class ReppoDMERLTrainer:
             "step_metrics/mini_batch_size_per_diff_step": self.minibatch_size_per_diff_step,
             "step_metrics/eval_interval": self.eval_interval,
         }
+        # print(log_data)
+        # print(762/7)
+        # print(self.cfg.num_eval)
+        # raise NotImplementedError("DMERL reward scaling not implemented.")
         wandb.log(_sectioned_wandb_log(log_data), step=0)
 
     def _prepare_env(self, env: Environment) -> Environment:
@@ -398,11 +407,17 @@ class ReppoDMERLTrainer:
         max_episode_steps = self.eval_env_steps
         reward_scale = self.reward_scale
         torso_id = self.torso_id
+        num_torso_envs = min(
+            int(getattr(self.cfg, "log_torso_com_num_envs", 4)),
+            env.num_envs,
+        )
+        torso_stride = max(1, int(getattr(self.cfg, "log_torso_com_stride", 1)))
 
         def sde_evaluation_fn(
             key: jax.random.PRNGKey,
             train_state: SACTrainState,
             norm_state: PyTreeNode | None,
+            eval_policy = False
         ):
             actor_model = nnx.merge(
                 train_state.actor.graphdef, train_state.actor.params
@@ -437,13 +452,41 @@ class ReppoDMERLTrainer:
             init_key = jax.random.split(init_key, env.num_envs)
             obs, critic_obs, env_state = env.reset(init_key, norm_state)
             key, env_key = jax.random.split(key)
-            final_carry, infos = jax.lax.scan(
-                f=step_env,
-                init=(key, env_state, obs, critic_obs),
-                xs=None,
-                length=max_episode_steps,
-            )
-            final_env_state = final_carry[1]
+            com_traj = None
+            torso_env_indices = None
+            if eval_policy and (torso_id is not None and num_torso_envs > 0):
+                key, sample_key = jax.random.split(key)
+                torso_env_indices = jax.random.choice(
+                    sample_key, env.num_envs, (num_torso_envs,), replace=False
+                )
+
+                def step_env_with_com(carry, _):
+                    key, env_state, obs, critic_obs = carry
+                    key, act_key, env_key = jax.random.split(key, 3)
+                    action, _ = sde_policy(act_key, obs, critic_obs)
+                    step_key = jax.random.split(env_key, env.num_envs)
+                    obs, critic_obs, env_state, reward, done, info = env.step(
+                        step_key, env_state, action
+                    )
+                    com = _get_torso_com_all(env_state, torso_id)
+                    sampled_com = com[torso_env_indices]
+                    return (key, env_state, obs, critic_obs), (info, sampled_com)
+
+                final_carry, (infos, com_traj) = jax.lax.scan(
+                    f=step_env_with_com,
+                    init=(key, env_state, obs, critic_obs),
+                    xs=None,
+                    length=max_episode_steps,
+                )
+                if torso_stride > 1:
+                    com_traj = com_traj[::torso_stride]
+            else:
+                final_carry, infos = jax.lax.scan(
+                    f=step_env,
+                    init=(key, env_state, obs, critic_obs),
+                    xs=None,
+                    length=max_episode_steps,
+                )
             metrics = {
                 "episode_return": infos["returned_episode_returns"].mean(
                     where=infos["returned_episode"]
@@ -460,8 +503,9 @@ class ReppoDMERLTrainer:
                 ),
                 "num_episodes": infos["returned_episode"].sum(),
             }
-            if torso_id is not None:
-                metrics["torso_com"] = _get_torso_com_all(final_env_state, torso_id)
+            if com_traj is not None:
+                metrics["torso_com_traj"] = com_traj
+                metrics["torso_com_env_indices"] = torso_env_indices
             return metrics
 
         return sde_evaluation_fn
@@ -471,6 +515,11 @@ class ReppoDMERLTrainer:
         max_episode_steps = self.eval_env_steps
         reward_scale = self.reward_scale
         torso_id = self.torso_id
+        num_torso_envs = min(
+            int(getattr(self.cfg, "log_torso_com_num_envs", 4)),
+            env.num_envs,
+        )
+        torso_stride = max(1, int(getattr(self.cfg, "log_torso_com_stride", 1)))
 
         def ode_evaluation_fn(
             key: jax.random.PRNGKey,
@@ -510,13 +559,41 @@ class ReppoDMERLTrainer:
             init_key = jax.random.split(init_key, env.num_envs)
             obs, critic_obs, env_state = env.reset(init_key, norm_state)
             key, env_key = jax.random.split(key)
-            final_carry, infos = jax.lax.scan(
-                f=step_env,
-                init=(key, env_state, obs, critic_obs),
-                xs=None,
-                length=max_episode_steps,
-            )
-            final_env_state = final_carry[1]
+            com_traj = None
+            torso_env_indices = None
+            if torso_id is not None and num_torso_envs > 0:
+                key, sample_key = jax.random.split(key)
+                torso_env_indices = jax.random.choice(
+                    sample_key, env.num_envs, (num_torso_envs,), replace=False
+                )
+
+                def step_env_with_com(carry, _):
+                    key, env_state, obs, critic_obs = carry
+                    key, act_key, env_key = jax.random.split(key, 3)
+                    action, _ = ode_policy(act_key, obs, critic_obs)
+                    step_key = jax.random.split(env_key, env.num_envs)
+                    obs, critic_obs, env_state, reward, done, info = env.step(
+                        step_key, env_state, action
+                    )
+                    com = _get_torso_com_all(env_state, torso_id)
+                    sampled_com = com[torso_env_indices]
+                    return (key, env_state, obs, critic_obs), (info, sampled_com)
+
+                final_carry, (infos, com_traj) = jax.lax.scan(
+                    f=step_env_with_com,
+                    init=(key, env_state, obs, critic_obs),
+                    xs=None,
+                    length=max_episode_steps,
+                )
+                if torso_stride > 1:
+                    com_traj = com_traj[::torso_stride]
+            else:
+                final_carry, infos = jax.lax.scan(
+                    f=step_env,
+                    init=(key, env_state, obs, critic_obs),
+                    xs=None,
+                    length=max_episode_steps,
+                )
             metrics = {
                 "episode_return": infos["returned_episode_returns"].mean(
                     where=infos["returned_episode"]
@@ -533,8 +610,9 @@ class ReppoDMERLTrainer:
                 ),
                 "num_episodes": infos["returned_episode"].sum(),
             }
-            if torso_id is not None:
-                metrics["torso_com"] = _get_torso_com_all(final_env_state, torso_id)
+            if com_traj is not None:
+                metrics["torso_com_traj"] = com_traj
+                metrics["torso_com_env_indices"] = torso_env_indices
             return metrics
 
         return ode_evaluation_fn
@@ -950,7 +1028,7 @@ class ReppoDMERLTrainer:
             last_env_state=last_env_state,
             last_obs=last_obs,
             last_critic_obs=last_critic_obs,
-            time_steps=train_state.time_steps + (self.num_collection_steps * cfg.num_envs)//self.cfg.diffusion.diff_steps,
+            time_steps=train_state.time_steps + (self.num_collection_steps * cfg.num_envs)/self.cfg.diffusion.diff_steps,
         )
         return transitions, train_state
 
@@ -1241,11 +1319,8 @@ class ReppoDMERLTrainer:
         train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
         norm_state = train_state.last_env_state if cfg.normalize_env else None
         eval_key, init_seed_key = jax.random.split(eval_key)
-        if cfg.train_mode == "WPO":
-            eval_metrics = self.sde_eval_fn(init_seed_key, train_state, norm_state)
-            #eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
-        else:
-            eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
+
+        eval_metrics = self.eval_fn(init_seed_key, train_state, norm_state)
 
         train_returns = {
             "train/episode_return": train_state.last_env_state.info[
@@ -1408,7 +1483,8 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         train_metrics = utils.filter_prefix("train", metrics)
         target_hist_counts = train_metrics.pop("train/target_value_hist_counts", None)
         target_hist_edges = train_metrics.pop("train/target_value_hist_edges", None)
-        torso_com = metrics.pop("eval/torso_com", None)
+        torso_com_traj = metrics.pop("eval/torso_com_traj", None)
+        torso_com_env_indices = metrics.pop("eval/torso_com_env_indices", None)
 
         log_data = {
             "eval/episode_return": episode_return,
@@ -1447,21 +1523,36 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             path = os.path.join(os.getcwd(), "target_value_histogram.png")
             fig.savefig(path)
             plt.close(fig)
-        if torso_com is not None:
-            com_np = np.asarray(torso_com)
-            if com_np.ndim == 3:
-                com_np = com_np[0]
-            if com_np.ndim == 2 and com_np.shape[1] >= 2:
-                xy = com_np[:, :2]
+        if torso_com_traj is not None:
+            # print("torso_com_traj shape:", torso_com_traj)
+            # jax.debug.print("torso_com_traj shape: {shape}", shape=torso_com_traj)
+            com_traj_np = np.asarray(torso_com_traj)
+            if com_traj_np.ndim == 4:
+                com_traj_np = com_traj_np[0]
+            if com_traj_np.ndim == 3 and com_traj_np.shape[-1] >= 2:
+                xy = com_traj_np
+                idx_np = None
+                if torso_com_env_indices is not None:
+                    idx_np = np.asarray(torso_com_env_indices)
+                    if idx_np.ndim > 1:
+                        idx_np = idx_np[0]
+                if idx_np is None or idx_np.shape[0] != xy.shape[1]:
+                    idx_np = np.arange(xy.shape[1])
                 fig, ax = plt.subplots(figsize=(6, 6))
-                colors = np.arange(xy.shape[0])
-                scatter = ax.scatter(xy[:, 0], xy[:, 1], c=colors, cmap="viridis")
-                ax.set_title("Torso COM (XY) per eval env")
+                for i in range(xy.shape[1]):
+                    ax.plot(
+                        xy[:, i, 0],
+                        xy[:, i, 2],
+                        alpha=0.8,
+                        label=f"env {int(idx_np[i])}",
+                    )
+                ax.set_title("Torso COM trajectory (XY)")
                 ax.set_xlabel("X")
                 ax.set_ylabel("Y")
-                fig.colorbar(scatter, ax=ax, label="Env index")
+                if xy.shape[1] <= 6:
+                    ax.legend()
                 fig.tight_layout()
-                log_data["figures/eval_torso_com_xy"] = wandb.Image(fig)
+                log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
                 plt.close(fig)
 
         # compute the effective learning rate of the actor and the critic

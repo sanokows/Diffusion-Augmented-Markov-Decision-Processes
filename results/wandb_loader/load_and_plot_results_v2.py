@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--state",
-        default=None,
+        default="finished",
         help="Optional run state filter (e.g., finished, running).",
     )
     parser.add_argument(
@@ -220,6 +220,7 @@ def main() -> int:
 
         for project in projects:
             project_path = resolve_project_path(api, args.entity, project)
+            run_name_counts = defaultdict(int)
             try:
                 runs = api.runs(project_path, filters=filters or None)
             except Exception as exc:
@@ -240,13 +241,18 @@ def main() -> int:
                     continue
                 if args.run_name_contains and args.run_name_contains not in raw_name:
                     continue
+                run_name_counts[raw_name] += 1
 
                 df = load_run_history(run, args.y_key, args.x_key, args.verbose)
                 if df is None:
                     skipped += 1
                     continue
+                print(f" {env_name} - {raw_name}: {df.shape}")
                 if env_name == "HopperStand":
+                    ### print the shape of df before and after padding
+                    print(f"Before padding: {df.shape}")
                     df, padded = pad_hopperstand_zero_tail(df)
+                    print(f"After padding: {df.shape}")
                     if padded:
                         print(
                             f"Warning: padded zero tail in HopperStand for run "
@@ -260,6 +266,16 @@ def main() -> int:
                 records.append(df)
                 method_run_counts[method_name].add(run.id)
                 all_methods.add(method_name)
+
+            duplicate_counts = {
+                name: count for name, count in run_name_counts.items() if count > 1
+            }
+            if duplicate_counts:
+                print(f"Duplicate run names in {project_path}:")
+                for name, count in sorted(duplicate_counts.items()):
+                    print(f"  {name}: {count}")
+            else:
+                print(f"No duplicate run names in {project_path}.")
 
         if not records:
             print(
