@@ -1243,6 +1243,7 @@ class ReppoDMERLTrainer:
         eval_key, init_seed_key = jax.random.split(eval_key)
         if cfg.train_mode == "WPO":
             eval_metrics = self.sde_eval_fn(init_seed_key, train_state, norm_state)
+            #eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
         else:
             eval_metrics = self.ode_eval_fn(init_seed_key, train_state, norm_state)
 
