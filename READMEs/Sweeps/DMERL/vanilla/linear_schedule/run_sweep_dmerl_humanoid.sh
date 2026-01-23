@@ -47,7 +47,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
-        env=mjx_dmc \
+        env=mjx_humanoid \
         num_trials=1 \
         seed=0 \
         experiment_overrides=mjx_dmc_large_data_dmerl_linear_schedule &

@@ -73,26 +73,35 @@ class MjxGymnaxWrapper(Environment):
         )
 
     def observation_space(self, params):
+        def _with_nan_token(box: Box) -> Box:
+            if not self.sanitize_nans:
+                return box
+            shape = box.shape
+            if isinstance(shape, int):
+                shape = (shape,)
+            new_shape = shape[:-1] + (shape[-1] + 1,)
+            return Box(low=box.low, high=box.high, shape=new_shape)
+
         if self.dict_obs:
-            return Box(
+            return _with_nan_token(Box(
                 low=-float("inf"),
                 high=float("inf"),
                 shape=self.env.observation_size["state"],
-            ), Box(
+            )), _with_nan_token(Box(
                 low=-float("inf"),
                 high=float("inf"),
                 shape=self.env.observation_size[self.dict_obs_key],
-            )
+            ))
         else:
-            return Box(
+            return _with_nan_token(Box(
                 low=-float("inf"),
                 high=float("inf"),
                 shape=(self.env.observation_size,),
-            ), Box(
+            )), _with_nan_token(Box(
                 low=-float("inf"),
                 high=float("inf"),
                 shape=(self.env.observation_size,),
-            )
+            ))
 
     @property
     def default_params(self) -> gymnax.EnvParams:
@@ -103,6 +112,11 @@ class MjxGymnaxWrapper(Environment):
         # state.info["truncation"] = 0.0
         obs = state.obs if not self.dict_obs else state.obs["state"]
         critic_obs = state.obs if not self.dict_obs else state.obs[self.dict_obs_key]
+        if self.sanitize_nans:
+            nan_token = self._nan_token(obs, jnp.array(False))
+            obs = jnp.concatenate([obs, nan_token], axis=-1)
+            critic_nan_token = self._nan_token(critic_obs, jnp.array(False))
+            critic_obs = jnp.concatenate([critic_obs, critic_nan_token], axis=-1)
         return obs, critic_obs, state
 
     def step(self, key, state, action):
@@ -132,6 +146,10 @@ class MjxGymnaxWrapper(Environment):
             avrg_reward = min_reward / 2 + max_reward / 2
             reward = jnp.where(jnp.isfinite(state.reward), state.reward, avrg_reward)
             done = (state.done > 0.5) | has_nan
+            nan_token = self._nan_token(obs, has_nan)
+            obs = jnp.concatenate([obs, nan_token], axis=-1)
+            critic_nan_token = self._nan_token(critic_obs, has_nan)
+            critic_obs = jnp.concatenate([critic_obs, critic_nan_token], axis=-1)
             return (
                 obs,
                 critic_obs,
@@ -150,6 +168,13 @@ class MjxGymnaxWrapper(Environment):
             state.done > 0.5,
             {},
         )
+
+    def _nan_token(self, obs, has_nan):
+        token = jnp.asarray(has_nan, dtype=obs.dtype)
+        if token.shape == ():
+            token = jnp.broadcast_to(token, obs.shape[:-1])
+        token = jnp.expand_dims(token, axis=-1)
+        return token
 
 
 @struct.dataclass
