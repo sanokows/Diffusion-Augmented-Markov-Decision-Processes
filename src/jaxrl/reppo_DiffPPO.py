@@ -1046,6 +1046,8 @@ class ReppoPPOTrainer:
                         mean_log_prob=gen_log_prob.mean(),
                         mean_advantages=adv_base.mean(),
                         mean_action=minibatch.action.mean(),
+                        abs_batch_action=jnp.abs(minibatch.action).mean(),
+                        abs_pred_action=jnp.abs(minibatch.action).mean(),
                         reward_mean=minibatch.reward.mean()*self.diffusion_steps,
                         target_value_mean=target_value_mean,
                         target_value_min=target_value_min,
