@@ -104,12 +104,12 @@ hyperparameters:
     #   min: 0.001
     #   s: 0.008
     #   pow: 2
-    # dt_schedule:
-    #   _target_: src.networks.diffusion.schedulers.get_linear_schedule
-    #   total_steps: ${hyperparameters.diffusion.diff_steps}
-    #   min: 0.05
     dt_schedule:
-      _target_: src.networks.diffusion.schedulers.get_constant_schedule
+      _target_: src.networks.diffusion.schedulers.get_linear_schedule
+      total_steps: ${hyperparameters.diffusion.diff_steps}
+      min: 0.05
+    # dt_schedule:
+    #   _target_: src.networks.diffusion.schedulers.get_constant_schedule
 
 name: "diff_ppo"
 tags: ["ppo_baseline_retuned"]

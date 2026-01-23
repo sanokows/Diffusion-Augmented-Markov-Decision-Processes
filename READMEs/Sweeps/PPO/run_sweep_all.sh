@@ -58,8 +58,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.entropy_coef=0.00000001 \
         env=mjx_dmc \
         seed=0 \
-        num_trials=5 \
-        experiment_overrides=mjx_dmc_large_data &
+        num_trials=5  &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done
