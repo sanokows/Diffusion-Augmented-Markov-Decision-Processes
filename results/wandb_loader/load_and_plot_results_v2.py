@@ -15,6 +15,7 @@ DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
 PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01"]
 ENV_NAMES = [
+        "WalkerStand",
     "AcrobotSwingup",
     "PendulumSwingup",
     "CartpoleSwingupSparse",
@@ -24,7 +25,6 @@ ENV_NAMES = [
     "HopperHop",
     "HopperStand",
     "WalkerRun",
-    "WalkerStand",
     "WalkerWalk",
     "FingerSpin",
 ]

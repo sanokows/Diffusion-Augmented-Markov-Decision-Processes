@@ -3,14 +3,13 @@
 # Step 1: Define env.name values to loop over, each with a corresponding seed
 # Format: EnvName:Seed
 ENV_SEEDS=(
-    WalkerWalk:3
-    WalkerWalk:6
-    WalkerWalk:10
+    WalkerStand:6
+    WalkerStand:10
     # Add more env:seed pairs here
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
-NUM_GPUS=3
+NUM_GPUS=2
 GPU_INDEX=0
 
 # Step 3: Wait until a GPU is free (no active compute processes)

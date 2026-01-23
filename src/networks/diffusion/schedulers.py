@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 
 
-def get_linear_schedule(total_steps, min=0.01):
+def get_linear_schedule(total_steps, min=0.01, s=0.008, pow=2):
     def linear_noise_schedule(step):
         t = (total_steps - step) / total_steps
         return (1. - t) * min + t
@@ -18,7 +18,7 @@ def get_cosine_schedule(total_steps, min=0.01, s=0.008, pow=2):
     return cosine_schedule
 
 
-def get_constant_schedule():
+def get_constant_schedule(total_steps, min=0.01, s=0.008, pow=2):
     def constant_schedule(step):
         return jnp.array(1.)
 

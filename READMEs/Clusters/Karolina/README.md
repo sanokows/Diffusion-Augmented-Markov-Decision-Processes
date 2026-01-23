@@ -31,13 +31,6 @@ ml Mesa/21.1.7-GCCcore-11.2.0
 ```
 
 ```
-sbatch ./Clusters/Karolina/Temperature/run_gpu_DiffPPO.sh
-sbatch ./Clusters/Karolina/Vanilla/run_gpu_DiffWPO.sh
-sbatch ./Clusters/Karolina/DiffSteps/SeedRuns/run_gpu_DiffSAC.sh
-sbatch ./Clusters/Karolina/DiffSteps/SeedRuns/run_gpu_DiffWPO.sh
-sbatch ./Clusters/Karolina/DiffSteps/run_gpu_DiffWPO.sh
-sbatch ./Clusters/Karolina/DiffSteps/FinalRunsPPO/run_gpu_DiffPPO.sh
-sbatch ./Clusters/Karolina/Humanoid/run_gpu_DiffPPO.sh
-sbatch ./Clusters/Karolina/Humanoid/FinalRuns/run_gpu_DiffSAC.sh
-sbatch ./Clusters/Karolina/Temperature/run_gpu_DiffPPO.sh
+sbatch ./READMEs/Clusters/Karolina/template.sh
+
 ```

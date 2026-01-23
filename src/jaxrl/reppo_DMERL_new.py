@@ -1,5 +1,7 @@
 import logging
 import os
+import pickle
+import re
 import time
 import typing
 from functools import partial
@@ -87,6 +89,15 @@ def _sectioned_wandb_key(key: str) -> str:
 
 def _sectioned_wandb_log(log_data: dict[str, Any]) -> dict[str, Any]:
     return {_sectioned_wandb_key(key): value for key, value in log_data.items()}
+
+
+def _sanitize_dir_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
+    return cleaned or "run"
+
+
+def _to_numpy_tree(tree):
+    return jax.tree.map(lambda x: np.asarray(x), tree)
 
 
 class Policy(typing.Protocol):
@@ -367,6 +378,7 @@ class ReppoDMERLTrainer:
         self.sde_eval_fn = self._make_sde_eval_fn()
         if(cfg.train_mode == "WPO"):
             self.eval_fn = self._make_sde_eval_fn(eval_policy=True)
+            #self.eval_fn = self._make_ode_eval_fn()
         else:
             self.eval_fn = self._make_ode_eval_fn()
 
@@ -402,13 +414,13 @@ class ReppoDMERLTrainer:
             env = DiffNormalizeVec(env)
         return env
 
-    def _make_sde_eval_fn(self) -> Callable[[jax.random.PRNGKey, SACTrainState, PyTreeNode | None], dict[str, float]]:
+    def _make_sde_eval_fn(self, eval_policy = False) -> Callable[[jax.random.PRNGKey, SACTrainState, PyTreeNode | None], dict[str, float]]:
         env = self.eval_env
         max_episode_steps = self.eval_env_steps
         reward_scale = self.reward_scale
         torso_id = self.torso_id
         num_torso_envs = min(
-            int(getattr(self.cfg, "log_torso_com_num_envs", 4)),
+            int(getattr(self.cfg, "log_torso_com_num_envs", 30)),
             env.num_envs,
         )
         torso_stride = max(1, int(getattr(self.cfg, "log_torso_com_stride", 1)))
@@ -417,7 +429,6 @@ class ReppoDMERLTrainer:
             key: jax.random.PRNGKey,
             train_state: SACTrainState,
             norm_state: PyTreeNode | None,
-            eval_policy = False
         ):
             actor_model = nnx.merge(
                 train_state.actor.graphdef, train_state.actor.params
@@ -516,7 +527,7 @@ class ReppoDMERLTrainer:
         reward_scale = self.reward_scale
         torso_id = self.torso_id
         num_torso_envs = min(
-            int(getattr(self.cfg, "log_torso_com_num_envs", 4)),
+            int(getattr(self.cfg, "log_torso_com_num_envs", 30)),
             env.num_envs,
         )
         torso_stride = max(1, int(getattr(self.cfg, "log_torso_com_stride", 1)))
@@ -1028,7 +1039,7 @@ class ReppoDMERLTrainer:
             last_env_state=last_env_state,
             last_obs=last_obs,
             last_critic_obs=last_critic_obs,
-            time_steps=train_state.time_steps + (self.num_collection_steps * cfg.num_envs)/self.cfg.diffusion.diff_steps,
+            time_steps=train_state.time_steps + (self.num_collection_steps * cfg.num_envs)//self.cfg.diffusion.diff_steps,
         )
         return transitions, train_state
 
@@ -1430,6 +1441,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         completed_trials = 0
 
     metric_history = []
+    save_dir = None
 
     def _move_metrics_to_norm(log_data: dict[str, Any], keys: list[str]) -> None:
         """Move selected metrics into the norm/ namespace to avoid duplicate logging."""
@@ -1440,6 +1452,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 log_data[f"norm/{suffix}"] = value
 
     def log_callback(state, metrics):
+        nonlocal save_dir
         metrics["sys_time"] = time.perf_counter()
         if len(metric_history) > 0:
             num_env_steps = state.time_steps[0] - metric_history[-1]["time_step"][0]
@@ -1447,6 +1460,13 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             sps = num_env_steps / seconds
         else:
             sps = 0
+
+        if save_dir is None:
+            repo_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "..")
+            )
+            save_dir = os.path.join(repo_root, "saved_models")
+            os.makedirs(save_dir, exist_ok=True)
 
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
@@ -1542,7 +1562,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 for i in range(xy.shape[1]):
                     ax.plot(
                         xy[:, i, 0],
-                        xy[:, i, 2],
+                        xy[:, i, 1],
                         alpha=0.8,
                         label=f"env {int(idx_np[i])}",
                     )
@@ -1554,6 +1574,61 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 fig.tight_layout()
                 log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
                 plt.close(fig)
+
+        actor_params = jax.tree.map(lambda x: x[0], state.actor.params)
+        actor_model = nnx.merge(state.actor.graphdef, actor_params)
+        diff_model = actor_model.diffusion_model
+
+        obs0 = jax.tree.map(lambda x: x[0], state.last_obs)
+        obs0 = jax.tree.map(
+            lambda x: x[0] if hasattr(x, "shape") and x.shape and x.shape[0] > 0 else x,
+            obs0,
+        )
+
+        if isinstance(obs0, dict):
+            obs_dict = {k: obs0[k] for k in obs0}
+            if "orig_obs" not in obs_dict:
+                raise KeyError("obs_dict missing 'orig_obs' for diffusion logging")
+            if "normed_actions" not in obs_dict:
+                obs_dict["normed_actions"] = jnp.zeros(
+                    (diff_model.action_dim,), dtype=jnp.float32
+                )
+        else:
+            obs_dict = {
+                "orig_obs": obs0,
+                "normed_actions": jnp.zeros(
+                    (diff_model.action_dim,), dtype=jnp.float32
+                ),
+            }
+
+        obs_dict["orig_obs"] = jnp.asarray(obs_dict["orig_obs"])
+        obs_dict["normed_actions"] = jnp.asarray(obs_dict["normed_actions"])
+
+        def _scale_for_step(step):
+            obs_step = dict(obs_dict)
+            obs_step["diff_time_step"] = jnp.array([[step]], dtype=jnp.float32)
+            scale, _, _ = diff_model.diffusion_coeff_fn(
+                jnp.array(step, dtype=jnp.int32), obs_step
+            )
+            return scale
+
+        scales = jnp.stack(
+            [_scale_for_step(step) for step in range(diff_model.diff_steps)]
+        )
+        scales_np = np.asarray(scales)
+        if scales_np.ndim > 1:
+            scale_mean = scales_np.mean(axis=-1)
+        else:
+            scale_mean = scales_np
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(np.arange(diff_model.diff_steps), scale_mean, marker="o", markersize=2)
+        ax.set_title("Diffusion coefficient scale vs diffusion step")
+        ax.set_xlabel("Diffusion step")
+        ax.set_ylabel("Scale (mean over action dims)")
+        fig.tight_layout()
+        log_data["figures/diffusion_coeff_scale"] = wandb.Image(fig)
+        plt.close(fig)
 
         # compute the effective learning rate of the actor and the critic
         actor_gnorm = log_data.get("train/actor_gnorm", 0.0)
@@ -1586,6 +1661,29 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         )
 
         wandb.log(_sectioned_wandb_log(log_data), step=int(state.time_steps[0]))
+
+        step = int(np.asarray(state.time_steps[0]))
+        checkpoint = {
+            "actor_params": _to_numpy_tree(state.actor.params),
+            "actor_target_params": _to_numpy_tree(state.actor_target.params),
+            "critic_params": _to_numpy_tree(state.critic.params),
+            "actor_step": _to_numpy_tree(state.actor.step),
+            "critic_step": _to_numpy_tree(state.critic.step),
+            "time_steps": _to_numpy_tree(state.time_steps),
+            "iteration": _to_numpy_tree(state.iteration),
+            "num_seeds": int(np.asarray(state.time_steps).shape[0])
+            if np.asarray(state.time_steps).ndim > 0
+            else 1,
+            "last_env_state": _to_numpy_tree(state.last_env_state)
+            if cfg.hyperparameters.normalize_env
+            else None,
+            "eval_metrics": _to_numpy_tree(utils.filter_prefix("eval", metrics)),
+            "cfg": OmegaConf.to_container(cfg, resolve=True),
+            "saved_at": time.time(),
+        }
+        save_path = os.path.join(save_dir, "checkpoint.pkl")
+        with open(save_path, "wb") as f:
+            pickle.dump(checkpoint, f)
 
     if cfg.env.type == "brax":
         raise ValueError("Wrappers are not implemented yet")

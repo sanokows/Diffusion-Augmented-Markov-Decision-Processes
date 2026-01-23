@@ -33,6 +33,13 @@ python -m src.jaxrl.reppo_DMERL_new env.name=HopperHop hyperparameters.num_eval=
 
 python -m src.jaxrl.reppo_DMERL_new env.name=HopperHop hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=2
 
+### HumanoidWalk
+python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=0 hyperparameters.log_torso_com=true
+
+python -m src.jaxrl.reppo_DMERL_new env.name=HopperHop hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=1
+
+python -m src.jaxrl.reppo_DMERL_new env.name=HopperHop hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=2
+
 ### AcrobotSwingup
 python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=0
 
@@ -53,6 +60,8 @@ python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_ev
 ### run due to empty gpu
 CUDA_VISIBLE_DEVICES=2 python -m src.jaxrl.reppo_DMERL_new env.name=CartpoleSwingup wandb.project_suffix="_FinalRuns_DMERL_Reppo" \hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.lr=6e-4 hyperparameters.temperature_lr=6e-4 hyperparameters.lagrangian_lr=6e-4 hyperparameters.ent_target_mult=3 hyperparameters.gamma=0.9992 hyperparameters.lmbda=0.98 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true env=mjx_dmc num_trials=3 experiment_overrides=mjx_dmc_large_data_dmerl 
 
+
+python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=0 hyperparameters.log_torso_com=true
 
 #### rerun these runs and seeds
 finger spin seed 3 and 7?

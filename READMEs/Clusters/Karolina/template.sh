@@ -4,13 +4,13 @@
 #SBATCH --partition qgpu
 #SBATCH --time 12:00:00
 #SBATCH --nodes 1
-#SBATCH --gpus 1
-#SBATCH --ntasks=3
-#SBATCH --gpus-per-task=0.3
-#SBATCH --cpus-per-task=32
+#SBATCH --gpus 2
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=8
 # (optional) load needed modules
 
-conda activate humanoid_ppo
+cd /home/it4i-sanokows/code/DIMEReppo
+conda activate REPPO
 # run your code
-chmod +x ./sweeps/Humanoid/FinalRuns/start_sweeps_DiffPPO.sh
-sh ./sweeps/Humanoid/FinalRuns/start_sweeps_DiffPPO.sh
+chmod +x ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_missing_runs_2.sh
+sh ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_missing_runs_2.sh
