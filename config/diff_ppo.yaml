@@ -55,7 +55,7 @@ hyperparameters:
   vmax: ${env.vmax}
   num_bins: 151
   hl_gauss: True
-  aux_loss_mult: 0.15
+  aux_loss_mult: 0.
   aux_loss_alpha: 0.95
 
   diffusion:
@@ -122,3 +122,4 @@ wandb:
   mode: "online" # set to online to activate wandb
   entity: ""
   project: "dime_${env.name}"
+  project_suffix: ""

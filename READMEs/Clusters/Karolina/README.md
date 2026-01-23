@@ -32,5 +32,12 @@ ml Mesa/21.1.7-GCCcore-11.2.0
 
 ```
 sbatch ./READMEs/Clusters/Karolina/template.sh
+sbatch ./READMEs/Clusters/Karolina/run_DMEPPO_control_1.sh
+sbatch ./READMEs/Clusters/Karolina/run_DMEPPO_control_2.sh
+sbatch ./READMEs/Clusters/Karolina/run_DMEPPO_low_dim.sh
+
+sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_control_1.sh
+sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_control_2.sh
+sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_low_dim.sh
 
 ```

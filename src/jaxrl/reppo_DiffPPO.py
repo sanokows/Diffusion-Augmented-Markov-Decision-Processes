@@ -841,13 +841,13 @@ class ReppoPPOTrainer:
                         _, pred, pred_rew, pred_next_diff_state, value = (
                             model.critic_module.forward(minibatch.critic_obs)
                         )
-                        aux_loss = optax.squared_error(
+                        aux_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
                             pred, minibatch.next_state_emb
                         )
-                        aux_next_diff_loss = optax.squared_error(
+                        aux_next_diff_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
                             pred_next_diff_state, minibatch.next_emb
                         )
-                        aux_rew_loss = optax.squared_error(
+                        aux_rew_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
                             pred_rew, minibatch.reward.reshape(-1, 1)
                         )
                         diff_steps = jnp.asarray(
@@ -1298,7 +1298,7 @@ def run(cfg: DictConfig):
         run_config["method_name"] = "reppo_DiffPPO"
         wandb.init(
             mode=cfg.wandb.mode,
-            project=cfg.wandb.project,
+            project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
             entity=cfg.wandb.entity,
             tags=[cfg.name, cfg.env.name, cfg.env.type, *cfg.tags],
             config=run_config,
@@ -1339,7 +1339,7 @@ def tune(cfg: DictConfig):
     )
 
     def train_agent():
-        wandb.init(project=cfg.wandb.project)
+        wandb.init(project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}")
         run_cfg = OmegaConf.to_container(cfg)
         for k, v in dict(wandb.config).items():
             run_cfg["experiment"]["hyperparameters"][k] = v
@@ -1372,7 +1372,7 @@ def tune(cfg: DictConfig):
                 },
             },
         },
-        project=cfg.wandb.project,
+        project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
         entity=cfg.wandb.entity,
     )
     wandb.agent(sweep_id, function=train_agent, count=cfg.tune.num_runs)

@@ -5,6 +5,7 @@ from collections import defaultdict
 import os
 import re
 import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -28,6 +29,8 @@ ENV_NAMES = [
     "WalkerWalk",
     "FingerSpin",
 ]
+CSV_RESULTS_DIR = Path("results")
+PLOT_MAX_STEPS = 5e7
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,6 +130,49 @@ def build_distinct_palette(count: int) -> list[tuple[float, float, float, float]
         hue = idx / count
         palette.append(plt.cm.hsv(hue))
     return palette
+
+
+def _csv_paths_for_env(env_name: str) -> list[Path]:
+    return sorted(CSV_RESULTS_DIR.glob(f"{env_name}*.csv"))
+
+
+def _csv_tokens_for_path(path: Path, env_name: str) -> list[str]:
+    stem = path.stem
+    remainder = stem[len(env_name) :]
+    tokens = [t for t in remainder.lower().split("_") if t]
+    return tokens
+
+
+def _is_csv_ppobrax_exact(path: Path, env_name: str) -> bool:
+    label = _label_from_csv(path, env_name)
+    return label.lower() == "ppo_brax"
+
+
+def _load_csv_trials(path: Path) -> pd.DataFrame | None:
+    try:
+        df = pd.read_csv(path)
+    except Exception as exc:
+        print(f"Warning: failed to read CSV {path} ({exc}).", file=sys.stderr)
+        return None
+    if "steps" not in df.columns:
+        print(f"Warning: CSV missing 'steps' column: {path}", file=sys.stderr)
+        return None
+    trial_cols = [c for c in df.columns if c.startswith("trial_")]
+    if not trial_cols:
+        print(f"Warning: CSV has no trial_* columns: {path}", file=sys.stderr)
+        return None
+    df = df[["steps"] + trial_cols].dropna()
+    if df.empty:
+        return None
+    return df
+
+
+def _label_from_csv(path: Path, env_name: str) -> str:
+    stem = path.stem
+    if stem.startswith(env_name):
+        remainder = stem[len(env_name) :].lstrip("_- ")
+        return remainder or "ppo"
+    return stem
 
 
 def load_run_history(
@@ -277,6 +323,23 @@ def main() -> int:
             else:
                 print(f"No duplicate run names in {project_path}.")
 
+        csv_paths = [
+            p for p in _csv_paths_for_env(env_name) if _is_csv_ppobrax_exact(p, env_name)
+        ]
+        for path in csv_paths:
+            df = _load_csv_trials(path)
+            if df is None:
+                continue
+            trial_cols = [c for c in df.columns if c.startswith("trial_")]
+            base_id = f"csv:{path.stem}"
+            for seed_idx, col in enumerate(trial_cols):
+                csv_df = pd.DataFrame({"step": df["steps"], "value": df[col]})
+                csv_df["method"] = "ppo_brax"
+                csv_df["run_id"] = f"{base_id}:seed{seed_idx}"
+                records.append(csv_df)
+                method_run_counts["ppo_brax"].add(csv_df["run_id"].iloc[0])
+            all_methods.add("ppo_brax")
+
         if not records:
             print(
                 f"No runs contained both {args.y_key} and a usable step key in {env_name}.",
@@ -329,6 +392,7 @@ def main() -> int:
         plt.ylabel(args.y_key)
         plt.title(f"{env_name}: {args.y_key} (grouped by method)")
         plt.legend(loc="best", fontsize=8)
+        plt.xlim(left=0, right=PLOT_MAX_STEPS)
         plt.tight_layout()
 
         if args.out:
@@ -355,7 +419,11 @@ def main() -> int:
         overall_stderr = overall_grouped.sem().reset_index().rename(columns={"value": "stderr"})
         overall_merged = overall_mean.merge(overall_stderr, on=["method", "step"], how="left")
 
-        overall_run_counts = overall_records.groupby("method")["run_id"].nunique().to_dict()
+        overall_method_runs: dict[str, set[str]] = defaultdict(set)
+        for result in env_results:
+            for method, runs in result["method_run_counts"].items():
+                overall_method_runs[method].update(runs)
+        overall_run_counts = {method: len(runs) for method, runs in overall_method_runs.items()}
 
         plt.figure(figsize=(9, 5))
         for method, method_df in overall_merged.groupby("method"):
