@@ -29,11 +29,14 @@ hyperparameters:
   tanh_transform: false
   gamma: 0.999
   lmbda: 0.98
+  
   diffusion:
     learn_friction: true
     learn_dt: true
     per_step_dt: true
     per_dim_friction: true
+    friction: 0.25
+    init_std: 3.0
 
     dt_schedule:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
