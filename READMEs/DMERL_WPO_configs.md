@@ -34,4 +34,4 @@ python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=
 python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_WPO_hard_envs_5.yaml seed=0
 
 
-python -m src.jaxrl.reppo_DMERL_new env.name=FishSwim hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_WPO_hard_envs_5.yaml seed=0
+python -m src.jaxrl.reppo_DMERL_new env.name=FishSwim hyperparameters.num_eval=100 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_WPO_const_schedule_2.yaml seed=0 hyperparameters.diffusion.friction=0.25 hyperparameters.diffusion.init_std=3. 
