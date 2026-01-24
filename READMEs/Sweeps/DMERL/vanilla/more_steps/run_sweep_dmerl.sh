@@ -14,7 +14,12 @@ DIFF_STEPS=(
     # Add more diff_steps values here
 )
 
-### TODO adjust minibatch size
+# Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
+declare -A NUM_MINI_BATCHES_BY_STEP=(
+    ["6"]="8"
+    ["10"]="5"
+    ["14"]="3"
+)
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A LR_BY_STEP=(
@@ -33,14 +38,14 @@ declare -A LAGRANGIAN_LR_BY_STEP=(
     ["14"]="5e-4"
 )
 declare -A GAMMA_BY_STEP=(
-    ["6"]="0.9983"
-    ["10"]="0.9989"
-    ["14"]="0.9992"
+    ["6"]="0.999"
+    ["10"]="0.9999"
+    ["14"]="0.99995"
 )
 declare -A LMBDA_BY_STEP=(
     ["6"]="0.98"
-    ["10"]="0.9879"
-    ["14"]="0.9913"
+    ["10"]="0.983"
+    ["14"]="0.986"
 )
 
 # Step 3: Define GPU pool and round-robin scheduling
@@ -71,12 +76,13 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
     for DIFF_STEP in "${DIFF_STEPS[@]}"; do
         DIFF_STEP="${DIFF_STEP%,}"
+        NUM_MINI_BATCHES="${NUM_MINI_BATCHES_BY_STEP[$DIFF_STEP]}"
         LR="${LR_BY_STEP[$DIFF_STEP]}"
         TEMPERATURE_LR="${TEMPERATURE_LR_BY_STEP[$DIFF_STEP]}"
         LAGRANGIAN_LR="${LAGRANGIAN_LR_BY_STEP[$DIFF_STEP]}"
         GAMMA="${GAMMA_BY_STEP[$DIFF_STEP]}"
         LMBDA="${LMBDA_BY_STEP[$DIFF_STEP]}"
-        if [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
+        if [ -z "$NUM_MINI_BATCHES" ] || [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
             echo "Missing hyperparameters for diff_steps=$DIFF_STEP. Please fill in *_BY_STEP maps."
             exit 1
         fi
@@ -93,6 +99,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.num_eval=50 \
             hyperparameters.total_time_steps=80000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
+            hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
             hyperparameters.lr="$LR" \
             hyperparameters.temperature_lr="$TEMPERATURE_LR" \
             hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
