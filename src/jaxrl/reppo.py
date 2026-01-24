@@ -31,7 +31,12 @@ from src.env_utils.jax_wrappers import (
     MjxGymnaxWrapper,
     NormalizeVec,
 )
-from src.env_utils.torso_com import get_torso_com_all, resolve_mj_model
+from src.env_utils.torso_com import (
+    build_torso_com_traj_figure,
+    get_torso_com_all,
+    resolve_mj_model,
+    save_torso_com_trajectory,
+)
 from src.jaxrl import utils
 from src.networks.jax_models import (
     CategoricalCriticNetwork,
@@ -1234,35 +1239,16 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
+        fig = build_torso_com_traj_figure(
+            torso_com_traj, torso_com_env_indices, title="Torso COM trajectory (XY)"
+        )
+        if fig is not None:
+            log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
+            plt.close(fig)
         if torso_com_traj is not None:
-            com_traj_np = np.asarray(torso_com_traj)
-            if com_traj_np.ndim == 4:
-                com_traj_np = com_traj_np[0]
-            if com_traj_np.ndim == 3 and com_traj_np.shape[-1] >= 2:
-                xy = com_traj_np
-                idx_np = None
-                if torso_com_env_indices is not None:
-                    idx_np = np.asarray(torso_com_env_indices)
-                    if idx_np.ndim > 1:
-                        idx_np = idx_np[0]
-                if idx_np is None or idx_np.shape[0] != xy.shape[1]:
-                    idx_np = np.arange(xy.shape[1])
-                fig, ax = plt.subplots(figsize=(6, 6))
-                for i in range(xy.shape[1]):
-                    ax.plot(
-                        xy[:, i, 0],
-                        xy[:, i, 1],
-                        alpha=0.8,
-                        label=f"env {int(idx_np[i])}",
-                    )
-                ax.set_title("Torso COM trajectory (XY)")
-                ax.set_xlabel("X")
-                ax.set_ylabel("Y")
-                if xy.shape[1] <= 6:
-                    ax.legend()
-                fig.tight_layout()
-                log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
-                plt.close(fig)
+            save_torso_com_trajectory(
+                "reppo_traj.pkl", torso_com_traj, torso_com_env_indices
+            )
         wandb.log(log_data, step=state.time_steps[0])
 
     # Set up the experiment

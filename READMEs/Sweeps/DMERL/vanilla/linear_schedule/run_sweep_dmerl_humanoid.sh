@@ -2,9 +2,9 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    HumanoidStand
+    #HumanoidStand
     HumanoidWalk
-    HumanoidRun
+    #HumanoidRun
     # Add more env names here
 )
 
@@ -47,6 +47,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
+        slurm-18600227.out \
         env=mjx_humanoid \
         num_trials=1 \
         seed=0 \
