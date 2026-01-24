@@ -14,7 +14,7 @@ import wandb
 
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01"]
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01"]
 ENV_NAMES = [
         "WalkerStand",
     "AcrobotSwingup",
@@ -29,6 +29,27 @@ ENV_NAMES = [
     "WalkerWalk",
     "FingerSpin",
 ]
+# Optional per-suffix run selection with aliases.
+# Format: { "<suffix>": { "<run_name>": "<alias>", ... }, ... }
+# Leave empty or omit suffix keys to use default name-based grouping.
+#RUNS_BY_SUFFIX: dict[str, dict[str, str]] = {}
+RUNS_BY_SUFFIX = {
+    "_FR_16_01": {
+        "reppo-dime-debug-1-<env_name>": "REPPO-DiME" ,
+    },
+    "_FR_19_01": {
+        "reppo-<env_name>-reparam": "REPPO",
+    },
+    "_FR_24_01": {
+        "reppo-dmerl-debug-1-<env_name>-WPO": "DME-WPO (ours)",
+    },
+    "_FR_30_01": {
+        "reppo-dmerl-debug-1-<env_name>-reparam": "DME-REPPO (ours)",
+    },
+    "_FR_test_PPO": {
+        "ppo-diff_ppo-<env_name>": "DME-PPO (ours)",
+    },
+}
 CSV_RESULTS_DIR = Path("results")
 PLOT_MAX_STEPS = 5e7
 
@@ -103,6 +124,56 @@ def resolve_x_key(df: pd.DataFrame, x_key: str) -> str | None:
         if key in df.columns:
             return key
     return None
+
+
+def resolve_project_suffix(project: str) -> str | None:
+    for suffix in PROJECT_SUFFIXES:
+        if project.endswith(suffix):
+            return suffix
+    return None
+
+
+def normalize_runs_by_suffix(
+    mapping: dict[str, dict[str, str]] | None,
+) -> dict[str, dict[str, str]]:
+    if not mapping:
+        return {}
+    normalized: dict[str, dict[str, str]] = {}
+    for suffix, run_map in mapping.items():
+        if not suffix or not run_map:
+            continue
+        clean_suffix = suffix.strip()
+        if not clean_suffix:
+            continue
+        normalized[clean_suffix] = {
+            run_name.strip(): (alias.strip() or run_name.strip())
+            for run_name, alias in run_map.items()
+            if run_name and run_name.strip()
+        }
+    return normalized
+
+
+def expand_name_map(name_map: dict[str, str], env_name: str) -> dict[str, str]:
+    expanded: dict[str, str] = {}
+    env_lower = env_name.lower()
+    for raw_name, alias in name_map.items():
+        if "<env_name>" in raw_name:
+            expanded[raw_name.replace("<env_name>", env_lower)] = alias
+        else:
+            expanded[raw_name] = alias
+    return expanded
+
+
+def match_run_name(
+    raw_name: str, name_map: dict[str, str]
+) -> tuple[str | None, str | None]:
+    if raw_name in name_map:
+        return name_map[raw_name], raw_name
+    candidates = [key for key in name_map.keys() if key in raw_name]
+    if not candidates:
+        return None, None
+    best_key = max(candidates, key=len)
+    return name_map[best_key], best_key
 
 
 def clean_method_name(raw_name: str) -> str:
@@ -240,6 +311,7 @@ def infer_env_from_project(project: str) -> str:
 def main() -> int:
     args = parse_args()
     api = wandb.Api()
+    runs_by_suffix = normalize_runs_by_suffix(RUNS_BY_SUFFIX)
 
     if args.project is None:
         env_projects = {
@@ -263,10 +335,20 @@ def main() -> int:
         records = []
         method_run_counts = defaultdict(set)
         skipped = 0
-
         for project in projects:
             project_path = resolve_project_path(api, args.entity, project)
             run_name_counts = defaultdict(int)
+            project_suffix = resolve_project_suffix(project)
+            suffix_run_map = runs_by_suffix.get(project_suffix) if project_suffix else None
+            expanded_suffix_map = (
+                expand_name_map(suffix_run_map, env_name) if suffix_run_map else None
+            )
+            found_suffix_runs: set[str] = set()
+            if expanded_suffix_map is not None:
+                wanted_names = ", ".join(sorted(expanded_suffix_map.keys()))
+                print(
+                    f"{env_name} - {project_path}: wanted run names: {wanted_names}"
+                )
             try:
                 runs = api.runs(project_path, filters=filters or None)
             except Exception as exc:
@@ -281,12 +363,25 @@ def main() -> int:
 
             for run in runs:
                 raw_name = run.name or run.id
+                if expanded_suffix_map is not None:
+                    print(f"{env_name} - seen run name: {raw_name}")
                 if project.endswith("_FR_19_01") and raw_name.strip().endswith("WPO"):
                     continue
-                if args.run_name_exclude and any(substr in raw_name for substr in args.run_name_exclude):
-                    continue
-                if args.run_name_contains and args.run_name_contains not in raw_name:
-                    continue
+                if expanded_suffix_map is None:
+                    if args.run_name_exclude and any(
+                        substr in raw_name for substr in args.run_name_exclude
+                    ):
+                        continue
+                    if args.run_name_contains and args.run_name_contains not in raw_name:
+                        continue
+                else:
+                    alias, matched_key = match_run_name(raw_name, expanded_suffix_map)
+                    if alias is None:
+                        continue
+                    print(
+                        f"{env_name} - loaded run: {raw_name} "
+                        f"(alias: {alias}, matched: {matched_key})"
+                    )
                 run_name_counts[raw_name] += 1
 
                 df = load_run_history(run, args.y_key, args.x_key, args.verbose)
@@ -306,7 +401,11 @@ def main() -> int:
                             file=sys.stderr,
                         )
 
-                method_name = clean_method_name(raw_name)
+                if expanded_suffix_map is None:
+                    method_name = clean_method_name(raw_name)
+                else:
+                    method_name = alias
+                    found_suffix_runs.add(matched_key or raw_name)
                 df["method"] = method_name
                 df["run_id"] = run.id
                 records.append(df)
@@ -322,6 +421,15 @@ def main() -> int:
                     print(f"  {name}: {count}")
             else:
                 print(f"No duplicate run names in {project_path}.")
+
+            if expanded_suffix_map is not None:
+                missing = set(expanded_suffix_map.keys()) - found_suffix_runs
+                if missing:
+                    missing_list = ", ".join(sorted(missing))
+                    print(
+                        f"Warning: missing specified runs in {project_path}: {missing_list}",
+                        file=sys.stderr,
+                    )
 
         csv_paths = [
             p for p in _csv_paths_for_env(env_name) if _is_csv_ppobrax_exact(p, env_name)
