@@ -14,6 +14,33 @@ DIFF_STEPS=(
     # Add more diff_steps values here
 )
 
+# Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
+declare -A LR_BY_STEP=(
+    ["6"]="1e-3"
+    ["10"]="1.5e-3"
+    ["14"]="2e-3"
+)
+declare -A TEMPERATURE_LR_BY_STEP=(
+    ["6"]="3e-4"
+    ["10"]="4e-4"
+    ["14"]="5e-4"
+)
+declare -A LAGRANGIAN_LR_BY_STEP=(
+    ["6"]="3e-4"
+    ["10"]="4e-4"
+    ["14"]="5e-4"
+)
+declare -A GAMMA_BY_STEP=(
+    ["6"]="0.9983"
+    ["10"]="0.9989"
+    ["14"]="0.9992"
+)
+declare -A LMBDA_BY_STEP=(
+    ["6"]="0.98"
+    ["10"]="0.9879"
+    ["14"]="0.9913"
+)
+
 # Step 3: Define GPU pool and round-robin scheduling
 NUM_GPUS=3
 GPU_INDEX=0
@@ -42,6 +69,15 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
     for DIFF_STEP in "${DIFF_STEPS[@]}"; do
         DIFF_STEP="${DIFF_STEP%,}"
+        LR="${LR_BY_STEP[$DIFF_STEP]}"
+        TEMPERATURE_LR="${TEMPERATURE_LR_BY_STEP[$DIFF_STEP]}"
+        LAGRANGIAN_LR="${LAGRANGIAN_LR_BY_STEP[$DIFF_STEP]}"
+        GAMMA="${GAMMA_BY_STEP[$DIFF_STEP]}"
+        LMBDA="${LMBDA_BY_STEP[$DIFF_STEP]}"
+        if [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
+            echo "Missing hyperparameters for diff_steps=$DIFF_STEP. Please fill in *_BY_STEP maps."
+            exit 1
+        fi
         GPU_ID=$((GPU_INDEX % NUM_GPUS))
         wait_for_gpu "$GPU_ID"
         if [ -n "${GPU_PIDS[$GPU_ID]}" ]; then
@@ -53,12 +89,17 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_more_steps" \
             hyperparameters.num_eval=50 \
-            hyperparameters.total_time_steps=50000000 \
+            hyperparameters.total_time_steps=80000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
+            hyperparameters.lr="$LR" \
+            hyperparameters.temperature_lr="$TEMPERATURE_LR" \
+            hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
+            hyperparameters.gamma="$GAMMA" \
+            hyperparameters.lmbda="$LMBDA" \
             env=mjx_dmc \
-            num_trials=5 \
+            num_trials=1 \
             seed=0 \
-            experiment_overrides=mjx_dmc_large_data_dmerl_linear_schedule &
+            experiment_overrides=mjx_dmc_large_data_dmerl_WPO_more_steps &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done

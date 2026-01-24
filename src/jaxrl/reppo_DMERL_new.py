@@ -34,6 +34,7 @@ from src.env_utils.jax_wrappers import (
     MjxDiffEnvWrapper,
     DiffNormalizeVec,
 )
+from src.env_utils.torso_com import get_torso_com_all, resolve_mj_model
 from src.jaxrl import utils
 from src.jaxrl.reppo_helpers.learning_DiffReppo import (
     actor_loss_fn,
@@ -135,34 +136,6 @@ def _timestep_coeff_norm(params):
             return jnp.linalg.norm(coeff)
     return jnp.array(0.0)
 
-
-def _unwrap_to_mjx_state(state_like):
-    """Peels nested wrapper states until reaching mjx_env.State with .data."""
-    current = state_like
-    while hasattr(current, "env_state"):
-        current = current.env_state
-    return current
-
-
-def _get_torso_com_all(state_like, torso_id: int):
-    """Returns torso COMs (world frame) for all envs in a possibly batched state."""
-    base_state = _unwrap_to_mjx_state(state_like)
-    com = base_state.data.subtree_com
-    if com.ndim == 2:
-        com = com[None, ...]
-    return com[:, torso_id]
-
-
-def _resolve_mj_model(env_like):
-    """Walk wrapper chain until an mj_model attribute is found."""
-    current = env_like
-    while True:
-        if hasattr(current, "mj_model"):
-            return current.mj_model
-        if hasattr(current, "env"):
-            current = current.env
-        else:
-            return None
 
 
 class ReppoConfig(struct.PyTreeNode):
@@ -355,7 +328,7 @@ class ReppoDMERLTrainer:
         self.env = self._prepare_env(env)
         self.eval_env = copy.deepcopy(self.env)
         if cfg.log_torso_com:
-            mj_model = _resolve_mj_model(self.eval_env)
+            mj_model = resolve_mj_model(self.eval_env)
             if mj_model is None:
                 self.torso_id = None
                 logging.warning("MJX model not found; skipping torso COM logging.")
@@ -479,7 +452,7 @@ class ReppoDMERLTrainer:
                     obs, critic_obs, env_state, reward, done, info = env.step(
                         step_key, env_state, action
                     )
-                    com = _get_torso_com_all(env_state, torso_id)
+                    com = get_torso_com_all(env_state, torso_id)
                     sampled_com = com[torso_env_indices]
                     return (key, env_state, obs, critic_obs), (info, sampled_com)
 
@@ -586,7 +559,7 @@ class ReppoDMERLTrainer:
                     obs, critic_obs, env_state, reward, done, info = env.step(
                         step_key, env_state, action
                     )
-                    com = _get_torso_com_all(env_state, torso_id)
+                    com = get_torso_com_all(env_state, torso_id)
                     sampled_com = com[torso_env_indices]
                     return (key, env_state, obs, critic_obs), (info, sampled_com)
 

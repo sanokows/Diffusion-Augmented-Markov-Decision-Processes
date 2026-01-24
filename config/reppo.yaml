@@ -78,6 +78,10 @@ hyperparameters:
   update_entropy_lagrangian: true
   ## auxiliary loss settings
   aux_loss_mult: 1.0
+  # torso COM logging (MJX only)
+  log_torso_com: false
+  log_torso_com_num_envs: 12
+  log_torso_com_stride: 1
 
 measure_burnin: 3
 
