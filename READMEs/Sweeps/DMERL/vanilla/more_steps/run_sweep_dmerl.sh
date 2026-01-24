@@ -22,6 +22,11 @@ declare -A NUM_MINI_BATCHES_BY_STEP=(
 )
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
+declare -A FRICTION_BY_STEP=(
+    ["6"]="0.3"
+    ["10"]="0.4"
+    ["14"]="0.5"
+)
 declare -A LR_BY_STEP=(
     ["6"]="1e-3"
     ["10"]="1.5e-3"
@@ -39,8 +44,8 @@ declare -A LAGRANGIAN_LR_BY_STEP=(
 )
 declare -A GAMMA_BY_STEP=(
     ["6"]="0.999"
-    ["10"]="0.9999"
-    ["14"]="0.99995"
+    ["10"]="0.9993"
+    ["14"]="0.9996"
 )
 declare -A LMBDA_BY_STEP=(
     ["6"]="0.98"
@@ -77,12 +82,13 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     for DIFF_STEP in "${DIFF_STEPS[@]}"; do
         DIFF_STEP="${DIFF_STEP%,}"
         NUM_MINI_BATCHES="${NUM_MINI_BATCHES_BY_STEP[$DIFF_STEP]}"
+        FRICTION="${FRICTION_BY_STEP[$DIFF_STEP]}"
         LR="${LR_BY_STEP[$DIFF_STEP]}"
         TEMPERATURE_LR="${TEMPERATURE_LR_BY_STEP[$DIFF_STEP]}"
         LAGRANGIAN_LR="${LAGRANGIAN_LR_BY_STEP[$DIFF_STEP]}"
         GAMMA="${GAMMA_BY_STEP[$DIFF_STEP]}"
         LMBDA="${LMBDA_BY_STEP[$DIFF_STEP]}"
-        if [ -z "$NUM_MINI_BATCHES" ] || [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
+        if [ -z "$NUM_MINI_BATCHES" ] || [ -z "$FRICTION" ] || [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
             echo "Missing hyperparameters for diff_steps=$DIFF_STEP. Please fill in *_BY_STEP maps."
             exit 1
         fi
@@ -100,6 +106,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.total_time_steps=80000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
             hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
+            hyperparameters.diffusion.friction="$FRICTION" \
             hyperparameters.lr="$LR" \
             hyperparameters.temperature_lr="$TEMPERATURE_LR" \
             hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
