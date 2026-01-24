@@ -2,10 +2,7 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    #HumanoidStand
     HumanoidWalk
-    #HumanoidRun
-    # Add more env names here
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
@@ -41,17 +38,30 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         wait "${GPU_PIDS[$GPU_ID]}"
     fi
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
-    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_dime \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_DME_REPPO" \
+        wandb.project_suffix="_FR_16_01" \
         hyperparameters.num_eval=100 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
+        hyperparameters.kl_action_rep=4 \
+        hyperparameters.reverse_kl=false \
+        hyperparameters.actor_kl_clip_mode=clipped \
+        hyperparameters.ent_start=0.01 \
+        hyperparameters.vmin=-100 \
+        hyperparameters.vmax=200 \
+        hyperparameters.num_bins=301 \
+        hyperparameters.log_torso_com=true \
+        hyperparameters.diffusion.learn_friction=true \
+        hyperparameters.diffusion.learn_dt=true \
+        hyperparameters.diffusion.per_step_dt=true \
+        hyperparameters.lr=3e-4 \
+        hyperparameters.temperature_lagragian_lr=1e-4 \
         hyperparameters.log_torso_com=true \
         env=mjx_humanoid \
+        seed=1 \
         num_trials=1 \
-        seed=0 \
-        experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
+        experiment_overrides=mjx_humanoid_large_data &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done
@@ -60,4 +70,3 @@ done
 echo "All runs started. Waiting for them to finish..."
 wait
 echo "All runs have finished."
-# CUDA_VISIBLE_DEVICES=2 python -m src.jaxrl.reppo_dime env.name=CartpoleSwingup wandb.project_suffix=_FinalRuns hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=4 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_start=0.01 hyperparameters.vmin=-20 hyperparameters.vmax=170 hyperparameters.num_bins=191 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.lr=3e-4 env=mjx_dmc num_trials=5 experiment_overrides=mjx_dmc_large_data

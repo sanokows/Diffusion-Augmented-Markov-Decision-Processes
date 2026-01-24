@@ -1246,8 +1246,11 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
             plt.close(fig)
         if torso_com_traj is not None:
+            step_id = int(np.asarray(state.time_steps[0]))
             save_torso_com_trajectory(
-                "reppo_traj.pkl", torso_com_traj, torso_com_env_indices
+                f"reppo_traj_step_{step_id}.pkl",
+                torso_com_traj,
+                torso_com_env_indices,
             )
         wandb.log(log_data, step=state.time_steps[0])
 

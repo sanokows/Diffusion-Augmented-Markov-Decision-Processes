@@ -14,6 +14,8 @@ DIFF_STEPS=(
     # Add more diff_steps values here
 )
 
+### TODO adjust minibatch size
+
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A LR_BY_STEP=(
     ["6"]="1e-3"

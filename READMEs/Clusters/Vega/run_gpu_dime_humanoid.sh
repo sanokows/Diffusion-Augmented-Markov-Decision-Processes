@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="dmerl_control"
+#SBATCH --job-name="dime_control"
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=gpu
 #SBATCH --mem=16GB
-#SBATCH --account=d2025d09-019-users
+#SBATCH --account=d2023d12-053-users
 #SBATCH --signal=INT@60
 
 # conda activate REPPO
@@ -18,5 +18,5 @@ which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/DMERL/vanilla/linear_schedule/run_sweep_dmerl_humanoid.sh
-sh ./READMEs/Sweeps/DMERL/vanilla/linear_schedule/run_sweep_dmerl_humanoid.sh
+chmod +x ./READMEs/Sweeps/DIME/run_sweep_dime_humanoid.sh
+sh ./READMEs/Sweeps/DIME/run_sweep_dime_humanoid.sh
