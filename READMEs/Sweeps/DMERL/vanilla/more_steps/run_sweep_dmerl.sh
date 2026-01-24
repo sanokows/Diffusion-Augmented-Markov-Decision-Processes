@@ -17,8 +17,8 @@ DIFF_STEPS=(
 # Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A NUM_MINI_BATCHES_BY_STEP=(
     ["6"]="8"
-    ["10"]="5"
-    ["14"]="3"
+    ["10"]="4"
+    ["14"]="2"
 )
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
