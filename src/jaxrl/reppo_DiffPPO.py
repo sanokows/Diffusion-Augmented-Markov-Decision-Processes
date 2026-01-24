@@ -319,6 +319,7 @@ class PPONetworks(nnx.Module):
                 pred_layers=require(cfg, "num_critic_pred_layers"),
                 use_simplical_embedding=require(cfg, "use_simplical_embedding"),
                 use_skip=require(cfg, "use_critic_skip"),
+                use_value_head=not cfg.hl_gauss,
                 rngs=rngs,
             )
         else:
@@ -823,24 +824,27 @@ class ReppoPPOTrainer:
                     gen_log_prob, dest_log_prob = model.actor_log_prob_step(minibatch.obs, minibatch.action)
                     log_ratio = gen_log_prob - dest_log_prob
                     if cfg.use_categorical_value:
-                        critic_pred = model.critic_module.critic_cat(
-                            minibatch.critic_obs
-                        ).squeeze()
                         if cfg.hl_gauss:
+                            critic_pred = model.critic_module.critic_cat(
+                            minibatch.critic_obs
+                            ).squeeze()
                             target_cat = jax.vmap(
                                 utils.hl_gauss, in_axes=(0, None, None, None)
                             )(target_values, cfg.num_bins, cfg.vmin, cfg.vmax)
                             critic_update_loss = optax.softmax_cross_entropy(
                                 critic_pred, target_cat
                             )
+                            _, pred, pred_rew, pred_next_diff_state, value = (
+                                model.critic_module.forward(minibatch.critic_obs)
+                            )
                         else:
+                            _, pred, pred_rew, pred_next_diff_state, value = (
+                                model.critic_module.forward_value(minibatch.critic_obs)
+                            )
                             critic_update_loss = optax.squared_error(
-                                critic_pred.reshape(-1, 1),
+                                value.reshape(-1, 1),
                                 target_values.reshape(-1, 1),
                             )
-                        _, pred, pred_rew, pred_next_diff_state, value = (
-                            model.critic_module.forward(minibatch.critic_obs)
-                        )
                         aux_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
                             pred, minibatch.next_state_emb
                         )
@@ -943,68 +947,31 @@ class ReppoPPOTrainer:
                         valid_mask.mean() + 1e-8
                     )
                     lagrangian_loss = jnp.array(0.0)
-                    if cfg.use_kl_regularization:
-                        actor_target_model = model.actor_module
-                        kl_keys = jax.random.split(step_key, cfg.kl_action_rep)
-                        if cfg.reverse_kl:
-                            def compute_single(k):
-                                return model.actor_module.rkl_div_one_step(
-                                    k, minibatch.obs, actor_target_model, stop_grad=False
-                                )
-                        else:
-                            def compute_single(k):
-                                return model.actor_module.fkl_div_one_step(
-                                    k, minibatch.obs, actor_target_model, stop_grad=False
-                                )
-                        kl_log_ratios = jax.vmap(compute_single)(kl_keys)
-                        kl_log_ratios = kl_log_ratios.mean(axis=0)
-                        kl = self.diffusion_steps * kl_log_ratios.sum(-1)
-                        adv_term = ratio * adv_base
-                        kl_term = jax.lax.stop_gradient(lagrangian) * kl * (
-                            cfg.reduce_kl
-                        )
-                        if cfg.actor_kl_clip_mode == "full":
-                            combined = adv_term + kl_term
-                        elif cfg.actor_kl_clip_mode == "clipped":
-                            combined = jnp.where(
-                                kl < cfg.kl_bound, adv_term, kl_term
-                            )
-                        elif cfg.actor_kl_clip_mode == "value":
-                            combined = adv_term
-                        else:
-                            raise ValueError(
-                                f"Unknown actor_kl_clip_mode: {cfg.actor_kl_clip_mode}"
-                            )
-                        actor_loss = -jnp.mean(valid_mask * combined)
-                        lagrangian_loss = (
-                            -lagrangian
-                            * jax.lax.stop_gradient(kl - cfg.kl_bound)
-                        ).mean()
-                    else:
-                        actor_loss1 = ratio * adv_base
-                        actor_loss2 = (
-                            jnp.clip(ratio, 1 - cfg.clip_ratio, 1 + cfg.clip_ratio)
-                            * adv_base
-                        )
-                        actor_loss = -jnp.mean(
-                            valid_mask * jnp.minimum(actor_loss1, actor_loss2)
-                        )
-                        do_update = ( (actor_loss1 < actor_loss2))| ((ratio >= 1 - cfg.clip_ratio) & (ratio <= 1 + cfg.clip_ratio))
-                        do_update = valid_mask.astype(bool) * do_update
+                    
+                    actor_loss1 = ratio * adv_base
+                    actor_loss2 = (
+                        jnp.clip(ratio, 1 - cfg.clip_ratio, 1 + cfg.clip_ratio)
+                        * adv_base
+                    )
+                    actor_loss = -jnp.mean(
+                        valid_mask * jnp.minimum(actor_loss1, actor_loss2)
+                    )
+                    do_update = ( (actor_loss1 < actor_loss2))| ((ratio >= 1 - cfg.clip_ratio) & (ratio <= 1 + cfg.clip_ratio))
+                    do_update = valid_mask.astype(bool) * do_update
 
-                        # grad_not_tracked = (actor_loss1 > actor_loss2) * ((ratio < 1 - cfg.clip_ratio) | (ratio > 1 + cfg.clip_ratio)) 
-                        # grad_tracked = (1.0 - grad_not_tracked)* valid_mask.astype(bool)
+                    # grad_not_tracked = (actor_loss1 > actor_loss2) * ((ratio < 1 - cfg.clip_ratio) | (ratio > 1 + cfg.clip_ratio)) 
+                    # grad_tracked = (1.0 - grad_not_tracked)* valid_mask.astype(bool)
 
-                        # ### check element wise if do_update == grad_tracked
-                        # jax.debug.print("do_update: {}, grad_tracked: {}", do_update, grad_tracked)
-                        # ### chekck if all elements are the same
-                        # jax.debug.print("All equal: {}", jnp.all(do_update == grad_tracked))
+                    # ### check element wise if do_update == grad_tracked
+                    # jax.debug.print("do_update: {}, grad_tracked: {}", do_update, grad_tracked)
+                    # ### chekck if all elements are the same
+                    # jax.debug.print("All equal: {}", jnp.all(do_update == grad_tracked))
 
-                        scaled_dest_log_prob = dest_log_prob/sdt
-                        stop_grad_ratio = jax.lax.stop_gradient(ratio)
-                        masked_scaled_dest_log_prob = jnp.where(do_update, scaled_dest_log_prob, jax.lax.stop_gradient(scaled_dest_log_prob))
-                        dest_loss = -jnp.mean(stop_grad_ratio*masked_scaled_dest_log_prob*entropy_scale)
-                        actor_loss += dest_loss
+                    scaled_dest_log_prob = dest_log_prob/sdt
+                    stop_grad_ratio = jax.lax.stop_gradient(ratio)
+                    masked_scaled_dest_log_prob = jnp.where(do_update, scaled_dest_log_prob, jax.lax.stop_gradient(scaled_dest_log_prob))
+                    dest_loss = -jnp.mean(stop_grad_ratio*masked_scaled_dest_log_prob*entropy_scale)
+                    actor_loss += dest_loss
 
 
                     loss = (

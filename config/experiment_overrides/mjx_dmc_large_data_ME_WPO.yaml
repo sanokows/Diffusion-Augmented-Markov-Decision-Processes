@@ -8,4 +8,3 @@ hyperparameters:
   aux_loss_mult: 0.1
   lr: 6e-4
   train_mode: "WPO"
-  disable_temperature: true

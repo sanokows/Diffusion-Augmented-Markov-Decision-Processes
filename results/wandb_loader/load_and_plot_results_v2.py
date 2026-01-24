@@ -14,7 +14,7 @@ import wandb
 
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01"]
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO"]
 ENV_NAMES = [
         "WalkerStand",
     "AcrobotSwingup",
@@ -330,6 +330,7 @@ def main() -> int:
 
     env_results = []
     all_methods = set()
+
 
     for env_name, projects in env_projects.items():
         records = []

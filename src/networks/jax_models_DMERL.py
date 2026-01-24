@@ -639,6 +639,7 @@ class CategoricalCriticNetwork(nnx.Module):
         num_time_hid: int = 32,
         num_time_out: int = 16,
         use_skip: bool = False,
+        use_value_head: bool = False,
         *,
         rngs: nnx.Rngs,
     ):
@@ -802,6 +803,7 @@ class CategoricalValueNetwork(nnx.Module):
         num_time_hid: int = 32,
         num_time_out: int = 16,
         use_skip: bool = False,
+        use_value_head: bool = False,
         *,
         rngs: nnx.Rngs,
     ):
@@ -813,6 +815,7 @@ class CategoricalValueNetwork(nnx.Module):
         self.num_time_out = num_time_out
 
         self.use_skip = use_skip
+        self.use_value_head = use_value_head
 
         self.feature_module = FCNN(
             in_features=obs_dim + self.num_time_out,
@@ -841,6 +844,22 @@ class CategoricalValueNetwork(nnx.Module):
             hidden_skip=use_skip,
             rngs=rngs,
         )
+        self.value_module = None
+        if self.use_value_head:
+            self.value_module = FCNN(
+                in_features=hidden_dim,
+                out_features=1,
+                hidden_dim=hidden_dim,
+                hidden_activation=nnx.swish,
+                output_activation=None,
+                use_norm=use_norm,
+                use_output_norm=False,
+                layers=head_layers,
+                input_activation=not use_simplical_embedding,
+                input_skip=use_skip,
+                hidden_skip=use_skip,
+                rngs=rngs,
+            )
         self.pred_module = FCNN(
             in_features=hidden_dim,
             out_features=(2 * hidden_dim) + 1,
@@ -892,6 +911,11 @@ class CategoricalValueNetwork(nnx.Module):
         cat = self.critic_module(features) + self.zero_dist.value * 40.0
         return cat
 
+    def value_head(self, features: jax.Array) -> jax.Array:
+        if self.value_module is None:
+            raise ValueError("value_head requested but use_value_head is False.")
+        return self.value_module(features)
+
     def from_dict_to_observation(self, obs_dict):
         orig_obs = obs_dict["orig_obs"]
         normed_prev_actions = obs_dict["normed_actions"]
@@ -929,6 +953,19 @@ class CategoricalValueNetwork(nnx.Module):
 
         return features, pred_features, pred_rew, pred_next_diff_state, value
 
+    def forward_value(self, obs_dict):
+        obs, time = self.from_dict_to_observation(obs_dict)
+        features = self.features(obs, time)
+        value = self.value_head(features).squeeze(-1)
+        preds = self.pred_module(features)
+        pred_rew = preds[..., :1]
+        pred_features = preds[..., 1 : 1 + features.shape[-1]]
+        pred_next_diff_state = preds[..., 1 + features.shape[-1] :]
+        if self.use_skip:
+            pred_features = pred_features + features
+            pred_next_diff_state = pred_next_diff_state + features
+
+        return features, pred_features, pred_rew, pred_next_diff_state, value
 
 class ValueNetwork(nnx.Module):
     def __init__(
