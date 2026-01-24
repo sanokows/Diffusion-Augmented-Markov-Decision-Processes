@@ -2,7 +2,7 @@
 #SBATCH --job-name="dmerl_hard_envs"
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:3
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
@@ -18,5 +18,5 @@ which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_hard_envs.sh
-sh ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_hard_envs.sh
+chmod +x ./READMEs/Sweeps/DMERL/vanilla/more_steps/run_sweep_dmerl.sh
+sh ./READMEs/Sweeps/DMERL/vanilla/more_steps/run_sweep_dmerl.sh

@@ -14,9 +14,9 @@ import wandb
 
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO"]
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO", "_FR_ME-WPO", "_FR_WPO"]
 ENV_NAMES = [
-        "WalkerStand",
+    "WalkerStand",
     "AcrobotSwingup",
     "PendulumSwingup",
     "CartpoleSwingupSparse",
@@ -49,9 +49,42 @@ RUNS_BY_SUFFIX = {
     "_FR_test_PPO": {
         "ppo-diff_ppo-<env_name>": "DME-PPO (ours)",
     },
+    "_FR_ME-WPO": {
+        "reppo-<env_name>-WPO": "ME-WPO (ours)",
+    },
+    "_FR_WPO": {
+        "reppo-<env_name>-WPO": "WPO",
+    },
 }
+PPO_BRAX_LABEL = "PPO (r)"
 CSV_RESULTS_DIR = Path("results")
 PLOT_MAX_STEPS = 5e7
+COLORBLIND_PALETTE = [
+  #  "#0072B2",  # blue
+    "#FF000D",  # orange #red
+    "#FFAE00",  # orange
+    "#00FF00",  # green
+    "#FC04DB",  # vermillion
+    "#2600FF",  # sky blue
+   # "#F0E442",  # yellow
+   # "#000000",  # black
+  #  "#7F7F7F",  # gray
+    "#835603",  # brown
+    "#4C8D02",  # olive
+    "#00FFFF",  # purple
+    "#00885F",  # teal
+]
+LINE_STYLES = ["-", "--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 2))]
+LINE_WIDTH = 2.0
+EXTRAPOLATE_ENV_NAMES = {"WalkerWalk", "WalkerRun", "WalkerStand"}
+EXTRAPOLATE_MIN_FRACTION = 0.8
+AXIS_LABEL_FONTSIZE = 14
+TICK_LABEL_FONTSIZE = 12
+LEGEND_FONTSIZE = 12
+GRID_ALPHA = 0.7
+alpha = 0.3
+alpha_line = 0.8
+GRID_LINESTYLE = ":"
 
 
 def parse_args() -> argparse.Namespace:
@@ -193,13 +226,12 @@ def clean_method_name(raw_name: str) -> str:
     return cleaned or raw_name
 
 
-def build_distinct_palette(count: int) -> list[tuple[float, float, float, float]]:
+def build_distinct_palette(count: int) -> list[str]:
     if count <= 0:
         return []
     palette = []
     for idx in range(count):
-        hue = idx / count
-        palette.append(plt.cm.hsv(hue))
+        palette.append(COLORBLIND_PALETTE[idx % len(COLORBLIND_PALETTE)])
     return palette
 
 
@@ -298,6 +330,21 @@ def pad_hopperstand_zero_tail(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
         return df, False
     df = df.copy()
     df.loc[df.index[tail_start:], "value"] = values[tail_start - 1]
+    return df, True
+
+
+def extrapolate_last_value(
+    df: pd.DataFrame, target_step: float
+) -> tuple[pd.DataFrame, bool]:
+    if df.empty:
+        return df, False
+    df = df.sort_values("step").copy()
+    last_step = float(df["step"].iloc[-1])
+    if last_step >= target_step:
+        return df, False
+    last_value = df["value"].iloc[-1]
+    extrapolated = pd.DataFrame({"step": [target_step], "value": [last_value]})
+    df = pd.concat([df, extrapolated], ignore_index=True)
     return df, True
 
 
@@ -402,6 +449,18 @@ def main() -> int:
                             file=sys.stderr,
                         )
 
+                if env_name in EXTRAPOLATE_ENV_NAMES:
+                    max_step = float(df["step"].max())
+                    if max_step >= PLOT_MAX_STEPS * EXTRAPOLATE_MIN_FRACTION:
+                        df, extrapolated = extrapolate_last_value(df, PLOT_MAX_STEPS)
+                        if extrapolated:
+                            print(
+                                f"Warning: extrapolated {env_name} run "
+                                f"{run.name or run.id} from step {max_step:.0f} "
+                                f"to {PLOT_MAX_STEPS:.0f} using last value.",
+                                file=sys.stderr,
+                            )
+
                 if expanded_suffix_map is None:
                     method_name = clean_method_name(raw_name)
                 else:
@@ -443,11 +502,11 @@ def main() -> int:
             base_id = f"csv:{path.stem}"
             for seed_idx, col in enumerate(trial_cols):
                 csv_df = pd.DataFrame({"step": df["steps"], "value": df[col]})
-                csv_df["method"] = "ppo_brax"
+                csv_df["method"] = PPO_BRAX_LABEL
                 csv_df["run_id"] = f"{base_id}:seed{seed_idx}"
                 records.append(csv_df)
-                method_run_counts["ppo_brax"].add(csv_df["run_id"].iloc[0])
-            all_methods.add("ppo_brax")
+                method_run_counts[PPO_BRAX_LABEL].add(csv_df["run_id"].iloc[0])
+            all_methods.add(PPO_BRAX_LABEL)
 
         if not records:
             print(
@@ -466,9 +525,11 @@ def main() -> int:
         )
 
     color_by_method = {}
+    style_by_method = {}
     palette = build_distinct_palette(len(all_methods))
     for idx, method in enumerate(sorted(all_methods)):
         color_by_method[method] = palette[idx % len(palette)]
+        style_by_method[method] = LINE_STYLES[idx % len(LINE_STYLES)]
 
     for result in env_results:
         env_name = result["env_name"]
@@ -487,20 +548,31 @@ def main() -> int:
             run_count = len(method_run_counts[method])
             label = f"{method} (n={run_count})"
             color = color_by_method.get(method)
-            plt.plot(method_df["step"], method_df["value"], label=label, color=color)
+            linestyle = style_by_method.get(method, "-")
+            plt.plot(
+                method_df["step"],
+                method_df["value"],
+                label=label,
+                color=color,
+                linestyle=linestyle,
+                linewidth=LINE_WIDTH, 
+                alpha = alpha_line,
+            )
             if method_df["stderr"].notna().any():
                 plt.fill_between(
                     method_df["step"],
                     method_df["value"] - method_df["stderr"],
                     method_df["value"] + method_df["stderr"],
                     color=color,
-                    alpha=0.2,
+                    alpha=alpha,
                 )
 
-        plt.xlabel("env calls (step)")
-        plt.ylabel(args.y_key)
-        plt.title(f"{env_name}: {args.y_key} (grouped by method)")
-        plt.legend(loc="best", fontsize=8)
+        plt.xlabel("env calls (step)", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.ylabel(args.y_key, fontsize=AXIS_LABEL_FONTSIZE)
+        plt.title(f"{env_name}")
+        plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
+        plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
         plt.xlim(left=0, right=PLOT_MAX_STEPS)
         plt.tight_layout()
 
@@ -515,7 +587,7 @@ def main() -> int:
                 figures_dir, f"dime_{env_name}_methods_avg_eval_return.png"
             )
 
-        plt.savefig(output_path, dpi=200)
+        plt.savefig(output_path, dpi=800)
         print(f"Saved plot to {output_path}")
 
         if skipped:
@@ -540,24 +612,35 @@ def main() -> int:
             run_count = overall_run_counts.get(method, 0)
             label = f"{method} (n={run_count})"
             color = color_by_method.get(method)
-            plt.plot(method_df["step"], method_df["value"], label=label, color=color)
+            linestyle = style_by_method.get(method, "-")
+            plt.plot(
+                method_df["step"],
+                method_df["value"],
+                label=label,
+                color=color,
+                linestyle=linestyle,
+                linewidth=LINE_WIDTH,
+                 alpha = alpha_line,
+            )
             if method_df["stderr"].notna().any():
                 plt.fill_between(
                     method_df["step"],
                     method_df["value"] - method_df["stderr"],
                     method_df["value"] + method_df["stderr"],
                     color=color,
-                    alpha=0.2,
+                    alpha=alpha,
                 )
 
-        plt.xlabel("env calls (step)")
-        plt.ylabel(args.y_key)
-        plt.title(f"All environments: {args.y_key} (grouped by method)")
-        plt.legend(loc="best", fontsize=8)
+        plt.xlabel("env calls (step)", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.ylabel(args.y_key, fontsize=AXIS_LABEL_FONTSIZE)
+        plt.title(f"All environments")
+        plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
+        plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
         plt.tight_layout()
 
         output_path = os.path.join(figures_dir, "all_envs_methods_avg_eval_return.png")
-        plt.savefig(output_path, dpi=200)
+        plt.savefig(output_path, dpi=800)
         print(f"Saved plot to {output_path}")
 
     return 0
