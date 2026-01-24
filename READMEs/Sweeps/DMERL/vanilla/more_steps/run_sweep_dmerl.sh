@@ -51,7 +51,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP on GPU $GPU_ID..."
         CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
             env.name="$ENV_NAME" \
-            wandb.project_suffix="_FR_30_01" \
+            wandb.project_suffix="_FR_more_steps" \
             hyperparameters.num_eval=50 \
             hyperparameters.total_time_steps=50000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
