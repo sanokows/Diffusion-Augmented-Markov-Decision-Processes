@@ -33,4 +33,5 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_me_wpo_all.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_wpo_all.sh
 
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps.sh
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_walker.sh
 ```

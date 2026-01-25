@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import pandas as pd
 import wandb
@@ -29,51 +31,49 @@ ENV_NAMES = [
     "WalkerWalk",
     "FingerSpin",
 ]
-# Optional per-suffix run selection with aliases.
-# Format: { "<suffix>": { "<run_name>": "<alias>", ... }, ... }
+# Optional per-suffix run selection with aliases and colors.
+# Format:
+# {
+#   "<suffix>": {
+#     "<run_name>": {"alias": "<alias>", "color": "<hex>"},
+#     "<run_name>": "<alias>",  # legacy form (no color)
+#   },
+# }
 # Leave empty or omit suffix keys to use default name-based grouping.
 #RUNS_BY_SUFFIX: dict[str, dict[str, str]] = {}
-RUNS_BY_SUFFIX = {
+RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     "_FR_16_01": {
-        "reppo-dime-debug-1-<env_name>": "REPPO-DiME" ,
+        "reppo-dime-debug-1-<env_name>": {"alias": "REPPO-DiME", "color": "#ff0000"},
     },
     "_FR_19_01": {
-        "reppo-<env_name>-reparam": "REPPO",
+        "reppo-<env_name>-reparam": {"alias": "REPPO", "color": "#8b1a1a"},
     },
     "_FR_24_01": {
-        "reppo-dmerl-debug-1-<env_name>-WPO": "DME-WPO (ours)",
+        "reppo-dmerl-debug-1-<env_name>-WPO": {
+            "alias": "DME-WPO (ours)",
+            "color": "#1b7f3a",
+        },
     },
     "_FR_30_01": {
-        "reppo-dmerl-debug-1-<env_name>-reparam": "DME-REPPO (ours)",
+        "reppo-dmerl-debug-1-<env_name>-reparam": {
+            "alias": "DME-REPPO (ours)",
+            "color": "#8b1a1a",
+        },
     },
     "_FR_test_PPO": {
-        "ppo-diff_ppo-<env_name>": "DME-PPO (ours)",
+        "ppo-diff_ppo-<env_name>": {"alias": "DME-PPO (ours)", "color": "#3b528b"},
     },
     "_FR_ME-WPO": {
-        "reppo-<env_name>-WPO": "ME-WPO (ours)",
+        "reppo-<env_name>-WPO": {"alias": "ME-WPO (ours)", "color": "#1b7f3a"},
     },
     "_FR_WPO": {
-        "reppo-<env_name>-WPO": "WPO",
+        "reppo-<env_name>-WPO": {"alias": "WPO", "color": "#9bd65a"},
     },
 }
 PPO_BRAX_LABEL = "PPO (r)"
 CSV_RESULTS_DIR = Path("results")
 PLOT_MAX_STEPS = 5e7
-COLORBLIND_PALETTE = [
-  #  "#0072B2",  # blue
-    "#FF000D",  # orange #red
-    "#FFAE00",  # orange
-    "#00FF00",  # green
-    "#FC04DB",  # vermillion
-    "#2600FF",  # sky blue
-   # "#F0E442",  # yellow
-   # "#000000",  # black
-  #  "#7F7F7F",  # gray
-    "#835603",  # brown
-    "#4C8D02",  # olive
-    "#00FFFF",  # purple
-    "#00885F",  # teal
-]
+VIRIDIS_RANGE = (0.1, 0.95)
 LINE_STYLES = ["-", "--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 2))]
 LINE_WIDTH = 2.0
 EXTRAPOLATE_ENV_NAMES = {"WalkerWalk", "WalkerRun", "WalkerStand"}
@@ -85,6 +85,18 @@ GRID_ALPHA = 0.7
 alpha = 0.07
 alpha_line = 0.8
 GRID_LINESTYLE = ":"
+METHOD_COLOR_OVERRIDES = {
+    PPO_BRAX_LABEL: "#414487",
+}
+METHOD_STYLE_OVERRIDES = {
+    PPO_BRAX_LABEL: "--",
+    "DME-PPO (ours)": "-",
+    "ME-WPO (ours)": "--",
+    "DME-WPO (ours)": "-",
+    "REPPO": "--",
+    "DME-REPPO (ours)": "-",
+    "REPPO-DiME": "-",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -167,39 +179,50 @@ def resolve_project_suffix(project: str) -> str | None:
 
 
 def normalize_runs_by_suffix(
-    mapping: dict[str, dict[str, str]] | None,
-) -> dict[str, dict[str, str]]:
+    mapping: dict[str, dict[str, str | dict[str, str]]] | None,
+) -> dict[str, dict[str, dict[str, str]]]:
     if not mapping:
         return {}
-    normalized: dict[str, dict[str, str]] = {}
+    normalized: dict[str, dict[str, dict[str, str]]] = {}
     for suffix, run_map in mapping.items():
         if not suffix or not run_map:
             continue
         clean_suffix = suffix.strip()
         if not clean_suffix:
             continue
-        normalized[clean_suffix] = {
-            run_name.strip(): (alias.strip() or run_name.strip())
-            for run_name, alias in run_map.items()
-            if run_name and run_name.strip()
-        }
+        normalized_runs: dict[str, dict[str, str]] = {}
+        for run_name, spec in run_map.items():
+            if not run_name or not run_name.strip():
+                continue
+            run_key = run_name.strip()
+            if isinstance(spec, dict):
+                alias = (spec.get("alias") or run_key).strip()
+                color = (spec.get("color") or "").strip()
+            else:
+                alias = str(spec).strip() if spec is not None else run_key
+                color = ""
+            normalized_runs[run_key] = {"alias": alias or run_key, "color": color}
+        if normalized_runs:
+            normalized[clean_suffix] = normalized_runs
     return normalized
 
 
-def expand_name_map(name_map: dict[str, str], env_name: str) -> dict[str, str]:
-    expanded: dict[str, str] = {}
+def expand_name_map(
+    name_map: dict[str, dict[str, str]], env_name: str
+) -> dict[str, dict[str, str]]:
+    expanded: dict[str, dict[str, str]] = {}
     env_lower = env_name.lower()
-    for raw_name, alias in name_map.items():
+    for raw_name, spec in name_map.items():
         if "<env_name>" in raw_name:
-            expanded[raw_name.replace("<env_name>", env_lower)] = alias
+            expanded[raw_name.replace("<env_name>", env_lower)] = spec
         else:
-            expanded[raw_name] = alias
+            expanded[raw_name] = spec
     return expanded
 
 
 def match_run_name(
-    raw_name: str, name_map: dict[str, str]
-) -> tuple[str | None, str | None]:
+    raw_name: str, name_map: dict[str, dict[str, str]]
+) -> tuple[dict[str, str] | None, str | None]:
     if raw_name in name_map:
         return name_map[raw_name], raw_name
     candidates = [key for key in name_map.keys() if key in raw_name]
@@ -229,10 +252,11 @@ def clean_method_name(raw_name: str) -> str:
 def build_distinct_palette(count: int) -> list[str]:
     if count <= 0:
         return []
-    palette = []
-    for idx in range(count):
-        palette.append(COLORBLIND_PALETTE[idx % len(COLORBLIND_PALETTE)])
-    return palette
+    if count == 1:
+        return [mcolors.to_hex(cm.viridis(0.6))]
+    start, end = VIRIDIS_RANGE
+    step = (end - start) / (count - 1)
+    return [mcolors.to_hex(cm.viridis(start + step * idx)) for idx in range(count)]
 
 
 def _csv_paths_for_env(env_name: str) -> list[Path]:
@@ -377,6 +401,8 @@ def main() -> int:
 
     env_results = []
     all_methods = set()
+    method_color_overrides: dict[str, str] = dict(METHOD_COLOR_OVERRIDES)
+    method_style_overrides: dict[str, str] = dict(METHOD_STYLE_OVERRIDES)
 
 
     for env_name, projects in env_projects.items():
@@ -423,9 +449,11 @@ def main() -> int:
                     if args.run_name_contains and args.run_name_contains not in raw_name:
                         continue
                 else:
-                    alias, matched_key = match_run_name(raw_name, expanded_suffix_map)
-                    if alias is None:
+                    run_spec, matched_key = match_run_name(raw_name, expanded_suffix_map)
+                    if run_spec is None:
                         continue
+                    alias = run_spec["alias"]
+                    color_override = run_spec.get("color", "")
                     print(
                         f"{env_name} - loaded run: {raw_name} "
                         f"(alias: {alias}, matched: {matched_key})"
@@ -466,6 +494,8 @@ def main() -> int:
                 else:
                     method_name = alias
                     found_suffix_runs.add(matched_key or raw_name)
+                    if color_override:
+                        method_color_overrides[method_name] = color_override
                 df["method"] = method_name
                 df["run_id"] = run.id
                 records.append(df)
@@ -530,6 +560,10 @@ def main() -> int:
     for idx, method in enumerate(sorted(all_methods)):
         color_by_method[method] = palette[idx % len(palette)]
         style_by_method[method] = LINE_STYLES[idx % len(LINE_STYLES)]
+    for method, color in method_color_overrides.items():
+        color_by_method[method] = color
+    for method, style in method_style_overrides.items():
+        style_by_method[method] = style
 
     for result in env_results:
         env_name = result["env_name"]
