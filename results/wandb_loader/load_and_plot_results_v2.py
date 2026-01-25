@@ -82,12 +82,14 @@ EXTRAPOLATE_ENV_NAMES = {"WalkerWalk", "WalkerRun", "WalkerStand"}
 EXTRAPOLATE_MIN_FRACTION = 0.8
 AXIS_LABEL_FONTSIZE = 20
 TICK_LABEL_FONTSIZE = 17
-LEGEND_FONTSIZE = 14
+LEGEND_FONTSIZE = 18
+LEGEND_FONTSIZE_all = 14
 TITLE_FONTSIZE = 22
 GRID_ALPHA = 0.9
 alpha = 0.1
 alpha_line = 0.7
 GRID_LINESTYLE = ":"
+GRID_LINEWIDTH = 2.0
 GRID_COLS = 3
 METHOD_COLOR_OVERRIDES = {
     PPO_BRAX_LABEL: "#414487",
@@ -153,6 +155,18 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Print available history keys when a run is skipped.",
+    )
+    parser.add_argument(
+        "--grid-alpha",
+        type=float,
+        default=GRID_ALPHA,
+        help="Gridline alpha for plots.",
+    )
+    parser.add_argument(
+        "--grid-linewidth",
+        type=float,
+        default=GRID_LINEWIDTH,
+        help="Gridline linewidth for plots.",
     )
     return parser.parse_args()
 
@@ -387,6 +401,8 @@ def main() -> int:
     args = parse_args()
     api = wandb.Api()
     runs_by_suffix = normalize_runs_by_suffix(RUNS_BY_SUFFIX)
+    grid_alpha = args.grid_alpha
+    grid_linewidth = args.grid_linewidth
 
     if args.project is None:
         env_projects = {
@@ -610,9 +626,9 @@ def main() -> int:
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"{env_name}", fontsize = TITLE_FONTSIZE)
-        plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
+        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.xlim(left=0, right=PLOT_MAX_STEPS)
         plt.tight_layout()
 
@@ -642,7 +658,7 @@ def main() -> int:
             ncols,
             figsize=(ncols * 4.2, nrows * 3.2),
             sharex=True,
-            sharey=True,
+            sharey=False,
         )
         if isinstance(axes, Axes):
             axes_list = [axes]
@@ -684,12 +700,11 @@ def main() -> int:
 
             ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
             ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
             ax.set_xlim(left=0, right=PLOT_MAX_STEPS)
 
         for idx in range(num_envs, len(axes_list)):
             fig.delaxes(axes_list[idx])
-        k = -0.4
         fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         fig.supylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
         if legend_handles:
@@ -700,12 +715,11 @@ def main() -> int:
                 handles,
                 labels,
                 loc="upper center",
-                bbox_to_anchor=(0.5, -k),
+                bbox_to_anchor=(0.5, 0.995),
                 ncol=legend_cols,
                 fontsize=LEGEND_FONTSIZE,
             )
-        fig.tight_layout(rect=[0, k, 1, 1])
-        fig.subplots_adjust(bottom=0.12)
+        fig.tight_layout(rect=[0, 0, 1, 0.92])
 
         if args.out:
             base, ext = os.path.splitext(args.out)
@@ -756,9 +770,9 @@ def main() -> int:
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"All environments", fontsize=TITLE_FONTSIZE)
-        plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
+        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE_all)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.tight_layout()
 
         output_path = os.path.join(figures_dir, "all_envs_methods_avg_eval_return.png")
