@@ -3,11 +3,10 @@
 # Step 1: Define explicit runs (env, aux_loss_mult, aux_loss_alpha)
 # Format: "ENV_NAME|AUX_LOSS_MULT|AUX_LOSS_ALPHA"
 RUNS=(
-    "AcrobotSwingupSparse|0.0|0.95"
-    "AcrobotSwingupSparse|0.05|0.95"
+    "AcrobotSwingupSparse|0.1|0.90"
     "AcrobotSwingupSparse|0.1|0.95"
-    "AcrobotSwingupSparse|0.15|0.95"
-    "AcrobotSwingupSparse|0.2|0.95"
+    "AcrobotSwingupSparse|0.1|0.98"
+    "AcrobotSwingupSparse|0.1|1.0"
     # Add more runs here
 
     "AcrobotSwingupSparse|0.15|0.90"

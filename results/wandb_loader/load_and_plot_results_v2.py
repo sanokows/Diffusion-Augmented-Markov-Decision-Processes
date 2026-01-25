@@ -2,6 +2,7 @@
 
 import argparse
 from collections import defaultdict
+import math
 import os
 import re
 import sys
@@ -10,11 +11,12 @@ from pathlib import Path
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import pandas as pd
 import wandb
 
 
-DEFAULT_Y_KEY = "episode return"
+DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
 PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO", "_FR_ME-WPO", "_FR_WPO"]
 ENV_NAMES = [
@@ -75,16 +77,18 @@ CSV_RESULTS_DIR = Path("results")
 PLOT_MAX_STEPS = 5e7
 VIRIDIS_RANGE = (0.1, 0.95)
 LINE_STYLES = ["-", "--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 2))]
-LINE_WIDTH = 2.0
+LINE_WIDTH = 4.0
 EXTRAPOLATE_ENV_NAMES = {"WalkerWalk", "WalkerRun", "WalkerStand"}
 EXTRAPOLATE_MIN_FRACTION = 0.8
-AXIS_LABEL_FONTSIZE = 14
-TICK_LABEL_FONTSIZE = 12
-LEGEND_FONTSIZE = 12
-GRID_ALPHA = 0.7
-alpha = 0.07
-alpha_line = 0.8
+AXIS_LABEL_FONTSIZE = 20
+TICK_LABEL_FONTSIZE = 17
+LEGEND_FONTSIZE = 14
+TITLE_FONTSIZE = 22
+GRID_ALPHA = 0.9
+alpha = 0.1
+alpha_line = 0.7
 GRID_LINESTYLE = ":"
+GRID_COLS = 3
 METHOD_COLOR_OVERRIDES = {
     PPO_BRAX_LABEL: "#414487",
 }
@@ -576,6 +580,8 @@ def main() -> int:
         stderr = grouped.sem().reset_index().rename(columns={"value": "stderr"})
         merged = mean.merge(stderr, on=["method", "step"], how="left")
 
+        result["merged"] = merged
+
         plt.figure(figsize=(9, 5))
         for method, method_df in merged.groupby("method"):
             method_df = method_df.sort_values("step")
@@ -602,8 +608,8 @@ def main() -> int:
                 )
 
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.ylabel(args.y_key, fontsize=AXIS_LABEL_FONTSIZE)
-        plt.title(f"{env_name}")
+        plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.title(f"{env_name}", fontsize = TITLE_FONTSIZE)
         plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
@@ -626,6 +632,88 @@ def main() -> int:
 
         if skipped:
             print(f"Skipped {skipped} runs without usable data in {env_name}.")
+
+    if multi_env and env_results:
+        num_envs = len(env_results)
+        ncols = min(GRID_COLS, num_envs)
+        nrows = math.ceil(num_envs / ncols)
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(ncols * 4.2, nrows * 3.2),
+            sharex=True,
+            sharey=True,
+        )
+        if isinstance(axes, Axes):
+            axes_list = [axes]
+        else:
+            axes_list = list(axes.ravel())
+        legend_handles: dict[str, plt.Line2D] = {}
+
+        for idx, result in enumerate(env_results):
+            ax = axes_list[idx]
+            env_name = result["env_name"]
+            merged = result["merged"]
+            method_run_counts = result["method_run_counts"]
+
+            for method, method_df in merged.groupby("method"):
+                method_df = method_df.sort_values("step")
+                run_count = len(method_run_counts[method])
+                label = f"{method}"# (n={run_count})"
+                color = color_by_method.get(method)
+                linestyle = style_by_method.get(method, "-")
+                (line,) = ax.plot(
+                    method_df["step"],
+                    method_df["value"],
+                    label=label,
+                    color=color,
+                    linestyle=linestyle,
+                    linewidth=LINE_WIDTH,
+                    alpha=alpha_line,
+                )
+                if method not in legend_handles:
+                    legend_handles[method] = line
+                if method_df["stderr"].notna().any():
+                    ax.fill_between(
+                        method_df["step"],
+                        method_df["value"] - method_df["stderr"],
+                        method_df["value"] + method_df["stderr"],
+                        color=color,
+                        alpha=alpha,
+                    )
+
+            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
+            ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+            ax.set_xlim(left=0, right=PLOT_MAX_STEPS)
+
+        for idx in range(num_envs, len(axes_list)):
+            fig.delaxes(axes_list[idx])
+        k = -0.4
+        fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
+        fig.supylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
+        if legend_handles:
+            handles = [legend_handles[m] for m in sorted(legend_handles.keys())]
+            labels = [h.get_label() for h in handles]
+            legend_cols = max(1, math.ceil(len(handles) / 2))
+            fig.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, -k),
+                ncol=legend_cols,
+                fontsize=LEGEND_FONTSIZE,
+            )
+        fig.tight_layout(rect=[0, k, 1, 1])
+        fig.subplots_adjust(bottom=0.12)
+
+        if args.out:
+            base, ext = os.path.splitext(args.out)
+            grid_output = f"{base}_grid{ext}"
+        else:
+            grid_output = os.path.join(figures_dir, "all_envs_methods_grid_eval_return.png")
+        fig.savefig(grid_output, dpi=800, bbox_inches="tight")
+        print(f"Saved plot to {grid_output}")
 
     if multi_env and env_results:
         overall_records = pd.concat([r["records"] for r in env_results], ignore_index=True)
@@ -666,8 +754,8 @@ def main() -> int:
                 )
 
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.ylabel(args.y_key, fontsize=AXIS_LABEL_FONTSIZE)
-        plt.title(f"All environments")
+        plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.title(f"All environments", fontsize=TITLE_FONTSIZE)
         plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
