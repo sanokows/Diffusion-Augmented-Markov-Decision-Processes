@@ -18,5 +18,5 @@ which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_control.sh
-sh ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_control.sh
+chmod +x ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_control_2.sh
+sh ./READMEs/Sweeps/DMERL/vanilla/run_sweep_dmerl_control_2.sh
