@@ -12,8 +12,8 @@ hyperparameters:
   vmax: 200
   num_bins: 301
   num_eval: 50
-  aux_loss_mult: 0.02
-  aux_loss_alpha: 0.95
+  aux_loss_mult: 0.01 #0.02
+  aux_loss_alpha: 0.98 #0.95
   train_mode: "WPO"
   actor_kl_clip_mode: "clipped"
   reverse_kl: false
