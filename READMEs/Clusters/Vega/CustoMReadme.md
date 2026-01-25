@@ -34,4 +34,6 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_wpo_all.sh
 
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_walker.sh
+
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_aux_loss.sh
 ```

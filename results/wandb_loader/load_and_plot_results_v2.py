@@ -14,7 +14,7 @@ import pandas as pd
 import wandb
 
 
-DEFAULT_Y_KEY = "eval/episode_return"
+DEFAULT_Y_KEY = "episode return"
 AUTO_X_KEYS = ["_step"]
 PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO", "_FR_ME-WPO", "_FR_WPO"]
 ENV_NAMES = [
@@ -580,7 +580,7 @@ def main() -> int:
         for method, method_df in merged.groupby("method"):
             method_df = method_df.sort_values("step")
             run_count = len(method_run_counts[method])
-            label = f"{method} (n={run_count})"
+            label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
             linestyle = style_by_method.get(method, "-")
             plt.plot(
@@ -601,7 +601,7 @@ def main() -> int:
                     alpha=alpha,
                 )
 
-        plt.xlabel("env calls (step)", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel(args.y_key, fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"{env_name}")
         plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
@@ -644,7 +644,7 @@ def main() -> int:
         for method, method_df in overall_merged.groupby("method"):
             method_df = method_df.sort_values("step")
             run_count = overall_run_counts.get(method, 0)
-            label = f"{method} (n={run_count})"
+            label = f"{method}" #(n={run_count})"
             color = color_by_method.get(method)
             linestyle = style_by_method.get(method, "-")
             plt.plot(
@@ -665,7 +665,7 @@ def main() -> int:
                     alpha=alpha,
                 )
 
-        plt.xlabel("env calls (step)", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel(args.y_key, fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"All environments")
         plt.legend(loc="best", fontsize=LEGEND_FONTSIZE)
