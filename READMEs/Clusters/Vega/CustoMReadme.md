@@ -35,5 +35,6 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_wpo_all.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_walker.sh
 
-sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_aux_loss.sh
+sbatch --exclude=gn51 ./READMEs/Clusters/Vega/run_gpu_dmerl_aux_loss.sh 
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_aux_loss.sh
 ```
