@@ -18,5 +18,5 @@ which python
 python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
-chmod +x ./READMEs/Sweeps/Dime/run_sweep_dime_control.sh
-sh ./READMEs/Sweeps/Dime/run_sweep_dime_control.sh
+chmod +x ./READMEs/Sweeps/DIME/run_sweep_dime_control.sh
+sh ./READMEs/Sweeps/DIME/run_sweep_dime_control.sh
