@@ -55,8 +55,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         env=mjx_dmc \
-        seed=0 \
-        num_trials=5 \
+        seed=12 \
+        num_trials=2 \
         experiment_overrides=mjx_dmc_large_data &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
