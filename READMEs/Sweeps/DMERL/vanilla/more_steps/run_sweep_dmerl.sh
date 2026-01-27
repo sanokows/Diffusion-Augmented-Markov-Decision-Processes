@@ -29,9 +29,9 @@ declare -A FRICTION_BY_STEP=(
     ["10"]="0.25"
 )
 declare -A LR_BY_STEP=(
-    ["6"]="1e-3"
-    ["8"]="1e-3"
-    ["10"]="1e-3"
+    ["6"]="6e-4"
+    ["8"]="6e-4"
+    ["10"]="6e-4"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
     ["6"]="3e-4"
