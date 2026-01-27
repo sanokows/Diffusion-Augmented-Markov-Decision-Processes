@@ -16,42 +16,50 @@ DIFF_STEPS=(
 
 # Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A NUM_MINI_BATCHES_BY_STEP=(
-    ["6"]="6"
+    ["6"]="4"
     ["10"]="4"
-    ["14"]="2"
+    ["14"]="4"
+)
+
+# Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
+declare -A NUM_MINI_BATCHES_BY_STEP=(
+    ["6"]="4"
+    ["8"]="4"
+    ["10"]="4"
 )
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A FRICTION_BY_STEP=(
     ["6"]="0.3"
-    ["10"]="0.4"
-    ["14"]="0.5"
+    ["8"]="0.4"
+    ["10"]="0.5"
 )
 declare -A LR_BY_STEP=(
     ["6"]="1e-3"
-    ["10"]="1.5e-3"
-    ["14"]="2e-3"
+    ["8"]="1.5e-3"
+    ["10"]="2e-3"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
     ["6"]="5e-4"
+    ["8"]="5e-4"
     ["10"]="5e-4"
-    ["14"]="5e-4"
 )
 declare -A LAGRANGIAN_LR_BY_STEP=(
     ["6"]="5e-4"
+    ["8"]="5e-4"
     ["10"]="5e-4"
-    ["14"]="5e-4"
 )
 declare -A GAMMA_BY_STEP=(
     ["6"]="0.998"
-    ["10"]="0.999"
-    ["14"]="0.9992"
+    ["8"]="0.999"
+    ["10"]="0.9992"
 )
 declare -A LMBDA_BY_STEP=(
     ["6"]="0.978"
-    ["10"]="0.98"
-    ["14"]="0.982"
+    ["8"]="0.98"
+    ["10"]="0.982"
 )
+
 
 # Step 3: Define GPU pool and round-robin scheduling
 NUM_GPUS=3

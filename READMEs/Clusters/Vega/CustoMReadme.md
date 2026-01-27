@@ -40,4 +40,8 @@ sbatch --exclude=gn51 ./READMEs/Clusters/Vega/run_gpu_dmerl_aux_loss.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_WPO_aux_loss.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_arcsparse.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_wpo_arcsparse.sh
+
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps_no_learn_diff.sh
+
+sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps.sh
 ```
