@@ -46,7 +46,7 @@ declare -A LAGRANGIAN_LR_BY_STEP=(
 declare -A GAMMA_BY_STEP=(
     ["6"]="0.998"
     ["8"]="0.999"
-    ["10"]="0.9993"
+    ["10"]="0.9995"
 )
 declare -A LMBDA_BY_STEP=(
     ["6"]="0.978"
@@ -105,7 +105,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_more_steps_2" \
             hyperparameters.num_eval=50 \
-            hyperparameters.total_time_steps=80000000 \
+            hyperparameters.total_time_steps=50000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
             hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
             hyperparameters.diffusion.friction="$FRICTION" \
@@ -115,7 +115,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.gamma="$GAMMA" \
             hyperparameters.diffusion.learn_friction=true \
             hyperparameters.diffusion.learn_dt=true \
-            use_temperature_decay=true \
+            hyperparameters.use_temperature_decay=true \
             env=mjx_dmc \
             num_trials=2 \
             seed=0 \
