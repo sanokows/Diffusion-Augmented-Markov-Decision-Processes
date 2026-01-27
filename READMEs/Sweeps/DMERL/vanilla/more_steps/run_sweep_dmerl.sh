@@ -119,8 +119,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.temperature_lr="$TEMPERATURE_LR" \
             hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
             hyperparameters.gamma="$GAMMA" \
-            hyperparameters.diffusion.learn_friction=false \
-            hyperparameters.diffusion.learn_dt=false \
+            hyperparameters.diffusion.learn_friction=true \
+            hyperparameters.diffusion.learn_dt=true \
             env=mjx_dmc \
             num_trials=2 \
             seed=0 \
