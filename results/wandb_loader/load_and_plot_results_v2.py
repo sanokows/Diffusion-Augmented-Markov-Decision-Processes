@@ -20,7 +20,7 @@ DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
 PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO", "_FR_ME-WPO", "_FR_WPO"]
 ENV_NAMES = [
-    "WalkerStand",
+        "FingerSpin",
     "AcrobotSwingup",
     "PendulumSwingup",
     "CartpoleSwingupSparse",
@@ -29,9 +29,9 @@ ENV_NAMES = [
     "FishSwim",
     "HopperHop",
     "HopperStand",
+    "WalkerStand",
     "WalkerRun",
     "WalkerWalk",
-    "FingerSpin",
 ]
 # Optional per-suffix run selection with aliases and colors.
 # Format:
