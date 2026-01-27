@@ -17,7 +17,7 @@ DIFF_STEPS=(
 # Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A NUM_MINI_BATCHES_BY_STEP=(
     ["6"]="4"
-    ["10"]="4"
+    ["8"]="4"
     ["10"]="4"
 )
 
@@ -115,6 +115,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.gamma="$GAMMA" \
             hyperparameters.diffusion.learn_friction=true \
             hyperparameters.diffusion.learn_dt=true \
+            use_temperature_decay=true \
             env=mjx_dmc \
             num_trials=2 \
             seed=0 \

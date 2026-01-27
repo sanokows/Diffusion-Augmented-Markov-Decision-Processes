@@ -45,7 +45,7 @@ from src.jaxrl.normalization import (
     NormalizationState,
     Normalizer,
 )
-from src.jaxrl.reppo_DMERL_new import randomize_env_steps
+from src.jaxrl.reppo_DMERL_old import randomize_env_steps
 
 
 logging.basicConfig(level=logging.INFO)

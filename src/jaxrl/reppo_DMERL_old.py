@@ -1005,21 +1005,7 @@ class ReppoDMERLTrainer:
             axis=0,
         )
 
-        use_langevin = self.use_langevin_param
-        key, init_act_key = jax.random.split(key)
-        obs_for_actor = maybe_add_q_grad(
-            train_state.last_obs,
-            train_state.last_critic_obs,
-            actor_model,
-            critic_model,
-            use_langevin,
-        )
-        init_action, _, _ = actor_model.vmap_sample_next_step(
-            obs_for_actor, init_act_key
-        )
-        init_action = jax.lax.stop_gradient(init_action)
-
-        step_env = lambda carry, _: self.train_step_env(actor_model, critic_model, carry, _)
+        step_env = lambda carry, _: train_step_env(Transition, cfg, self.env, actor_model, critic_model, carry, _)
         rollout_state, transitions = jax.lax.scan(
             f=step_env,
             init=(
@@ -1028,11 +1014,10 @@ class ReppoDMERLTrainer:
                 train_state,
                 train_state.last_obs,
                 train_state.last_critic_obs,
-                init_action,
             ),
             length=self.num_collection_steps,
         )
-        _, last_env_state, train_state, last_obs, last_critic_obs, _ = rollout_state
+        _, last_env_state, train_state, last_obs, last_critic_obs = rollout_state
         train_state = train_state.replace(
             last_env_state=last_env_state,
             last_obs=last_obs,
@@ -1042,15 +1027,22 @@ class ReppoDMERLTrainer:
         return transitions, train_state
 
     def train_step_env(self, actor_model, critic_model, carry, _):
-        key, env_state, inner_state, obs, critic_obs, action = carry
+        key, env_state, inner_state, obs, critic_obs = carry
         use_langevin = self.use_langevin_param
-        key, next_act_key, step_key = jax.random.split(key, 3)
+        key, act_key, step_key = jax.random.split(key, 3)
         step_key = jax.random.split(step_key, self.cfg.num_envs)
+        obs_for_actor = maybe_add_q_grad(
+            obs, critic_obs, actor_model, critic_model, use_langevin
+        )
+        action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
+            obs_for_actor, act_key
+        )
         action = jax.lax.stop_gradient(action)
         next_obs, next_critic_obs, next_env_state, reward, done, info = self.env.step(
             step_key, env_state, action
         )
         importance_weight = jnp.zeros((self.cfg.num_envs,))
+        key, next_act_key = jax.random.split(key)
         next_obs_for_actor = maybe_add_q_grad(
             next_obs, next_critic_obs, actor_model, critic_model, use_langevin
         )
@@ -1088,7 +1080,6 @@ class ReppoDMERLTrainer:
             inner_state,
             next_obs,
             next_critic_obs,
-            next_action,
         ), transition
 
     def _learn_step(

@@ -95,6 +95,11 @@ hyperparameters:
   ent_target_mult: 3.
   update_entropy_lagrangian: true
   augmented_lagrangian_entropy_coef: 1.0
+  # optional: exponentially decay temperature instead of learning it
+  use_temperature_decay: false
+  temperature_decay_start: ${hyperparameters.ent_start}
+  temperature_decay_end: 10e-6
+  temperature_decay_steps: ${hyperparameters.total_time_steps}
   # optionally learn temperature/kl multipliers with a tiny MLP
   use_temp_lagrangian_mlp: false
   temp_lagrangian_hidden: 32

@@ -13,6 +13,32 @@ import optax
 from src.jaxrl import utils
 
 
+def _resolve_temperature(actor_model, cfg, train_state=None) -> jax.Array:
+    """Return either learned temperature or an exponential decay schedule."""
+    if not bool(getattr(cfg, "use_temperature_decay", False)):
+        return actor_model.temperature()
+    start = getattr(cfg, "temperature_decay_start", None)
+    end = getattr(cfg, "temperature_decay_end", None)
+    if start is None:
+        start = cfg.ent_start
+    if end is None:
+        end = start
+    if start <= 0.0 or end <= 0.0:
+        raise ValueError(
+            "temperature_decay_start and temperature_decay_end must be > 0."
+        )
+    decay_steps = getattr(cfg, "temperature_decay_steps", None)
+    if decay_steps is None:
+        decay_steps = cfg.total_time_steps
+    decay_steps = max(int(decay_steps), 1)
+    time_steps = 0.0 if train_state is None else train_state.time_steps
+    progress = jnp.clip(jnp.asarray(time_steps, dtype=jnp.float32) / decay_steps, 0.0, 1.0)
+    start_val = jnp.asarray(start, dtype=jnp.float32)
+    end_val = jnp.asarray(end, dtype=jnp.float32)
+    log_ratio = jnp.log(end_val) - jnp.log(start_val)
+    return start_val * jnp.exp(progress * log_ratio)
+
+
 def compute_action_q_grads(actor_model, critic_model, obs, critic_obs):
     """Compute time-interpolated gradient between prior and Q wrt actions."""
     actions = obs["orig_actions"]
@@ -156,6 +182,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
             getattr(cfg, "use_current_critic_for_actor_samples", False)
         )
         actor_model = nnx.merge(updated_state.actor.graphdef, params)
+        temperature = _resolve_temperature(actor_model, cfg, updated_state)
         critic_current_model = nnx.merge(
             updated_state.critic.graphdef, updated_state.critic.params
         )
@@ -205,7 +232,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
             elif cfg.actor_kl_clip_mode == "clipped":
                 actor_loss_val = jnp.where(
                     kl < cfg.kl_bound,
-                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature()) - value + 0.5* cfg.augmented_lagrangian_entropy_coef* jnp.square(target_entropy),
+                    log_prob_ratio * jax.lax.stop_gradient(temperature) - value + 0.5* cfg.augmented_lagrangian_entropy_coef* jnp.square(target_entropy),
                     kl * jax.lax.stop_gradient(lagrangian) * + 0.5 * cfg.augmented_lagrangian_kl_coef * jnp.square(kl_constraint),
                 )
             elif cfg.actor_kl_clip_mode == "value":
@@ -214,7 +241,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
                 raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
             target_entropy_loss = (
-                actor_model.temperature() * 0.5
+                temperature * 0.5
                 * cfg.augmented_lagrangian_entropy_coef
                 * jax.lax.stop_gradient(target_entropy)
             ).mean()
@@ -229,26 +256,26 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         else:
             if cfg.actor_kl_clip_mode == "full":
                 actor_loss_val = (
-                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
+                    log_prob_ratio * jax.lax.stop_gradient(temperature)
                     - value
                     + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
                 )
             elif cfg.actor_kl_clip_mode == "clipped":
                 actor_loss_val = jnp.where(
                     kl < cfg.kl_bound,
-                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature()) - value,
+                    log_prob_ratio * jax.lax.stop_gradient(temperature) - value,
                     kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
                 )
             elif cfg.actor_kl_clip_mode == "value":
                 actor_loss_val = (
-                    log_prob_ratio * jax.lax.stop_gradient(actor_model.temperature())
+                    log_prob_ratio * jax.lax.stop_gradient(temperature)
                     - value
                 )
             else:
                 raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
             target_entropy_loss = (
-                actor_model.temperature()
+                temperature
                 * jax.lax.stop_gradient(target_entropy) ### should ther ebe a stop grad for WPO?
             ).mean()
             lagrangian_loss = (
@@ -268,7 +295,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         return loss, dict(
             actor_loss=actor_loss_val,
             loss=loss,
-            temp=actor_model.temperature(),
+            temp=temperature,
             abs_batch_action=jnp.abs(minibatch.action).mean(),
             abs_pred_action=jnp.abs(pred_action).mean(),
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
@@ -363,6 +390,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
                 actor_model = fisher_actor_model
             else:
                 actor_model = nnx.merge(updated_state.actor.graphdef, params)
+        temperature = _resolve_temperature(actor_model, cfg, updated_state)
 
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
@@ -440,7 +468,6 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             kl = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
             kl_clip_value = kl
 
-        temperature = actor_model.temperature()
         lagrangian = actor_model.lagrangian()
 
         actor_Q_loss = jnp.sum(
@@ -470,7 +497,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         kl_constraint = kl_clip_value - cfg.kl_bound
 
         target_entropy_loss = (
-            actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
+            temperature * jax.lax.stop_gradient(target_entropy)
         ).mean()
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
@@ -491,7 +518,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             actor_loss=actor_loss_val,
             actor_WPO_loss=actor_WPO_loss,
             loss=loss,
-            temp=actor_model.temperature(),
+            temp=temperature,
             abs_batch_action=jnp.abs(minibatch.action).mean(),
             abs_pred_action=jnp.abs(pred_action).mean(),
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
@@ -541,9 +568,10 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     log_ratio = jax.lax.stop_gradient(
         next_gen_log_prob - next_dest_log_prob
     )
+    temperature = _resolve_temperature(actor_model, cfg, inner_state)
     soft_reward = (
         reward
-        - cfg.gamma * log_ratio.squeeze() * actor_model.temperature()
+        - cfg.gamma * log_ratio.squeeze() * temperature
     )
     transition = Transition(
         obs=obs,

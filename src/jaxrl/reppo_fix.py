@@ -498,14 +498,13 @@ def make_train_fn(
         )
 
         def step_env(carry, _) -> tuple[tuple, Transition]:
-            key, env_state, train_state, obs, critic_obs = carry
-            key, act_key, step_key = jax.random.split(key, 3)
+            key, env_state, train_state, obs, critic_obs, action = carry
+            key, next_act_key, step_key = jax.random.split(key, 3)
             step_key = jax.random.split(step_key, cfg.num_envs)
 
             # get policy action
             og_pi = actor_model.actor(obs)
             pi = actor_model.actor(obs, scale=offset)
-            action = pi.sample(seed=act_key)
 
             next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
                 step_key, env_state, action
@@ -523,8 +522,8 @@ def make_train_fn(
 
             # compute next state embedding and value
             next_action, next_log_prob = actor_model.actor(next_obs).sample_and_log_prob(
-                seed=act_key ### why use the same action key here?
-            ) ### shouldnt this action be used for the next env interaction?
+                seed=next_act_key
+            )
             next_emb, _, _, value = critic_model.forward(
                 next_critic_obs, next_action
             )
@@ -551,8 +550,13 @@ def make_train_fn(
                 train_state,
                 next_obs,
                 next_critic_obs,
+                next_action,
             ), transition
 
+        key, init_act_key = jax.random.split(key)
+        init_action = actor_model.actor(train_state.last_obs, scale=offset).sample(
+            seed=init_act_key
+        )
         rollout_state, transitions = jax.lax.scan(
             f=step_env,
             init=(
@@ -561,10 +565,11 @@ def make_train_fn(
                 train_state,
                 train_state.last_obs,
                 train_state.last_critic_obs,
+                init_action,
             ),
             length=cfg.num_steps,
         )
-        _, last_env_state, train_state, last_obs, last_critic_obs = rollout_state
+        _, last_env_state, train_state, last_obs, last_critic_obs, last_action = rollout_state
         train_state = train_state.replace(
             last_env_state=last_env_state,
             last_obs=last_obs,

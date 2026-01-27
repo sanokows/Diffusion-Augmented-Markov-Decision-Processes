@@ -10,7 +10,7 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from src.env_utils.jax_wrappers import MjxGymnaxWrapper, MjxDiffEnvWrapper
-from src.jaxrl.reppo_DMERL_new import ReppoDMERLTrainer, ReppoConfig
+from src.jaxrl.reppo_DMERL_old import ReppoDMERLTrainer, ReppoConfig
 
 logging.basicConfig(level=logging.INFO)
 
