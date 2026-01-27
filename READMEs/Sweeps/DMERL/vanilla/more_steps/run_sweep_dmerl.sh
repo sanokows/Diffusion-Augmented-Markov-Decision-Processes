@@ -2,21 +2,21 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    FishSwim
+    HumanoidWalk
     # Add more env names here
 )
 
 # Step 2: Define hyperparameters.diffusion.diff_steps values to loop over
 DIFF_STEPS=(
     6
+    8
     10
-    14
     # Add more diff_steps values here
 )
 
 # Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A NUM_MINI_BATCHES_BY_STEP=(
-    ["6"]="8"
+    ["6"]="6"
     ["10"]="4"
     ["14"]="2"
 )
@@ -28,29 +28,29 @@ declare -A FRICTION_BY_STEP=(
     ["14"]="0.5"
 )
 declare -A LR_BY_STEP=(
-    ["6"]="3e-3"
-    ["10"]="3e-3"
+    ["6"]="1e-3"
+    ["10"]="1.5e-3"
     ["14"]="2e-3"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
-    ["6"]="6e-4"
-    ["10"]="6e-4"
-    ["14"]="6e-4"
+    ["6"]="5e-4"
+    ["10"]="5e-4"
+    ["14"]="5e-4"
 )
 declare -A LAGRANGIAN_LR_BY_STEP=(
-    ["6"]="3e-4"
-    ["10"]="4e-4"
+    ["6"]="5e-4"
+    ["10"]="5e-4"
     ["14"]="5e-4"
 )
 declare -A GAMMA_BY_STEP=(
-    ["6"]="0.999"
-    ["10"]="0.9993"
-    ["14"]="0.9996"
+    ["6"]="0.998"
+    ["10"]="0.999"
+    ["14"]="0.9992"
 )
 declare -A LMBDA_BY_STEP=(
-    ["6"]="0.98"
-    ["10"]="0.983"
-    ["14"]="0.986"
+    ["6"]="0.978"
+    ["10"]="0.98"
+    ["14"]="0.982"
 )
 
 # Step 3: Define GPU pool and round-robin scheduling
@@ -111,9 +111,10 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.temperature_lr="$TEMPERATURE_LR" \
             hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
             hyperparameters.gamma="$GAMMA" \
-            hyperparameters.lmbda="$LMBDA" \
+            hyperparameters.learn_friction=true \
+            hyperparameters.learn_dt=true \
             env=mjx_dmc \
-            num_trials=1 \
+            num_trials=2 \
             seed=0 \
             experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!
