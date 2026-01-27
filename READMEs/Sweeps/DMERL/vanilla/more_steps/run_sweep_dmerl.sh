@@ -18,7 +18,7 @@ DIFF_STEPS=(
 declare -A NUM_MINI_BATCHES_BY_STEP=(
     ["6"]="4"
     ["10"]="4"
-    ["14"]="4"
+    ["10"]="4"
 )
 
 
