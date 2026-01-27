@@ -113,6 +113,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.gamma="$GAMMA" \
             hyperparameters.diffusion.learn_friction=false \
             hyperparameters.diffusion.learn_dt=false \
+            hyperparameters.use_temperature_decay=true \
             env=mjx_dmc \
             num_trials=2 \
             seed=0 \
