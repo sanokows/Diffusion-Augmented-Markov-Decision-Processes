@@ -23,34 +23,34 @@ declare -A NUM_MINI_BATCHES_BY_STEP=(
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A FRICTION_BY_STEP=(
-    ["6"]="0.3"
-    ["8"]="0.4"
-    ["10"]="0.5"
+    ["6"]="0.25"
+    ["8"]="0.25"
+    ["10"]="0.25"
 )
 declare -A LR_BY_STEP=(
     ["6"]="1e-3"
-    ["8"]="1.5e-3"
-    ["10"]="2e-3"
+    ["8"]="1e-3"
+    ["10"]="1e-3"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
-    ["6"]="5e-4"
-    ["8"]="5e-4"
-    ["10"]="5e-4"
+    ["6"]="3e-4"
+    ["8"]="3e-4"
+    ["10"]="3e-4"
 )
 declare -A LAGRANGIAN_LR_BY_STEP=(
-    ["6"]="5e-4"
-    ["8"]="5e-4"
-    ["10"]="5e-4"
+    ["6"]="3e-4"
+    ["8"]="3e-4"
+    ["10"]="3e-4"
 )
 declare -A GAMMA_BY_STEP=(
     ["6"]="0.998"
     ["8"]="0.999"
-    ["10"]="0.9992"
+    ["10"]="0.9993"
 )
 declare -A LMBDA_BY_STEP=(
     ["6"]="0.978"
     ["8"]="0.98"
-    ["10"]="0.982"
+    ["10"]="0.984"
 )
 
 # Step 3: Define GPU pool and round-robin scheduling
@@ -101,7 +101,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP on GPU $GPU_ID..."
         CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
             env.name="$ENV_NAME" \
-            wandb.project_suffix="_FR_more_steps" \
+            wandb.project_suffix="_FR_more_steps_2" \
             hyperparameters.num_eval=50 \
             hyperparameters.total_time_steps=80000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \

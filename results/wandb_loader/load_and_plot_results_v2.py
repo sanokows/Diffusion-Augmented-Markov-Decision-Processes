@@ -602,7 +602,7 @@ def main() -> int:
         for method, method_df in merged.groupby("method"):
             method_df = method_df.sort_values("step")
             run_count = len(method_run_counts[method])
-            label = f"{method} (n={run_count})"
+            label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
             linestyle = style_by_method.get(method, "-")
             plt.plot(
@@ -675,7 +675,7 @@ def main() -> int:
             for method, method_df in merged.groupby("method"):
                 method_df = method_df.sort_values("step")
                 run_count = len(method_run_counts[method])
-                label = f"{method} (n={run_count})"
+                label = f"{method}"# (n={run_count})"
                 color = color_by_method.get(method)
                 linestyle = style_by_method.get(method, "-")
                 (line,) = ax.plot(
@@ -746,7 +746,7 @@ def main() -> int:
         for method, method_df in overall_merged.groupby("method"):
             method_df = method_df.sort_values("step")
             run_count = overall_run_counts.get(method, 0)
-            label = f"{method} (n={run_count})"
+            label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
             linestyle = style_by_method.get(method, "-")
             plt.plot(
