@@ -27,7 +27,7 @@ hyperparameters:
     #learn_friction: true
     #learn_dt: true
     per_step_dt: true
-    friction: 0.067
+    friction: 0.25
     init_std: 2.2
 
     dt_schedule:
