@@ -28,9 +28,9 @@ declare -A FRICTION_BY_STEP=(
     ["8"]="0.25"
 )
 declare -A LR_BY_STEP=(
-    ["4"]="3e-4"
-    ["6"]="3e-4"
-    ["8"]="3e-4"
+    ["4"]="6e-4"
+    ["6"]="6e-4"
+    ["8"]="6e-4"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
     ["4"]="3e-4"
@@ -125,7 +125,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env=mjx_dmc \
             num_trials=5 \
             seed=0 \
-            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule_2 &
+            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done
