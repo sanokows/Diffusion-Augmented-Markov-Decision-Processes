@@ -123,7 +123,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.use_temperature_decay=false \
             env=mjx_dmc \
             num_trials=5 \
-            seed=0 \
+            seed=12 \
             experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
