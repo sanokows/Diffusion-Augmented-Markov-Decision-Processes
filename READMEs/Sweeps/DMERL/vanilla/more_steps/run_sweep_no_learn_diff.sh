@@ -109,7 +109,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_more_steps_3" \
             hyperparameters.num_eval=50 \
-            hyperparameters.total_time_steps=80000000 \
+            hyperparameters.total_time_steps=50000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
             hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
             hyperparameters.diffusion.friction="$FRICTION" \
@@ -122,7 +122,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.diffusion.learn_dt=false \
             hyperparameters.use_temperature_decay=false \
             env=mjx_dmc \
-            num_trials=2 \
+            num_trials=5 \
             seed=0 \
             experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!

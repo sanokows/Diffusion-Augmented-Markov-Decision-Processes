@@ -8,12 +8,12 @@ hyperparameters:
   kl_start: 0.3 # 0.15
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
-  num_collection_step_factor: 1.
+  num_collection_step_factor: 0.5
   vmin: -100
   vmax: 200
   num_bins: 301
   num_eval: 50
-  aux_loss_mult: 0.25 ## increase a bit??
+  aux_loss_mult: 0. ## increase a bit??
   aux_loss_alpha: 0.98
   
   #lr: 1e-3
@@ -28,7 +28,7 @@ hyperparameters:
     #learn_dt: true
     per_step_dt: true
     friction: 0.25
-    init_std: 2.2
+    init_std: 3.
 
     dt_schedule:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
