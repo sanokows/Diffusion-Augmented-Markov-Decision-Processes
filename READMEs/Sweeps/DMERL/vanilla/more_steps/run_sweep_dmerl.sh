@@ -106,7 +106,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             wait "${GPU_PIDS[$GPU_ID]}"
         fi
         echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP on GPU $GPU_ID..."
-        CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
+        CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_old \
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_more_steps_3" \
             hyperparameters.num_eval=50 \
