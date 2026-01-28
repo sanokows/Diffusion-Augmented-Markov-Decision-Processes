@@ -53,6 +53,11 @@ declare -A LMBDA_BY_STEP=(
     ["8"]="0.98"
     ["10"]="0.984"
 )
+declare -A DT_BY_STEP=(
+    ["4"]="0.25"
+    ["6"]="0.16667"
+    ["8"]="0.125"
+)
 
 
 # Step 3: Define GPU pool and round-robin scheduling
@@ -90,7 +95,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         LAGRANGIAN_LR="${LAGRANGIAN_LR_BY_STEP[$DIFF_STEP]}"
         GAMMA="${GAMMA_BY_STEP[$DIFF_STEP]}"
         LMBDA="${LMBDA_BY_STEP[$DIFF_STEP]}"
-        if [ -z "$NUM_MINI_BATCHES" ] || [ -z "$FRICTION" ] || [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
+        DT="${DT_BY_STEP[$DIFF_STEP]}"
+        if [ -z "$NUM_MINI_BATCHES" ] || [ -z "$FRICTION" ] || [ -z "$LR" ] || [ -z "$TEMPERATURE_LR" ] || [ -z "$LAGRANGIAN_LR" ] || [ -z "$GAMMA" ] || [ -z "$LMBDA" ] || [ -z "$DT" ]; then
             echo "Missing hyperparameters for diff_steps=$DIFF_STEP. Please fill in *_BY_STEP maps."
             exit 1
         fi
@@ -109,6 +115,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
             hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
             hyperparameters.diffusion.friction="$FRICTION" \
+            hyperparameters.diffusion.dt="$DT" \
             hyperparameters.lr="$LR" \
             hyperparameters.temperature_lr="$TEMPERATURE_LR" \
             hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
