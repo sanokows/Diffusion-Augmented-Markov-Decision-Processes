@@ -2,64 +2,55 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    HumanoidWalk
+    HopperHop
     # Add more env names here
 )
 
 # Step 2: Define hyperparameters.diffusion.diff_steps values to loop over
 DIFF_STEPS=(
-    4
     6
-    8
+    10
     # Add more diff_steps values here
 )
 
 # Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A NUM_MINI_BATCHES_BY_STEP=(
-    ["4"]="4"
-    ["6"]="4"
-    ["8"]="4"
+    ["6"]="8"
+    ["10"]="8"
 )
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A FRICTION_BY_STEP=(
-    ["4"]="0.25"
     ["6"]="0.25"
-    ["8"]="0.25"
+    ["10"]="0.25"
 )
 declare -A LR_BY_STEP=(
-    ["4"]="6e-4"
-    ["6"]="6e-4"
-    ["8"]="6e-4"
+    ["6"]="1e-3"
+    ["10"]="1e-3"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
-    ["4"]="3e-4"
     ["6"]="3e-4"
-    ["8"]="3e-4"
+    ["10"]="3e-4"
 )
 declare -A LAGRANGIAN_LR_BY_STEP=(
-    ["4"]="3e-4"
     ["6"]="3e-4"
-    ["8"]="3e-4"
+    ["10"]="3e-4"
 )
 declare -A GAMMA_BY_STEP=(
-    ["4"]="0.9974"
     ["6"]="0.9983"
-    ["8"]="0.999"
+    ["10"]="0.9991"
 )
 declare -A LMBDA_BY_STEP=(
-    ["4"]="0.976"
     ["6"]="0.978"
-    ["8"]="0.98"
+    ["10"]="0.982"
 )
 declare -A DT_BY_STEP=(
-    ["4"]="0.25"
     ["6"]="0.16667"
-    ["8"]="0.125"
+    ["10"]="0.1"
 )
 
 # Step 3: Define GPU pool and round-robin scheduling
-NUM_GPUS=3
+NUM_GPUS=4
 GPU_INDEX=0
 
 # Step 4: Wait until a GPU is free (no active compute processes)
@@ -122,9 +113,9 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.diffusion.learn_dt=false \
             hyperparameters.use_temperature_decay=false \
             env=mjx_dmc \
-            num_trials=5 \
-            seed=12 \
-            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
+            num_trials=8 \
+            seed=0 \
+            experiment_overrides=mjx_dmc_large_data_dmerl_linear_more_steps &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done

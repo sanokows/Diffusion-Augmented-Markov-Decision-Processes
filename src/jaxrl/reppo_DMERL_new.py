@@ -48,7 +48,6 @@ from src.jaxrl.reppo_helpers.learning_DiffReppo import (
     compute_nstep_lambda_step,
     critic_loss_fn,
     maybe_add_q_grad,
-    train_step_env,
 )
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
