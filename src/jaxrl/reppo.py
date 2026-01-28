@@ -813,58 +813,6 @@ def make_train_fn(
                         train_state.critic.graphdef,
                         train_state.critic.params,
                     )
-                    if cfg.disable_wpo_fisher_preconditioning:
-                        stop_grad_params = jax.tree.map(jax.lax.stop_gradient, params)
-                        batch_size = minibatch.action.shape[0]
-                        fisher_keys = jax.random.split(key, batch_size)
-
-                        def _single_gen_log_prob(p, obs, fisher_key):
-                            actor_single = nnx.merge(train_state.actor.graphdef, p)
-                            pi_single = actor_single.actor(obs[None])
-                            _, gen_log_prob = pi_single.sample_and_log_prob(
-                                seed=fisher_key
-                            )
-                            return gen_log_prob.squeeze().sum()
-
-                        per_sample_grads = jax.vmap(
-                            jax.grad(_single_gen_log_prob), in_axes=(None, 0, 0)
-                        )(params, minibatch.obs, fisher_keys)
-
-                        def _is_array_like(x):
-                            return hasattr(x, "shape") and hasattr(x, "dtype")
-
-                        def _skip_fisher(path):
-                            for key in path:
-                                if isinstance(key, str) and (
-                                    "temperature" in key or "lagrangian" in key
-                                ):
-                                    return True
-                            return False
-
-                        def _precondition_delta(path, p, p0, g):
-                            delta = p - p0
-                            if _skip_fisher(path):
-                                return delta
-                            if not _is_array_like(p):
-                                return delta
-                            fisher_diag = jnp.mean(jnp.square(g), axis=0)
-                            inv_fisher = 1.0 / (fisher_diag + 1e-8)
-                            sg_inverse_fisher = jax.lax.stop_gradient(inv_fisher)
-                            return delta * sg_inverse_fisher
-
-                        precond_delta = tree_util.tree_map_with_path(
-                            _precondition_delta,
-                            params,
-                            stop_grad_params,
-                            per_sample_grads,
-                        )
-
-                        def _apply_precond(p, p0, d):
-                            return p0 + d
-
-                        params = jax.tree.map(
-                            _apply_precond, params, stop_grad_params, precond_delta
-                        )
                     actor_model = nnx.merge(train_state.actor.graphdef, params)
 
                     # SAC actor loss
