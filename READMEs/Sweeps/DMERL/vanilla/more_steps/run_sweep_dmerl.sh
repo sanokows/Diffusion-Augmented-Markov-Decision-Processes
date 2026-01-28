@@ -10,7 +10,7 @@ ENV_NAMES=(
 DIFF_STEPS=(
     6
     8
-    10
+    4
     # Add more diff_steps values here
 )
 
