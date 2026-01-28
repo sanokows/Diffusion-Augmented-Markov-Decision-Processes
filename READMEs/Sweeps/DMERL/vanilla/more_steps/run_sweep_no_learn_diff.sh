@@ -43,8 +43,8 @@ declare -A LAGRANGIAN_LR_BY_STEP=(
     ["8"]="3e-4"
 )
 declare -A GAMMA_BY_STEP=(
-    ["4"]="0.996"
-    ["6"]="0.998"
+    ["4"]="0.9974"
+    ["6"]="0.9983"
     ["8"]="0.999"
 )
 declare -A LMBDA_BY_STEP=(
@@ -124,7 +124,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env=mjx_dmc \
             num_trials=2 \
             seed=0 \
-            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule_2 &
+            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done

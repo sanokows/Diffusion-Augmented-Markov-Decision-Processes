@@ -27,13 +27,13 @@ hyperparameters:
     #learn_friction: true
     #learn_dt: true
     per_step_dt: true
-    #friction: 0.25
-    init_std: 3.0
+    friction: 0.1
+    init_std: 2.5
 
     dt_schedule:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
       total_steps: ${hyperparameters.diffusion.diff_steps}
-      min: 0.02
+      min: 0.015
 
 
 
