@@ -109,7 +109,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP on GPU $GPU_ID..."
         CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
             env.name="$ENV_NAME" \
-            wandb.project_suffix="_FR_more_steps_2" \
+            wandb.project_suffix="_FR_more_steps_3" \
             hyperparameters.num_eval=50 \
             hyperparameters.total_time_steps=50000000 \
             hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
@@ -122,11 +122,11 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             hyperparameters.gamma="$GAMMA" \
             hyperparameters.diffusion.learn_friction=true \
             hyperparameters.diffusion.learn_dt=true \
-            hyperparameters.use_temperature_decay=true \
+            hyperparameters.use_temperature_decay=false \
             env=mjx_dmc \
             num_trials=2 \
             seed=0 \
-            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule &
+            experiment_overrides=mjx_humanoid_large_data_dmerl_linear_schedule_2 &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done
