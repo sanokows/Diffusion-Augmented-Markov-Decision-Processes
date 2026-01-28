@@ -8,50 +8,49 @@ ENV_NAMES=(
 
 # Step 2: Define hyperparameters.diffusion.diff_steps values to loop over
 DIFF_STEPS=(
+    4
     6
     8
-    4
     # Add more diff_steps values here
 )
 
 # Step 2a: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A NUM_MINI_BATCHES_BY_STEP=(
+    ["4"]="4"
     ["6"]="4"
     ["8"]="4"
-    ["10"]="4"
 )
-
 
 # Step 2b: Per-diff-step hyperparameters (string keys must match DIFF_STEPS)
 declare -A FRICTION_BY_STEP=(
+    ["4"]="0.25"
     ["6"]="0.25"
     ["8"]="0.25"
-    ["10"]="0.25"
 )
 declare -A LR_BY_STEP=(
+    ["4"]="6e-4"
     ["6"]="6e-4"
     ["8"]="6e-4"
-    ["10"]="6e-4"
 )
 declare -A TEMPERATURE_LR_BY_STEP=(
+    ["4"]="3e-4"
     ["6"]="3e-4"
     ["8"]="3e-4"
-    ["10"]="3e-4"
 )
 declare -A LAGRANGIAN_LR_BY_STEP=(
+    ["4"]="3e-4"
     ["6"]="3e-4"
     ["8"]="3e-4"
-    ["10"]="3e-4"
 )
 declare -A GAMMA_BY_STEP=(
+    ["4"]="0.996"
     ["6"]="0.998"
     ["8"]="0.999"
-    ["10"]="0.9995"
 )
 declare -A LMBDA_BY_STEP=(
+    ["4"]="0.976"
     ["6"]="0.978"
     ["8"]="0.98"
-    ["10"]="0.984"
 )
 declare -A DT_BY_STEP=(
     ["4"]="0.25"
