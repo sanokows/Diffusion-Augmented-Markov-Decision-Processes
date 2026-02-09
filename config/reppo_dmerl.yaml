@@ -85,7 +85,7 @@ hyperparameters:
   reduce_kl: true
   reverse_kl: false # previous default "false"
   use_W2_kl: false
-  kl_action_rep: 4
+  kl_action_rep: 16
   update_kl_lagrangian: true
   use_augmented_lagrangian_dual: false
   augmented_lagrangian_kl_coef: 1.0

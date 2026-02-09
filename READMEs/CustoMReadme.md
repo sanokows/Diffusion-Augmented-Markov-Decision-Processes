@@ -68,6 +68,9 @@ CartpoleBalanceSparse
 FingerTurnHard
 
 Next steps
+
+### TODO refactor the SDE, implement VE SDE, learn prior distribution, use more sampels for Kl bound
+
 ### implement learned prior and learned std
 ### plot point of mass
 

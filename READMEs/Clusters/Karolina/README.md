@@ -40,4 +40,7 @@ sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_control_1.sh
 sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_control_2.sh
 sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_low_dim.sh
 
+sbatch ./READMEs/Clusters/Karolina/run_DMERPPO_more_steps_no_learn.sh
+sbatch ./READMEs/Clusters/Karolina/run_DMERPPO_more_steps.sh
+
 ```

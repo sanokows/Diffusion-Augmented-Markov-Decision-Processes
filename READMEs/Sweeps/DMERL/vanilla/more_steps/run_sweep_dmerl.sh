@@ -51,7 +51,7 @@ declare -A DT_BY_STEP=(
 
 
 # Step 3: Define GPU pool and round-robin scheduling
-NUM_GPUS=4
+NUM_GPUS=2
 GPU_INDEX=0
 
 # Step 4: Wait until a GPU is free (no active compute processes)

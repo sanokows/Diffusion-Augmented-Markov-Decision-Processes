@@ -13,6 +13,7 @@ from gymnax.environments.environment import Environment
 from gymnax.environments.spaces import Box
 from ml_collections import ConfigDict
 from mujoco_playground import MjxEnv, registry
+from src.env_utils.planar_path_env import PlanarPathEnv
 from mujoco_playground._src.wrapper import wrap_for_brax_training, Wrapper
 import distrax
 
@@ -29,6 +30,22 @@ class MjxGymnaxWrapper(Environment):
         asymmetric_observation: bool = False,
     ):
         if isinstance(env_or_name, str):
+            if env_or_name == "PlanarPathEnv":
+                self.env = PlanarPathEnv()
+                self.sanitize_nans = False
+                self.reward_scale = reward_scale
+                self.episode_length = episode_length
+                if isinstance(self.env.observation_size, int):
+                    self.dict_obs = False
+                else:
+                    self.dict_obs = True
+                if asymmetric_observation:
+                    self.dict_obs_key = "privileged_state"
+                else:
+                    self.dict_obs_key = "state"
+                print(self.dict_obs_key)
+                super().__init__()
+                return
             if config is None:
                 config = registry.get_default_config(env_or_name)
                 is_humanoid_task = env_or_name in [

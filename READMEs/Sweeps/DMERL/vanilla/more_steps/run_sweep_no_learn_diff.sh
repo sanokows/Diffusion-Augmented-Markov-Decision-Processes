@@ -50,7 +50,7 @@ declare -A DT_BY_STEP=(
 )
 
 # Step 3: Define GPU pool and round-robin scheduling
-NUM_GPUS=4
+NUM_GPUS=2
 GPU_INDEX=0
 
 # Step 4: Wait until a GPU is free (no active compute processes)
@@ -115,7 +115,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env=mjx_dmc \
             num_trials=8 \
             seed=0 \
-            experiment_overrides=mjx_dmc_large_data_dmerl_linear_more_steps &
+            experiment_overrides=mjx_dmc_large_data_dmerl_more_steps_no_learn &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done
