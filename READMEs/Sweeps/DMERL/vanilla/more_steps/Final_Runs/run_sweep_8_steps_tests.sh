@@ -109,9 +109,6 @@ launch_run() {
         hyperparameters.vmin="$VMIN" \
         hyperparameters.vmax="$VMAX" \
         hyperparameters.num_bins=301 \
-        hyperparameters.diffusion.learn_betas=true \
-        hyperparameters.diffusion.learn_prior=false \
-        hyperparameters.diffusion.use_prior_mlp=false \
         hyperparameters.aux_loss_mult="$AUX_LOSS_MULT" \
         hyperparameters.ent_target_mult="$ENT_TARGET_MULT" \
         hyperparameters.num_collection_step_factor="$NUM_COLLECTION_STEP_FACTOR" \
