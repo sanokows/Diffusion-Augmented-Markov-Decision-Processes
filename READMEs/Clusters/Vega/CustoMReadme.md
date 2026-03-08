@@ -44,4 +44,5 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_wpo_arcsparse.sh
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps_no_learn_diff.sh
 
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps.sh
+sbatch ./READMEs/Clusters/Vega/FinalStepRuns/run_gpu_dmerl_4_steps.sh
 ```

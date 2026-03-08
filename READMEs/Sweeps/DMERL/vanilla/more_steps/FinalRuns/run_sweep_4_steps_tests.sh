@@ -88,7 +88,7 @@ launch_run() {
     echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP v_value=$V_VALUE lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA vmin=$VMIN vmax=$VMAX on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_tests" \
+        wandb.project_suffix="_FR_old_branch" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
