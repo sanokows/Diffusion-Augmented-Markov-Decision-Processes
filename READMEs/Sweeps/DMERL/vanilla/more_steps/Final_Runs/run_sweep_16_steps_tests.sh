@@ -12,9 +12,10 @@ DIFF_STEP=16
 # Step 2a: Sweep tuples.
 # Format: "v_value|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor"
 SWEEP_TUPLES=(
-    "10|1e-3|3e-4|3e-4|0.25|0.9971|0.96|2|3|0.5"
-    "10|1e-3|3e-4|3e-4|0.25|0.9971|0.96|2|4|0.5"
-    "10|1e-3|3e-4|3e-4|0.25|0.9971|0.96|4|3|0.5"
+    "10|1e-3|3e-4|3e-4|0.25|0.9965|0.96|2|4|0.5"
+    "10|1e-3|3e-4|3e-4|0.25|0.9971|0.97|2|4|0.5"
+    "11|1e-3|3e-4|3e-4|0.25|0.9971|0.96|2|4|0.5"
+    "12|1e-3|3e-4|3e-4|0.25|0.9971|0.96|2|4|0.5"
 )
 
 
