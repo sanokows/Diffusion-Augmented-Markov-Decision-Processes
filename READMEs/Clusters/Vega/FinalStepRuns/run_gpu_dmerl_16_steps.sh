@@ -2,7 +2,7 @@
 #SBATCH --job-name="dmerl_16_steps"
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:3
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
