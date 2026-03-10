@@ -10,11 +10,9 @@ ENV_NAMES=(
 DIFF_STEP=4
 
 # Step 2a: Sweep tuples.
-# Format: "v_value|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor"
+# Format: "v_value|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor|num_bins"
 SWEEP_TUPLES=(
-    "10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|3|0.5"
-    "10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5"
-    "10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|8|3|0.5"
+    "10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151"
 )
 
 
@@ -74,6 +72,7 @@ launch_run() {
     local NUM_MINI_BATCHES="${10}"
     local ENT_TARGET_MULT="${11}"
     local NUM_COLLECTION_STEP_FACTOR="${12}"
+    local NUM_BINS="${13}"
     local VMIN="-$V_VALUE"
     local VMAX="$V_VALUE"
 
@@ -84,7 +83,7 @@ launch_run() {
         echo "Waiting for previous run on GPU slot $GPU_SLOT (pid ${GPU_PIDS[$GPU_SLOT]})..."
         wait "${GPU_PIDS[$GPU_SLOT]}"
     fi
-    echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP v_value=$V_VALUE lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA vmin=$VMIN vmax=$VMAX on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
+    echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP v_value=$V_VALUE lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA vmin=$VMIN vmax=$VMAX num_bins=$NUM_BINS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
         wandb.project_suffix="_FR_old_branch" \
@@ -99,11 +98,12 @@ launch_run() {
         hyperparameters.lmbda="$LMBDA" \
         hyperparameters.vmin="$VMIN" \
         hyperparameters.vmax="$VMAX" \
-        hyperparameters.num_bins=301 \
+        hyperparameters.num_bins="$NUM_BINS" \
         hyperparameters.aux_loss_mult="$AUX_LOSS_MULT" \
         hyperparameters.ent_target_mult="$ENT_TARGET_MULT" \
         hyperparameters.num_collection_step_factor="$NUM_COLLECTION_STEP_FACTOR" \
-        hyperparameters.ent_start=0.001 \
+        hyperparameters.ent_start=0.01 \
+        hyperparameters.diffusion.friction=0.25 \
         env=mjx_humanoid_dime \
         num_trials=1 \
         seed=0 \
@@ -117,10 +117,10 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
 
     for SWEEP_TUPLE in "${SWEEP_TUPLES[@]}"; do
-        IFS='|' read -r V_VALUE LR TEMPERATURE_LR LAGRANGIAN_LR AUX_LOSS_MULT GAMMA LMBDA NUM_MINI_BATCHES ENT_TARGET_MULT NUM_COLLECTION_STEP_FACTOR <<< "$SWEEP_TUPLE"
+        IFS='|' read -r V_VALUE LR TEMPERATURE_LR LAGRANGIAN_LR AUX_LOSS_MULT GAMMA LMBDA NUM_MINI_BATCHES ENT_TARGET_MULT NUM_COLLECTION_STEP_FACTOR NUM_BINS <<< "$SWEEP_TUPLE"
         launch_run "$ENV_NAME" "sweep_tuple" \
             "$V_VALUE" "$LR" "$TEMPERATURE_LR" "$LAGRANGIAN_LR" "$AUX_LOSS_MULT" \
-            "$GAMMA" "$LMBDA" "$NUM_MINI_BATCHES" "$ENT_TARGET_MULT" "$NUM_COLLECTION_STEP_FACTOR"
+            "$GAMMA" "$LMBDA" "$NUM_MINI_BATCHES" "$ENT_TARGET_MULT" "$NUM_COLLECTION_STEP_FACTOR" "$NUM_BINS"
     done
 done
 
