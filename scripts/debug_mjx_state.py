@@ -20,7 +20,7 @@ if repo_str not in sys.path:
 from src.env_utils.jax_wrappers import MjxDiffEnvWrapper, MjxGymnaxWrapper, DiffNormalizeVec, LogWrapper, NormalizeVec
 
 
-DEFAULT_ENV_NAME = "CheetahRun"
+DEFAULT_ENV_NAME = "G1JoystickFlatTerrain"
 DEFAULT_EPISODE_LENGTH = 6
 DEFAULT_TOTAL_STEPS = DEFAULT_EPISODE_LENGTH*3
 
@@ -59,8 +59,8 @@ def get_torso_com(state_like, torso_id: int):
 
 
 def main() -> None:
-    # python scripts/debug_mjx_state.py --use-diff-wrapper --diff-steps 3 
-    # python scripts/debug_mjx_state.py --diff-steps 3 
+    # python scripts/debug_mjx_state.py --use-diff-wrapper --diff-steps 3
+    # python scripts/debug_mjx_state.py --diff-steps 3
     parser = argparse.ArgumentParser(description="Inspect MJX states over many steps.")
     parser.add_argument("--env-name", default=DEFAULT_ENV_NAME, help="MJX env to load.")
     parser.add_argument(
@@ -112,7 +112,7 @@ def main() -> None:
     reset_keys = jax.random.split(rng, 1)
     obs_dict, _, state = env.reset(reset_keys)
     step_idx = -1
-    jax.debug.print("Step {} done={}", step_idx, obs_dict) 
+    jax.debug.print("Step {} done={}", step_idx, obs_dict)
     num_envs = reset_keys.shape[0]
 
     action_space_params = getattr(env, "default_params", None)
@@ -133,6 +133,13 @@ def main() -> None:
             obs_dict, critic_obs_dict, next_state, reward, done, info = env.step(env_subkeys, prev_state, action)
 
             done_flag = jnp.reshape(done, (-1,))[0]
+            truncated_flag = jnp.reshape(next_state.env_state.truncated, (-1,))[0]
+            if args.use_diff_wrapper:
+                diff_step = jnp.reshape(
+                    next_state.env_state.env_state.diff_time_step, (-1,)
+                )[0]
+            else:
+                diff_step = jnp.asarray(-1, dtype=jnp.int32)
             # print the reward and obs dict
             # jax.debug.print("Step {} truncated={}", step_idx, state.truncated)
             # #jax.debug.print("Step {} state done={}", step_idx, state.done)
@@ -141,9 +148,7 @@ def main() -> None:
             # jax.debug.print("scan step {} done={}", step_idx, done_flag)
             # jax.debug.print("Step {} next_obs={}", step_idx, obs_dict) 
             # jax.debug.print("Step {} info={}", step_idx, info) 
-            jax.debug.print("Step {} torso COM={}", step_idx, get_torso_com(prev_state, torso_id))
- 
-            return (key, next_state), None
+            return (key, next_state), (diff_step, done_flag, truncated_flag)
 
         (_, _), outputs = jax.lax.scan(
             step_fn, (rng_in, init_state_in), xs=jnp.arange(total_steps)
@@ -151,7 +156,28 @@ def main() -> None:
         return outputs
 
     scan_fn = jax.jit(rollout_with_scan_local, static_argnums=(2, 3))
-    obs_stack = scan_fn(rng, state, total_steps, action_shape)
+    diff_steps_arr, done_arr, trunc_arr = scan_fn(rng, state, total_steps, action_shape)
+
+    diff_steps_arr = np.asarray(jax.device_get(diff_steps_arr))
+    done_arr = np.asarray(jax.device_get(done_arr))
+    trunc_arr = np.asarray(jax.device_get(trunc_arr))
+
+    if args.use_diff_wrapper and args.diff_steps > 1:
+        total_steps = diff_steps_arr.shape[0]
+        if total_steps % args.diff_steps == 0:
+            grouped_shape = (total_steps // args.diff_steps, args.diff_steps)
+            done_grouped = done_arr.reshape(grouped_shape)
+            trunc_grouped = trunc_arr.reshape(grouped_shape)
+            done_last = done_grouped[:, -1][:, None]
+            trunc_last = trunc_grouped[:, -1][:, None]
+            done_arr = np.broadcast_to(done_last, done_grouped.shape).reshape(-1)
+            trunc_arr = np.broadcast_to(trunc_last, trunc_grouped.shape).reshape(-1)
+
+    for step_idx in range(diff_steps_arr.shape[0]):
+        print(
+            f"Step {step_idx} diff_step={diff_steps_arr[step_idx]} "
+            f"done={bool(done_arr[step_idx])} truncated={float(trunc_arr[step_idx])}"
+        )
 
     # obs_stack = jax.device_get(obs_stack)
 

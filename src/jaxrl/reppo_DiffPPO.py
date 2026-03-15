@@ -644,6 +644,19 @@ class ReppoPPOTrainer:
         env = self.env
         normalizer = self.normalizer
         model = nnx.merge(train_state.graphdef, train_state.params)
+        diff_steps = self.diffusion_steps
+
+        def _smear_terminal_flags(values: jax.Array) -> jax.Array:
+            if diff_steps <= 1:
+                return values
+            if values.shape[0] % diff_steps != 0:
+                return values
+            grouped = values.reshape(
+                (values.shape[0] // diff_steps, diff_steps, *values.shape[1:])
+            )
+            last = grouped[:, -1, ...]
+            smeared = jnp.broadcast_to(last[:, None, ...], grouped.shape)
+            return smeared.reshape(values.shape)
 
         def step_env(carry, _):
             key, env_state, train_state, obs, critic_obs = carry
@@ -733,6 +746,10 @@ class ReppoPPOTrainer:
                 train_state.last_critic_obs,
             ),
             length=self.num_collection_steps,
+        )
+        transitions = transitions.replace(
+            done=_smear_terminal_flags(transitions.done),
+            truncated=_smear_terminal_flags(transitions.truncated),
         )
         _, last_env_state, train_state, last_obs, last_critic_obs = rollout_state
         train_state = train_state.replace(
