@@ -200,6 +200,7 @@ class MjxDiffEnvState:
     obs: jnp.ndarray
     critic_obs: jnp.ndarray
     done: jnp.ndarray
+    truncated: jnp.ndarray
     diff_time_step: jnp.ndarray
     steps_since_reset: jnp.ndarray
     info: Any = None
@@ -339,13 +340,16 @@ class MjxDiffEnvWrapper(Wrapper):
         obs_dict = self._build_obs(obs, prior_actions, diff_time_step)
         critic_obs_dict = self._build_obs(critic_obs, prior_actions, diff_time_step)
         zeros = jnp.zeros((obs.shape[0],), dtype=jnp.bool_)
-        base_info = getattr(env_state, "info", {})
+        truncated = jnp.zeros((obs.shape[0],), dtype=jnp.float32)
+        base_info = dict(getattr(env_state, "info", {}))
+        base_info["truncation"] = truncated
 
         state = MjxDiffEnvState(
             env_state=env_state,
             obs=obs,
             critic_obs=critic_obs,
             done=zeros,
+            truncated=truncated,
             info=base_info,
             diff_time_step=diff_time_step,
             steps_since_reset=jnp.zeros_like(diff_time_step),
@@ -366,6 +370,11 @@ class MjxDiffEnvWrapper(Wrapper):
         obs, critic_obs, env_state, reward, done, info = self.env.step(
             key, state.env_state, scaled_action
         )
+        truncated = env_state.info.get(
+            "truncation", jnp.zeros((obs.shape[0],), dtype=jnp.float32)
+        )
+        info = dict(env_state.info)
+        info["truncation"] = truncated
         # jax.debug.print("env reset? {d}", d=done)
         # reset_mask = env_state.info.get("returned_episode", None)
         # if reset_mask is not None:
@@ -383,10 +392,12 @@ class MjxDiffEnvWrapper(Wrapper):
             env_state,
             reward,
             done,
+            truncated,
             obs,
             critic_obs,
             diff_time_steps,
             steps_since_reset,
+            info,
         )
     
     def diff_env_step(self, args):
@@ -396,16 +407,21 @@ class MjxDiffEnvWrapper(Wrapper):
         reward = jnp.zeros((obs_dict["orig_obs"].shape[0],), dtype=jnp.float32)
         # set done to false
         done = jnp.zeros((obs_dict["orig_obs"].shape[0],), dtype=jnp.bool_)
+        truncated = jnp.zeros((obs_dict["orig_obs"].shape[0],), dtype=jnp.float32)
+        info = dict(state.info) if state.info is not None else {}
+        info["truncation"] = truncated
         return (
             obs_dict,
             critic_obs_dict,
             state.env_state,
             reward,
             done,
+            truncated,
             state.obs,
             state.critic_obs,
             diff_time_steps,
             steps_since_reset,
+            info,
         )
 
     def step(self, key, state: MjxDiffEnvState, action):
@@ -420,10 +436,12 @@ class MjxDiffEnvWrapper(Wrapper):
             env_state,
             reward,
             done,
+            truncated,
             raw_obs,
             raw_critic_obs,
             new_diff_time,
             new_steps_since_reset,
+            info,
         ) = jax.lax.cond(
             reset_due,
             self.orig_env_and_reset_actions_step,
@@ -431,13 +449,13 @@ class MjxDiffEnvWrapper(Wrapper):
             operand=(key, state, action, diff_time_step, steps_since_reset),
         )
         #jax.debug.print("selected reward: {r}", r=reward)
-        info = env_state.info
         #jax.debug.print("Step info={}", info)
         new_state = MjxDiffEnvState(
             env_state=env_state,
             obs=raw_obs,
             critic_obs=raw_critic_obs,
             done=done > 0.5,
+            truncated=truncated,
             info=info,
             diff_time_step=new_diff_time,
             steps_since_reset=new_steps_since_reset,

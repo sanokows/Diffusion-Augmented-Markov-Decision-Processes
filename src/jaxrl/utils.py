@@ -14,6 +14,20 @@ def describe(values: jnp.ndarray, axis: tuple | int = 0) -> dict[str, jnp.ndarra
     }
 
 
+def smear_terminal_flags(values: jax.Array, diff_steps: int) -> jax.Array:
+    """Broadcast the last diffusion step's terminal flags across the group."""
+    if diff_steps <= 1:
+        return values
+    if values.shape[0] % diff_steps != 0:
+        return values
+    grouped = values.reshape(
+        (values.shape[0] // diff_steps, diff_steps, *values.shape[1:])
+    )
+    last = grouped[:, -1, ...]
+    smeared = jnp.broadcast_to(last[:, None, ...], grouped.shape)
+    return smeared.reshape(values.shape)
+
+
 def merge_dicts(*prefix_dicts: tuple[str, dict], sep: str = "/") -> dict:
     """Merge metric dictionaries with a prefix for each key."""
     return {

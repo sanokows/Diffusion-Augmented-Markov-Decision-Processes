@@ -20,8 +20,8 @@ if repo_str not in sys.path:
 from src.env_utils.jax_wrappers import MjxDiffEnvWrapper, MjxGymnaxWrapper, DiffNormalizeVec, LogWrapper, NormalizeVec
 
 
-DEFAULT_ENV_NAME = "G1JoystickFlatTerrain"
-DEFAULT_EPISODE_LENGTH = 6
+DEFAULT_ENV_NAME = "G1JoystickFlatTerrain" # "CheetahRun" #"G1JoystickFlatTerrain" # "CheetahRun"#
+DEFAULT_EPISODE_LENGTH = 200
 DEFAULT_TOTAL_STEPS = DEFAULT_EPISODE_LENGTH*3
 
 
@@ -148,7 +148,17 @@ def main() -> None:
             # jax.debug.print("scan step {} done={}", step_idx, done_flag)
             # jax.debug.print("Step {} next_obs={}", step_idx, obs_dict) 
             # jax.debug.print("Step {} info={}", step_idx, info) 
-            return (key, next_state), (diff_step, done_flag, truncated_flag)
+            terminated_flag = done_flag
+            jax.debug.print(
+                "Step {} diff_step={} terminated={} done={} truncated={}",
+                step_idx,
+                diff_step,
+                terminated_flag,
+                done_flag,
+                truncated_flag,
+            )
+
+            return (key, next_state), None
 
         (_, _), outputs = jax.lax.scan(
             step_fn, (rng_in, init_state_in), xs=jnp.arange(total_steps)
@@ -156,28 +166,7 @@ def main() -> None:
         return outputs
 
     scan_fn = jax.jit(rollout_with_scan_local, static_argnums=(2, 3))
-    diff_steps_arr, done_arr, trunc_arr = scan_fn(rng, state, total_steps, action_shape)
-
-    diff_steps_arr = np.asarray(jax.device_get(diff_steps_arr))
-    done_arr = np.asarray(jax.device_get(done_arr))
-    trunc_arr = np.asarray(jax.device_get(trunc_arr))
-
-    if args.use_diff_wrapper and args.diff_steps > 1:
-        total_steps = diff_steps_arr.shape[0]
-        if total_steps % args.diff_steps == 0:
-            grouped_shape = (total_steps // args.diff_steps, args.diff_steps)
-            done_grouped = done_arr.reshape(grouped_shape)
-            trunc_grouped = trunc_arr.reshape(grouped_shape)
-            done_last = done_grouped[:, -1][:, None]
-            trunc_last = trunc_grouped[:, -1][:, None]
-            done_arr = np.broadcast_to(done_last, done_grouped.shape).reshape(-1)
-            trunc_arr = np.broadcast_to(trunc_last, trunc_grouped.shape).reshape(-1)
-
-    for step_idx in range(diff_steps_arr.shape[0]):
-        print(
-            f"Step {step_idx} diff_step={diff_steps_arr[step_idx]} "
-            f"done={bool(done_arr[step_idx])} truncated={float(trunc_arr[step_idx])}"
-        )
+    scan_fn(rng, state, total_steps, action_shape)
 
     # obs_stack = jax.device_get(obs_stack)
 
