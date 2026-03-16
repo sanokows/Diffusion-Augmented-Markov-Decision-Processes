@@ -33,6 +33,17 @@ python -m src.jaxrl.reppo_DMERL_new \
         num_trials=1 \
         experiment_overrides=mjx_dmc_large_data_dmerl_linear_schedule
 
+python -m src.jaxrl.reppo_DMERL_new \
+        env.name=AcrobotSwingupSparse \
+        wandb.project_suffix="_done_bugfix" \
+        hyperparameters.num_eval=50 \
+        hyperparameters.total_time_steps=50000000 \
+        hyperparameters.diffusion.diff_steps=8 \
+        env=mjx_dmc \
+        seed=0 \
+        num_trials=1 \
+        experiment_overrides=mjx_dmc_large_data_dmerl_linear_schedule
+
 ### smaller batches less epochs
 python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs hyperparameters.log_torso_com=true
 

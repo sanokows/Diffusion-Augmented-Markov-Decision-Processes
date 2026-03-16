@@ -235,6 +235,7 @@ class ReppoConfig(struct.PyTreeNode):
     project_unit_ball: bool = True
     project_only_if_exceeds: bool = True
     use_current_critic_for_actor_samples: bool = True
+    normalize_reward: bool = False
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -393,7 +394,7 @@ class ReppoDMERLTrainer:
         env = LogWrapper(env, self.cfg.num_envs)
         #env = TanhClipAction(env)
         if self.cfg.normalize_env:
-            env = DiffNormalizeVec(env)
+            env = DiffNormalizeVec(env, normalize_reward=self.cfg.normalize_reward)
         return env
 
     def _make_sde_eval_fn(self, eval_policy = False) -> Callable[[jax.random.PRNGKey, SACTrainState, PyTreeNode | None], dict[str, float]]:
@@ -1078,7 +1079,7 @@ class ReppoDMERLTrainer:
             soft_reward=soft_reward,
             value=value,
             done=done,
-            truncated=next_env_state.truncated,
+            truncated=next_env_state.env_state.truncated,
             info=info,
             importance_weight=importance_weight,
         )

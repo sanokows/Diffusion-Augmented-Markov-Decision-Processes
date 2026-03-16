@@ -35,6 +35,7 @@ hyperparameters:
   max_grad_norm: 0.5
   normalize_advantages: True
   normalize_env: True
+  normalize_reward: False
   normalize_soft_reward: False
   anneal_lr: False
   num_eval: 20

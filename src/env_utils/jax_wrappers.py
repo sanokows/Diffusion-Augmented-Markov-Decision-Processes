@@ -640,6 +640,8 @@ class NormalizeVecObsEnvState:
     var: jnp.ndarray
     critic_mean: jnp.ndarray
     critic_var: jnp.ndarray
+    reward_mean: jnp.ndarray
+    reward_var: jnp.ndarray
     count: float
     env_state: environment.EnvState
     truncated: float
@@ -653,16 +655,21 @@ class NormalizeVecObsEnvState:
 
 
 class NormalizeVec(Wrapper):
-    def __init__(self, env):
+    def __init__(self, env, normalize_reward: bool = False):
         super().__init__(env)
+        self.normalize_reward = normalize_reward
 
     def _init_state(self, key):
         obs, critic_obs, env_state = self.env.reset(key)
+        reward_mean = jnp.array(0.0, dtype=obs.dtype)
+        reward_var = jnp.array(1.0, dtype=obs.dtype)
         return NormalizeVecObsEnvState(
             mean=jnp.mean(obs, axis=0),
             var=jnp.var(obs, axis=0),
             critic_mean=jnp.mean(critic_obs, axis=0),
             critic_var=jnp.var(critic_obs, axis=0),
+            reward_mean=reward_mean,
+            reward_var=reward_var,
             count=obs.shape[0],
             env_state=env_state,
         )
@@ -690,18 +697,24 @@ class NormalizeVec(Wrapper):
             var = params.var
             critic_mean = params.critic_mean
             critic_var = params.critic_var
+            reward_mean = params.reward_mean
+            reward_var = params.reward_var
             count = params.count
         else:
             mean = jnp.mean(obs, axis=0)
             var = jnp.var(obs, axis=0)
             critic_mean = jnp.mean(critic_obs, axis=0)
             critic_var = jnp.var(critic_obs, axis=0)
+            reward_mean = jnp.array(0.0, dtype=obs.dtype)
+            reward_var = jnp.array(1.0, dtype=obs.dtype)
             count = obs.shape[0]
         state = NormalizeVecObsEnvState(
             mean=mean,
             var=var,
             critic_mean=critic_mean,
             critic_var=critic_var,
+            reward_mean=reward_mean,
+            reward_var=reward_var,
             count=count,
             env_state=env_state,
             truncated=env_state.truncated,
@@ -722,6 +735,9 @@ class NormalizeVec(Wrapper):
         new_critic_mean, new_critic_var = self._compute_stats(
             state.critic_mean, state.critic_var, state.count, critic_obs
         )
+        new_reward_mean, new_reward_var = self._compute_stats(
+            state.reward_mean, state.reward_var, state.count, reward
+        )
 
         new_count = state.count + obs.shape[0]
 
@@ -730,11 +746,15 @@ class NormalizeVec(Wrapper):
             var=new_var,
             critic_mean=new_critic_mean,
             critic_var=new_critic_var,
+            reward_mean=new_reward_mean,
+            reward_var=new_reward_var,
             count=new_count,
             env_state=env_state,
             truncated=env_state.truncated,
             info=env_state.info,
         )
+        if self.normalize_reward:
+            reward = (reward - state.reward_mean) / jnp.sqrt(state.reward_var + 1e-2)
         return (
             (obs - state.mean) / jnp.sqrt(state.var + 1e-2),
             (critic_obs - state.critic_mean) / jnp.sqrt(state.critic_var + 1e-2),
@@ -755,6 +775,8 @@ class DiffNormalizeVecObsEnvState:
     critic_var: jnp.ndarray
     critic_action_mean: jnp.ndarray
     critic_action_var: jnp.ndarray
+    reward_mean: jnp.ndarray
+    reward_var: jnp.ndarray
     count: float
     env_state: environment.EnvState
     truncated: float
@@ -770,8 +792,9 @@ class DiffNormalizeVecObsEnvState:
 class DiffNormalizeVec(Wrapper):
     """Normalize only the `orig_obs` entry within dict observations."""
 
-    def __init__(self, env):
+    def __init__(self, env, normalize_reward: bool = False):
         super().__init__(env)
+        self.normalize_reward = normalize_reward
 
     def _compute_stats(self, mean, var, count, obs):
         batch_mean = jnp.mean(obs, axis=0)
@@ -822,6 +845,8 @@ class DiffNormalizeVec(Wrapper):
             critic_var = params.critic_var
             critic_action_mean = params.critic_action_mean
             critic_action_var = params.critic_action_var
+            reward_mean = params.reward_mean
+            reward_var = params.reward_var
             count = params.count
         else:
             mean = jnp.mean(orig_obs, axis=0)
@@ -840,6 +865,8 @@ class DiffNormalizeVec(Wrapper):
             else:
                 critic_action_mean = jnp.array(0.0)
                 critic_action_var = jnp.array(1.0)
+            reward_mean = jnp.array(0.0, dtype=orig_obs.dtype)
+            reward_var = jnp.array(1.0, dtype=orig_obs.dtype)
             count = orig_obs.shape[0]
         state = DiffNormalizeVecObsEnvState(
             mean=mean,
@@ -850,6 +877,8 @@ class DiffNormalizeVec(Wrapper):
             critic_var=critic_var,
             critic_action_mean=critic_action_mean,
             critic_action_var=critic_action_var,
+            reward_mean=reward_mean,
+            reward_var=reward_var,
             count=count,
             env_state=env_state,
             truncated=env_state.truncated,
@@ -902,6 +931,9 @@ class DiffNormalizeVec(Wrapper):
                 state.critic_action_mean,
                 state.critic_action_var,
             )
+        new_reward_mean, new_reward_var = self._compute_stats(
+            state.reward_mean, state.reward_var, state.count, reward
+        )
         new_count = state.count + orig_obs.shape[0]
 
         state = DiffNormalizeVecObsEnvState(
@@ -913,11 +945,15 @@ class DiffNormalizeVec(Wrapper):
             critic_var=new_critic_var,
             critic_action_mean=new_critic_action_mean,
             critic_action_var=new_critic_action_var,
+            reward_mean=new_reward_mean,
+            reward_var=new_reward_var,
             count=new_count,
             env_state=env_state,
             truncated=env_state.truncated,
             info=env_state.info,
         )
+        if self.normalize_reward:
+            reward = (reward - state.reward_mean) / jnp.sqrt(state.reward_var + 1e-2)
 
         return (
             self._normalize_obs_dict(

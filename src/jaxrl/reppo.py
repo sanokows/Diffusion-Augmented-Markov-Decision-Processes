@@ -102,6 +102,7 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    normalize_reward: bool = False
     action_clip_value: float = 1.0
     env_action_clip_value: float = 1.0
     eval_interval: int = 10
@@ -452,7 +453,7 @@ def make_train_fn(
     env = ClipAction(env, low=-cfg.env_action_clip_value, high=cfg.env_action_clip_value)
     # env = VecEnv(env, cfg.num_envs)
     if cfg.normalize_env:
-        env = NormalizeVec(env)
+        env = NormalizeVec(env, normalize_reward=cfg.normalize_reward)
     torso_id = None
     if getattr(cfg, "log_torso_com", False):
         mj_model = resolve_mj_model(env)

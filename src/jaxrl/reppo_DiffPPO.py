@@ -128,6 +128,7 @@ class PPOConfig(struct.PyTreeNode):
     normalize_advantages: bool
     normalize_env: bool
     anneal_lr: bool
+    normalize_reward: bool = False
     normalize_soft_reward: bool = False
     diffusion: DictConfig | dict | None = None
     num_eval: int = 25
@@ -614,7 +615,7 @@ class ReppoPPOTrainer:
             else:
                 norm_state = None
                 critic_norm_state = None
-            if cfg.normalize_soft_reward:
+            if cfg.normalize_reward or cfg.normalize_soft_reward:
                 reward_norm_state = self.reward_normalizer.init(
                     jnp.zeros((cfg.num_envs,), dtype=jnp.float32)
                 )
@@ -671,6 +672,14 @@ class ReppoPPOTrainer:
             next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )
+            if cfg.normalize_reward:
+                reward_norm_state = self.reward_normalizer.update(
+                    train_state.reward_normalization_state, reward
+                )
+                reward = self.reward_normalizer.normalize(reward_norm_state, reward)
+                train_state = train_state.replace(
+                    reward_normalization_state=reward_norm_state
+                )
             if cfg.update_entropy_lagrangian:
                 temperature = model.actor_module.temperature()
                 entropy_scale = temperature
@@ -684,7 +693,7 @@ class ReppoPPOTrainer:
                     reward
                     - log_ratio.squeeze() * entropy_scale
                 )
-            if cfg.normalize_soft_reward:
+            if cfg.normalize_soft_reward and not cfg.normalize_reward:
                 reward_norm_state = self.reward_normalizer.update(
                     train_state.reward_normalization_state, soft_reward
                 )
@@ -713,7 +722,7 @@ class ReppoPPOTrainer:
                 log_prob=gen_log_prob,
                 value=model.critic(critic_obs),
                 done=done,
-                truncated=next_env_state.truncated,
+                truncated=next_env_state.env_state.truncated,
                 info=info,
             )
             return (
