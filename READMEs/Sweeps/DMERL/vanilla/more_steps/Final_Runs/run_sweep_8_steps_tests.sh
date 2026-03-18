@@ -10,12 +10,14 @@ ENV_NAMES=(
 DIFF_STEP=8
 
 # Step 2a: Sweep tuples.
-# Format: "v_value|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor|num_bins|friction|seed"
+# Format: "vmin|vmax|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor|num_bins|friction|seed"
 SWEEP_TUPLES=(
-    "10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|0"
-    # "10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|1"
-    # "10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|2"
-    # "10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|3"
+    "-20|10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|0"
+    "-20|10|1e-3|3e-4|3e-4|0.25|0.9982|0.96|2|4|0.5|151|0.25|0"
+    "-20|10|1e-3|3e-4|3e-4|0.25|0.9922|0.96|2|4|0.5|151|0.25|0"
+    # "-10|10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|1"
+    # "-10|10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|2"
+    # "-10|10|1e-3|3e-4|3e-4|0.25|0.9952|0.96|2|4|0.5|151|0.25|3"
 )
 
 
@@ -66,25 +68,24 @@ declare -A LAUNCHED_CONFIGS
 launch_run() {
     local ENV_NAME="$1"
     local SWEEP_AXIS="$2"
-    local V_VALUE="$3"
-    local LR="$4"
-    local TEMPERATURE_LR="$5"
-    local LAGRANGIAN_LR="$6"
-    local AUX_LOSS_MULT="$7"
-    local GAMMA="$8"
-    local LMBDA="$9"
-    local NUM_MINI_BATCHES="${10}"
-    local ENT_TARGET_MULT="${11}"
-    local NUM_COLLECTION_STEP_FACTOR="${12}"
-    local NUM_BINS="${13}"
-    local FRICTION="${14}"
-    local SEED="${15:-0}"
-    local VMIN="-$V_VALUE"
-    local VMAX="$V_VALUE"
-    local CONFIG_KEY="${ENV_NAME}|${DIFF_STEP}|${V_VALUE}|${LR}|${TEMPERATURE_LR}|${LAGRANGIAN_LR}|${AUX_LOSS_MULT}|${GAMMA}|${LMBDA}|${NUM_MINI_BATCHES}|${ENT_TARGET_MULT}|${NUM_COLLECTION_STEP_FACTOR}|${NUM_BINS}|${FRICTION}|${SEED}"
+    local VMIN="$3"
+    local VMAX="$4"
+    local LR="$5"
+    local TEMPERATURE_LR="$6"
+    local LAGRANGIAN_LR="$7"
+    local AUX_LOSS_MULT="$8"
+    local GAMMA="$9"
+    local LMBDA="${10}"
+    local NUM_MINI_BATCHES="${11}"
+    local ENT_TARGET_MULT="${12}"
+    local NUM_COLLECTION_STEP_FACTOR="${13}"
+    local NUM_BINS="${14}"
+    local FRICTION="${15}"
+    local SEED="${16:-0}"
+    local CONFIG_KEY="${ENV_NAME}|${DIFF_STEP}|${VMIN}|${VMAX}|${LR}|${TEMPERATURE_LR}|${LAGRANGIAN_LR}|${AUX_LOSS_MULT}|${GAMMA}|${LMBDA}|${NUM_MINI_BATCHES}|${ENT_TARGET_MULT}|${NUM_COLLECTION_STEP_FACTOR}|${NUM_BINS}|${FRICTION}|${SEED}"
 
     if [ -n "${LAUNCHED_CONFIGS[$CONFIG_KEY]+x}" ]; then
-        echo "Skipping duplicate config from axis=$SWEEP_AXIS: env.name=$ENV_NAME diff_steps=$DIFF_STEP v_value=$V_VALUE lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA"
+        echo "Skipping duplicate config from axis=$SWEEP_AXIS: env.name=$ENV_NAME diff_steps=$DIFF_STEP vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA"
         return
     fi
     LAUNCHED_CONFIGS["$CONFIG_KEY"]=1
@@ -96,12 +97,12 @@ launch_run() {
         echo "Waiting for previous run on GPU slot $GPU_SLOT (pid ${GPU_PIDS[$GPU_SLOT]})..."
         wait "${GPU_PIDS[$GPU_SLOT]}"
     fi
-    echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP v_value=$V_VALUE lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA vmin=$VMIN vmax=$VMAX num_bins=$NUM_BINS friction=$FRICTION seed=$SEED on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
+    echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA num_bins=$NUM_BINS friction=$FRICTION seed=$SEED on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
         wandb.project_suffix="_FR_more_steps_final" \
         hyperparameters.num_eval=50 \
-        hyperparameters.total_time_steps=80000000 \
+        hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
         hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
         hyperparameters.lr="$LR" \
@@ -130,9 +131,9 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
 
     for SWEEP_TUPLE in "${SWEEP_TUPLES[@]}"; do
-        IFS='|' read -r V_VALUE LR TEMPERATURE_LR LAGRANGIAN_LR AUX_LOSS_MULT GAMMA LMBDA NUM_MINI_BATCHES ENT_TARGET_MULT NUM_COLLECTION_STEP_FACTOR NUM_BINS FRICTION SEED <<< "$SWEEP_TUPLE"
+        IFS='|' read -r VMIN VMAX LR TEMPERATURE_LR LAGRANGIAN_LR AUX_LOSS_MULT GAMMA LMBDA NUM_MINI_BATCHES ENT_TARGET_MULT NUM_COLLECTION_STEP_FACTOR NUM_BINS FRICTION SEED <<< "$SWEEP_TUPLE"
         launch_run "$ENV_NAME" "sweep_tuple" \
-            "$V_VALUE" "$LR" "$TEMPERATURE_LR" "$LAGRANGIAN_LR" "$AUX_LOSS_MULT" \
+            "$VMIN" "$VMAX" "$LR" "$TEMPERATURE_LR" "$LAGRANGIAN_LR" "$AUX_LOSS_MULT" \
             "$GAMMA" "$LMBDA" "$NUM_MINI_BATCHES" "$ENT_TARGET_MULT" "$NUM_COLLECTION_STEP_FACTOR" "$NUM_BINS" "$FRICTION" "$SEED"
     done
 done

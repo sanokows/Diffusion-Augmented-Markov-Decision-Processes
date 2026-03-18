@@ -25,7 +25,7 @@ python -m src.jaxrl.reppo_fix env.name=WalkerRun env=mjx_dmc experiment_override
 ### HumanoidRun 
 python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50 hyperparameters.log_torso_com=true
 
-python -m src.jaxrl.reppo env.name=G1JoystickFlatTerrain env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50
+python -m src.jaxrl.reppo env.name=G1JoystickFlatTerrain env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50 hyperparameters.normalize_reward=true hyperparameters.vmin=0 hyperparameters.vmax=150
 
 
 
