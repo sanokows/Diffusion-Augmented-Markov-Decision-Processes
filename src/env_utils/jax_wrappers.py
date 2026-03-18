@@ -792,9 +792,12 @@ class DiffNormalizeVecObsEnvState:
 class DiffNormalizeVec(Wrapper):
     """Normalize only the `orig_obs` entry within dict observations."""
 
-    def __init__(self, env, normalize_reward: bool = False):
+    def __init__(self, env, normalize_reward: bool = False, num_diff_steps: int | None = None):
         super().__init__(env)
         self.normalize_reward = normalize_reward
+        if num_diff_steps is None:
+            raise ValueError("num_diff_steps must be provided for DiffNormalizeVec.")
+        self.num_diff_steps = num_diff_steps
 
     def _compute_stats(self, mean, var, count, obs):
         batch_mean = jnp.mean(obs, axis=0)
@@ -931,8 +934,9 @@ class DiffNormalizeVec(Wrapper):
                 state.critic_action_mean,
                 state.critic_action_var,
             )
+        reward_count = state.count / self.num_diff_steps
         new_reward_mean, new_reward_var = self._compute_stats(
-            state.reward_mean, state.reward_var, state.count, reward
+            state.reward_mean, state.reward_var, reward_count, reward
         )
         new_count = state.count + orig_obs.shape[0]
 

@@ -394,7 +394,11 @@ class ReppoDMERLTrainer:
         env = LogWrapper(env, self.cfg.num_envs)
         #env = TanhClipAction(env)
         if self.cfg.normalize_env:
-            env = DiffNormalizeVec(env, normalize_reward=self.cfg.normalize_reward)
+            env = DiffNormalizeVec(
+                env,
+                normalize_reward=self.cfg.normalize_reward,
+                num_diff_steps=self.cfg.diffusion.diff_steps,
+            )
         return env
 
     def _make_sde_eval_fn(self, eval_policy = False) -> Callable[[jax.random.PRNGKey, SACTrainState, PyTreeNode | None], dict[str, float]]:
