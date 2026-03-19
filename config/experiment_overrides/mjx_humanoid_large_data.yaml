@@ -1,5 +1,5 @@
 hyperparameters:
-  gamma: 0.99
+  gamma: 0.97
   critic_hidden_dim: 1024
   num_envs: 1024
   num_steps: 128

@@ -236,6 +236,7 @@ class ReppoConfig(struct.PyTreeNode):
     project_unit_ball: bool = True
     project_only_if_exceeds: bool = True
     use_current_critic_for_actor_samples: bool = True
+    normalize_reward: bool = False
 
 
 class SACTrainState(struct.PyTreeNode):

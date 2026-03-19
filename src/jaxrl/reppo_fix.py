@@ -102,6 +102,7 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    normalize_reward: bool = False
     action_clip_value: float = 1.0
     env_action_clip_value: float = 1.0
     eval_interval: int = 10
