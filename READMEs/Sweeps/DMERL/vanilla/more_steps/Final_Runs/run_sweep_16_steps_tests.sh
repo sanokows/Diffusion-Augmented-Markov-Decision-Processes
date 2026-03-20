@@ -117,7 +117,7 @@ launch_run() {
         hyperparameters.ent_target_mult="$ENT_TARGET_MULT" \
         hyperparameters.num_collection_step_factor="$NUM_COLLECTION_STEP_FACTOR" \
         hyperparameters.ent_start=0.01 \
-        hyperparameters.normalize_reward=true \
+        hyperparameters.normalize_reward=false \
         env=mjx_humanoid_dime \
         num_trials=1 \
         seed="$SEED" \
