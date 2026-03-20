@@ -12,9 +12,10 @@ DIFF_STEP=4
 # Step 2a: Sweep tuples.
 # Format: "vmin|vmax|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor|num_bins|friction|seed"
 SWEEP_TUPLES=(
-    "-25|20|1e-3|3e-4|3e-4|0.15|0.9938|0.96|4|4|0.5|151|0.25|0"
-    "-25|20|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|0"
-    "-25|20|1e-3|3e-4|3e-4|0.15|0.9878|0.96|4|4|0.5|151|0.25|0"
+    "-20|12|2e-3|3e-4|3e-4|0.25|0.9924|0.96|3|2|0.5|151|0.25|0"
+    "-25|10|1e-3|3e-4|3e-4|0.25|0.9924|0.96|3|2|0.5|151|0.25|0"
+    "-20|12|1e-3|3e-4|3e-4|0.25|0.9924|0.96|3|2|0.5|151|0.25|0"
+    "-25|20|1e-3|3e-4|3e-4|0.25|0.9924|0.96|3|2|0.5|151|0.25|0"
     # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|1"
     # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|2"
     # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|3"
@@ -110,7 +111,7 @@ launch_run() {
         hyperparameters.num_collection_step_factor="$NUM_COLLECTION_STEP_FACTOR" \
         hyperparameters.ent_start=0.01 \
         hyperparameters.diffusion.friction="$FRICTION" \
-        hyperparameters.normalize_reward=true \
+        hyperparameters.normalize_reward=false \
         env=mjx_humanoid_dime \
         num_trials=1 \
         seed="$SEED" \
