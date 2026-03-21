@@ -11,7 +11,7 @@ hyperparameters:
  # num_collection_step_factor: 0.5
   #vmin: -100
   #vmax: 200
-  num_bins: 301
+  #num_bins: 301
   num_eval: 50
   #aux_loss_mult: 0.25 ## increase a bit??
   #aux_loss_alpha: 0.98 #0.95
