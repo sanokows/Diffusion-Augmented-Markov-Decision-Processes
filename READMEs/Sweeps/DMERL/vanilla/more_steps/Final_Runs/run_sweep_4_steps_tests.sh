@@ -12,13 +12,14 @@ DIFF_STEP=4
 # Step 2a: Sweep tuples.
 # Format: "vmin|vmax|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor|num_bins|friction|seed"
 SWEEP_TUPLES=(
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|4|0.5|151|0.25|0"
     "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|0"
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|8|0.5|301|0.25|0"
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|4|0.5|301|0.25|0"
-    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|1"
-    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|2"
-    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|3"
+    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|1"
+    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|2"
+    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|3"
+    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|4"
+    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|5"
+    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|
+
 )
 
 
@@ -93,7 +94,7 @@ launch_run() {
     echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA num_bins=$NUM_BINS friction=$FRICTION seed=$SEED on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_more_steps_rew_norm" \
+        wandb.project_suffix="_FR_more_steps_rew_norm_final" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
