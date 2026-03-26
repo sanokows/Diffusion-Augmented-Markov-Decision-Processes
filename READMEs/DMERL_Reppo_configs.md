@@ -88,7 +88,5 @@ CUDA_VISIBLE_DEVICES=2 python -m src.jaxrl.reppo_DMERL_new env.name=CartpoleSwin
 
 python -m src.jaxrl.reppo_DMERL_new env.name=HumanoidWalk hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=mjx_dmc_large_data_dmerl_hard_envs.yaml seed=0 hyperparameters.log_torso_com=true
 
-#### rerun these runs and seeds
-finger spin seed 3 and 7?
-walkerrun 2 seeds
-walkerwalk 3 seeds
+
+exec python -m src.jaxrl.reppo_DMERL_new env.name=TurningDoubleWellEnv hyperparameters.num_eval=50 hyperparameters.total_time_steps=10000000 hyperparameters.diffusion.diff_steps=8 env=mjx_double_well experiment_overrides=mjx_double_well_DMERL

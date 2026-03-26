@@ -34,11 +34,15 @@ def _build_env(cfg):
     if cfg.env.type != "mjx":
         raise ValueError(f"Unknown environment type: {cfg.env.type}")
 
+    env_config = OmegaConf.select(cfg, "env.config")
+    if env_config is not None:
+        env_config = OmegaConf.to_container(env_config, resolve=True)
     env = MjxGymnaxWrapper(
         cfg.env.name,
         episode_length=cfg.env.max_episode_steps,
         reward_scale=cfg.env.reward_scaling,
         push_distractions=cfg.env.get("push_distractions", False),
+        config=env_config,
         asymmetric_observation=cfg.env.get("asymmetric_observation", False),
     )
     diff_cfg = cfg.hyperparameters.diffusion

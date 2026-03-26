@@ -14,6 +14,7 @@ from gymnax.environments.spaces import Box
 from ml_collections import ConfigDict
 from mujoco_playground import MjxEnv, registry
 from src.env_utils.planar_path_env import PlanarPathEnv
+from src.env_utils.turning_double_well_env import TurningDoubleWellEnv
 from mujoco_playground._src.wrapper import wrap_for_brax_training, Wrapper
 import distrax
 
@@ -35,6 +36,24 @@ class MjxGymnaxWrapper(Environment):
                 self.sanitize_nans = False
                 self.reward_scale = reward_scale
                 self.episode_length = episode_length
+                if isinstance(self.env.observation_size, int):
+                    self.dict_obs = False
+                else:
+                    self.dict_obs = True
+                if asymmetric_observation:
+                    self.dict_obs_key = "privileged_state"
+                else:
+                    self.dict_obs_key = "state"
+                print(self.dict_obs_key)
+                super().__init__()
+                return
+            if env_or_name == "TurningDoubleWellEnv":
+                env_kwargs = dict(config) if config is not None else {}
+                env_kwargs.setdefault("horizon", episode_length or 200)
+                self.env = TurningDoubleWellEnv(**env_kwargs)
+                self.sanitize_nans = False
+                self.reward_scale = reward_scale
+                self.episode_length = self.env.horizon
                 if isinstance(self.env.observation_size, int):
                     self.dict_obs = False
                 else:
@@ -175,8 +194,11 @@ class MjxGymnaxWrapper(Environment):
                 done,
                 {},
             )
-        #print the step of the current state
-        #jax.debug.print("Env step info={}", state.info["steps"])
+        #print the step of the current state also print truncation
+        # jax.debug.print("Orignial Step truncation={}", state.info["truncation"])
+        # jax.debug.print("Orignial Env step info={}", state.info["steps"])
+        # jax.debug.print("Env step reward={}", state.reward)
+        # jax.debug.print("Orignial Env state.done={}", state.done)
         return (
             obs,
             critic_obs,
@@ -450,6 +472,11 @@ class MjxDiffEnvWrapper(Wrapper):
         )
         #jax.debug.print("selected reward: {r}", r=reward)
         #jax.debug.print("Step info={}", info)
+        # jax.debug.print("diff Env step info={}", state.info["steps"])
+        # jax.debug.print("diff Env step reward={}", reward)
+        # jax.debug.print("diff Env state.done={}", state.done)
+        # jax.debug.print("diff Step truncation={}", state.info["truncation"])
+
         new_state = MjxDiffEnvState(
             env_state=env_state,
             obs=raw_obs,

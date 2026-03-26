@@ -344,6 +344,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         def _single_gen_log_prob(p, obs, key):
             actor_single = nnx.merge(updated_state.actor.graphdef, p)
             obs_batched = jax.tree_util.tree_map(lambda x: x[None], obs)
+            jax.debug.print("train_update_step_4_env shape: {shape}", shape=key.shape)
             _, gen_log_prob, _ = actor_single.vmap_sample_next_step(obs_batched, key)
             return gen_log_prob.squeeze()
 
@@ -392,6 +393,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
                 actor_model = nnx.merge(updated_state.actor.graphdef, params)
         temperature = _resolve_temperature(actor_model, cfg, updated_state)
 
+        jax.debug.print("train_update_step_5_env shape: {shape}", shape=step_key.shape)
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
         )
@@ -542,56 +544,60 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         )
         return loss, metrics
 
-def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
-    key, env_state, inner_state, obs, critic_obs = carry
-    use_langevin = bool(cfg.diffusion.score_model.langevin_param)
-    key, act_key, step_key = jax.random.split(key, 3)
-    step_key = jax.random.split(step_key, cfg.num_envs)
-    obs_for_actor = maybe_add_q_grad(obs, critic_obs, actor_model, critic_model, use_langevin)
-    action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
-        obs_for_actor, act_key
-    )
-    action = jax.lax.stop_gradient(action)
-    next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
-        step_key, env_state, action
-    )
-    importance_weight = jnp.zeros((cfg.num_envs,))
-    key, next_act_key = jax.random.split(key)
-    next_obs_for_actor = maybe_add_q_grad(
-        next_obs, next_critic_obs, actor_model, critic_model, use_langevin
-    )
-    next_action, next_gen_log_prob, next_dest_log_prob = (
-        actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
-    )
-    next_action = jax.lax.stop_gradient(next_action)
-    next_emb, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
-    log_ratio = jax.lax.stop_gradient(
-        next_gen_log_prob - next_dest_log_prob
-    )
-    temperature = _resolve_temperature(actor_model, cfg, inner_state)
-    soft_reward = (
-        reward
-        - cfg.gamma * log_ratio.squeeze() * temperature
-    )
-    transition = Transition(
-        obs=obs,
-        critic_obs=critic_obs,
-        action=action,
-        next_emb=next_emb,
-        next_state_emb=next_emb,
-        next_emb_mask=jnp.ones_like(reward),
-        reward=reward,
-        soft_reward=soft_reward,
-        value=value,
-        done=done,
-        truncated=next_env_state.truncated,
-        info=info,
-        importance_weight=importance_weight,
-    )
-    return (
-        key,
-        next_env_state,
-        inner_state,
-        next_obs,
-        next_critic_obs,
-    ), transition
+# def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
+#     key, env_state, inner_state, obs, critic_obs = carry
+#     use_langevin = bool(cfg.diffusion.score_model.langevin_param)
+#     key, act_key, step_key = jax.random.split(key, 3)
+#     step_key = jax.random.split(step_key, cfg.num_envs)
+#     obs_for_actor = maybe_add_q_grad(obs, critic_obs, actor_model, critic_model, use_langevin)
+
+#     jax.debug.print("train_update_step_1_env shape: {shape}", shape=act_key.shape)
+#     action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
+#         obs_for_actor, act_key
+#     )
+#     action = jax.lax.stop_gradient(action)
+#     next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
+#         step_key, env_state, action
+#     )
+#     importance_weight = jnp.zeros((cfg.num_envs,))
+#     key, next_act_key = jax.random.split(key)
+#     next_obs_for_actor = maybe_add_q_grad(
+#         next_obs, next_critic_obs, actor_model, critic_model, use_langevin
+#     )
+
+#     jax.debug.print("train_update_step_2_env shape: {shape}", shape=next_act_key.shape)
+#     next_action, next_gen_log_prob, next_dest_log_prob = (
+#         actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
+#     )
+#     next_action = jax.lax.stop_gradient(next_action)
+#     next_emb, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
+#     log_ratio = jax.lax.stop_gradient(
+#         next_gen_log_prob - next_dest_log_prob
+#     )
+#     temperature = _resolve_temperature(actor_model, cfg, inner_state)
+#     soft_reward = (
+#         reward
+#         - cfg.gamma * log_ratio.squeeze() * temperature
+#     )
+#     transition = Transition(
+#         obs=obs,
+#         critic_obs=critic_obs,
+#         action=action,
+#         next_emb=next_emb,
+#         next_state_emb=next_emb,
+#         next_emb_mask=jnp.ones_like(reward),
+#         reward=reward,
+#         soft_reward=soft_reward,
+#         value=value,
+#         done=done,
+#         truncated=next_env_state.truncated,
+#         info=info,
+#         importance_weight=importance_weight,
+#     )
+#     return (
+#         key,
+#         next_env_state,
+#         inner_state,
+#         next_obs,
+#         next_critic_obs,
+#     ), transition

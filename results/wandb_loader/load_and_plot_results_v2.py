@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""
+This script produces two families of plots for each method at each training step:
+
+1) Mean plots:
+   - Central curve: arithmetic mean over all available run values in a (method, step) group.
+   - Uncertainty band: standard error of the mean (SEM) over the same full set of runs.
+   - Interpretation: best when you want the conventional average performance and every seed
+     should contribute equally, including extreme high/low outcomes.
+
+2) IQM plots (Interquartile Mean):
+   - Central curve: values in each (method, step) group are sorted; only the middle 50%
+     (25th-75th percentile slice) is averaged.
+   - Uncertainty band: SEM computed on that same middle-50% subset.
+   - Interpretation: more robust to outlier seeds, because unusually bad/good runs in the
+     outer quartiles do not affect the IQM center or its error band.
+
+In short: mean plots summarize all seeds directly, while IQM plots summarize the robust
+"typical" seed behavior by trimming the outer quartiles before averaging.
+"""
 
 import argparse
 from collections import defaultdict
@@ -103,6 +122,8 @@ METHOD_STYLE_OVERRIDES = {
     "DME-REPPO (ours)": "-",
     "REPPO-DiME": "-",
 }
+MEAN_FIGURES_SUBDIR = "mean"
+IQM_FIGURES_SUBDIR = "IQM"
 
 
 def parse_args() -> argparse.Namespace:
@@ -277,6 +298,39 @@ def build_distinct_palette(count: int) -> list[str]:
     return [mcolors.to_hex(cm.viridis(start + step * idx)) for idx in range(count)]
 
 
+def interquartile_mean_and_stderr(values: pd.Series) -> tuple[float, float]:
+    clean = values.dropna().sort_values().to_numpy()
+    n = clean.size
+    if n == 0:
+        return float("nan"), float("nan")
+    lower = int(math.floor(0.25 * n))
+    upper = int(math.ceil(0.75 * n))
+    if upper <= lower:
+        middle = clean
+    else:
+        middle = clean[lower:upper]
+    if middle.size == 0:
+        middle = clean
+    middle_series = pd.Series(middle)
+    iqm = float(middle_series.mean())
+    stderr = float(middle_series.sem()) if middle_series.size > 1 else float("nan")
+    return iqm, stderr
+
+
+def aggregate_method_step(data: pd.DataFrame, use_iqm: bool) -> pd.DataFrame:
+    grouped = data.groupby(["method", "step"])["value"]
+    if use_iqm:
+        iqm = grouped.apply(
+            lambda values: pd.Series(
+                interquartile_mean_and_stderr(values), index=["value", "stderr"]
+            )
+        ).unstack().reset_index()
+        return iqm
+    mean = grouped.mean().reset_index()
+    stderr = grouped.sem().reset_index().rename(columns={"value": "stderr"})
+    return mean.merge(stderr, on=["method", "step"], how="left")
+
+
 def _csv_paths_for_env(env_name: str) -> list[Path]:
     return sorted(CSV_RESULTS_DIR.glob(f"{env_name}*.csv"))
 
@@ -416,7 +470,15 @@ def main() -> int:
         multi_env = False
 
     figures_dir = os.path.join("results", "wandb_loader", "Figures")
-    os.makedirs(figures_dir, exist_ok=True)
+    mean_figures_dir = os.path.join(figures_dir, MEAN_FIGURES_SUBDIR)
+    iqm_figures_dir = os.path.join(figures_dir, IQM_FIGURES_SUBDIR)
+    os.makedirs(mean_figures_dir, exist_ok=True)
+    os.makedirs(iqm_figures_dir, exist_ok=True)
+    out_stem: str | None = None
+    out_ext = ""
+    if args.out:
+        out_name = os.path.basename(args.out)
+        out_stem, out_ext = os.path.splitext(out_name)
     filters = {"state": args.state} if args.state else {}
 
     env_results = []
@@ -591,12 +653,11 @@ def main() -> int:
         method_run_counts = result["method_run_counts"]
         skipped = result["skipped"]
 
-        grouped = data.groupby(["method", "step"])["value"]
-        mean = grouped.mean().reset_index()
-        stderr = grouped.sem().reset_index().rename(columns={"value": "stderr"})
-        merged = mean.merge(stderr, on=["method", "step"], how="left")
+        merged = aggregate_method_step(data, use_iqm=False)
+        merged_iqm = aggregate_method_step(data, use_iqm=True)
 
         result["merged"] = merged
+        result["merged_iqm"] = merged_iqm
 
         plt.figure(figsize=(9, 5))
         for method, method_df in merged.groupby("method"):
@@ -632,19 +693,64 @@ def main() -> int:
         plt.xlim(left=0, right=PLOT_MAX_STEPS)
         plt.tight_layout()
 
-        if args.out:
+        if out_stem is not None:
             if multi_env:
-                base, ext = os.path.splitext(args.out)
-                output_path = f"{base}_{env_name}{ext}"
+                mean_filename = f"{out_stem}_{env_name}{out_ext}"
             else:
-                output_path = args.out
+                mean_filename = f"{out_stem}{out_ext}"
         else:
-            output_path = os.path.join(
-                figures_dir, f"dime_{env_name}_methods_avg_eval_return.png"
-            )
+            mean_filename = f"dime_{env_name}_methods_avg_eval_return.png"
+        output_path = os.path.join(mean_figures_dir, mean_filename)
 
         plt.savefig(output_path, dpi=800)
         print(f"Saved plot to {output_path}")
+        plt.close()
+
+        plt.figure(figsize=(9, 5))
+        for method, method_df in merged_iqm.groupby("method"):
+            method_df = method_df.sort_values("step")
+            run_count = len(method_run_counts[method])
+            label = f"{method}"# (n={run_count})"
+            color = color_by_method.get(method)
+            linestyle = style_by_method.get(method, "-")
+            plt.plot(
+                method_df["step"],
+                method_df["value"],
+                label=label,
+                color=color,
+                linestyle=linestyle,
+                linewidth=LINE_WIDTH,
+                alpha=alpha_line,
+            )
+            if method_df["stderr"].notna().any():
+                plt.fill_between(
+                    method_df["step"],
+                    method_df["value"] - method_df["stderr"],
+                    method_df["value"] + method_df["stderr"],
+                    color=color,
+                    alpha=alpha,
+                )
+
+        plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.title(f"{env_name} (IQM)", fontsize=TITLE_FONTSIZE)
+        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE)
+        plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+        plt.xlim(left=0, right=PLOT_MAX_STEPS)
+        plt.tight_layout()
+
+        if out_stem is not None:
+            if multi_env:
+                iqm_filename = f"{out_stem}_{env_name}_iqm{out_ext}"
+            else:
+                iqm_filename = f"{out_stem}_iqm{out_ext}"
+        else:
+            iqm_filename = f"dime_{env_name}_methods_iqm_eval_return.png"
+        output_iqm_path = os.path.join(iqm_figures_dir, iqm_filename)
+        plt.savefig(output_iqm_path, dpi=800)
+        print(f"Saved IQM plot to {output_iqm_path}")
+        plt.close()
 
         if skipped:
             print(f"Skipped {skipped} runs without usable data in {env_name}.")
@@ -721,20 +827,98 @@ def main() -> int:
             )
         fig.tight_layout(rect=[0, 0, 1, 0.92])
 
-        if args.out:
-            base, ext = os.path.splitext(args.out)
-            grid_output = f"{base}_grid{ext}"
+        if out_stem is not None:
+            grid_output = os.path.join(mean_figures_dir, f"{out_stem}_grid{out_ext}")
         else:
-            grid_output = os.path.join(figures_dir, "all_envs_methods_grid_eval_return.png")
+            grid_output = os.path.join(
+                mean_figures_dir, "all_envs_methods_grid_eval_return.png"
+            )
         fig.savefig(grid_output, dpi=800, bbox_inches="tight")
         print(f"Saved plot to {grid_output}")
+        plt.close(fig)
+
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(ncols * 4.2, nrows * 3.2),
+            sharex=True,
+            sharey=False,
+        )
+        if isinstance(axes, Axes):
+            axes_list = [axes]
+        else:
+            axes_list = list(axes.ravel())
+        legend_handles = {}
+
+        for idx, result in enumerate(env_results):
+            ax = axes_list[idx]
+            env_name = result["env_name"]
+            merged_iqm = result["merged_iqm"]
+            method_run_counts = result["method_run_counts"]
+
+            for method, method_df in merged_iqm.groupby("method"):
+                method_df = method_df.sort_values("step")
+                run_count = len(method_run_counts[method])
+                label = f"{method}"# (n={run_count})"
+                color = color_by_method.get(method)
+                linestyle = style_by_method.get(method, "-")
+                (line,) = ax.plot(
+                    method_df["step"],
+                    method_df["value"],
+                    label=label,
+                    color=color,
+                    linestyle=linestyle,
+                    linewidth=LINE_WIDTH,
+                    alpha=alpha_line,
+                )
+                if method not in legend_handles:
+                    legend_handles[method] = line
+                if method_df["stderr"].notna().any():
+                    ax.fill_between(
+                        method_df["step"],
+                        method_df["value"] - method_df["stderr"],
+                        method_df["value"] + method_df["stderr"],
+                        color=color,
+                        alpha=alpha,
+                    )
+
+            ax.set_title(f"{env_name} (IQM)", fontsize=TITLE_FONTSIZE)
+            ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+            ax.set_xlim(left=0, right=PLOT_MAX_STEPS)
+
+        for idx in range(num_envs, len(axes_list)):
+            fig.delaxes(axes_list[idx])
+        fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
+        fig.supylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
+        if legend_handles:
+            handles = [legend_handles[m] for m in sorted(legend_handles.keys())]
+            labels = [h.get_label() for h in handles]
+            legend_cols = max(1, math.ceil(len(handles) / 2))
+            fig.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.995),
+                ncol=legend_cols,
+                fontsize=LEGEND_FONTSIZE,
+            )
+        fig.tight_layout(rect=[0, 0, 1, 0.92])
+
+        if out_stem is not None:
+            grid_iqm_output = os.path.join(iqm_figures_dir, f"{out_stem}_grid_iqm{out_ext}")
+        else:
+            grid_iqm_output = os.path.join(
+                iqm_figures_dir, "all_envs_methods_grid_iqm_eval_return.png"
+            )
+        fig.savefig(grid_iqm_output, dpi=800, bbox_inches="tight")
+        print(f"Saved IQM plot to {grid_iqm_output}")
+        plt.close(fig)
 
     if multi_env and env_results:
         overall_records = pd.concat([r["records"] for r in env_results], ignore_index=True)
-        overall_grouped = overall_records.groupby(["method", "step"])["value"]
-        overall_mean = overall_grouped.mean().reset_index()
-        overall_stderr = overall_grouped.sem().reset_index().rename(columns={"value": "stderr"})
-        overall_merged = overall_mean.merge(overall_stderr, on=["method", "step"], how="left")
+        overall_merged = aggregate_method_step(overall_records, use_iqm=False)
+        overall_merged_iqm = aggregate_method_step(overall_records, use_iqm=True)
 
         overall_method_runs: dict[str, set[str]] = defaultdict(set)
         for result in env_results:
@@ -775,9 +959,48 @@ def main() -> int:
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.tight_layout()
 
-        output_path = os.path.join(figures_dir, "all_envs_methods_avg_eval_return.png")
+        output_path = os.path.join(mean_figures_dir, "all_envs_methods_avg_eval_return.png")
         plt.savefig(output_path, dpi=800)
         print(f"Saved plot to {output_path}")
+        plt.close()
+
+        plt.figure(figsize=(9, 5))
+        for method, method_df in overall_merged_iqm.groupby("method"):
+            method_df = method_df.sort_values("step")
+            run_count = overall_run_counts.get(method, 0)
+            label = f"{method}"# (n={run_count})"
+            color = color_by_method.get(method)
+            linestyle = style_by_method.get(method, "-")
+            plt.plot(
+                method_df["step"],
+                method_df["value"],
+                label=label,
+                color=color,
+                linestyle=linestyle,
+                linewidth=LINE_WIDTH,
+                 alpha = alpha_line,
+            )
+            if method_df["stderr"].notna().any():
+                plt.fill_between(
+                    method_df["step"],
+                    method_df["value"] - method_df["stderr"],
+                    method_df["value"] + method_df["stderr"],
+                    color=color,
+                    alpha=alpha,
+                )
+
+        plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
+        plt.title("All environments (IQM)", fontsize=TITLE_FONTSIZE)
+        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE_all)
+        plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+        plt.tight_layout()
+
+        output_iqm_path = os.path.join(iqm_figures_dir, "all_envs_methods_iqm_eval_return.png")
+        plt.savefig(output_iqm_path, dpi=800)
+        print(f"Saved IQM plot to {output_iqm_path}")
+        plt.close()
 
     return 0
 

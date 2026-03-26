@@ -1,0 +1,24 @@
+type: mjx
+name: TurningDoubleWellEnv
+max_episode_steps: 100
+reward_scaling: 1.0
+terminate: false
+asymmetric_observation: false
+asymmetric_obs: false
+
+# Extra kwargs passed to `TurningDoubleWellEnv(...)` when `env.name=TurningDoubleWellEnv`.
+config:
+  step_size: 1.0
+  max_turn_deg: 90.0
+  initial_heading_deg: 0.0
+  snap_action_to_optimal: true
+  randomize_initial_heading: true
+  well_angle_deg: 45.0
+  well_height: 0.85
+  transition_noise_deg: 0.0
+  mask_state_in_observation: false
+  use_distance_state: false
+  jit: false
+
+vmin: -20
+vmax: 130

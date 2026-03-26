@@ -647,7 +647,14 @@ def run(cfg: DictConfig):
     if cfg.env.type == "brax":
         env = BraxGymnaxWrapper(cfg.env.name)
     elif cfg.env.type == "mjx":
-        env = MjxGymnaxWrapper(cfg.env.name, episode_length=cfg.env.max_episode_steps)
+        env_config = OmegaConf.select(cfg, "env.config")
+        if env_config is not None:
+            env_config = OmegaConf.to_container(env_config, resolve=True)
+        env = MjxGymnaxWrapper(
+            cfg.env.name,
+            episode_length=cfg.env.max_episode_steps,
+            config=env_config,
+        )
     else:
         raise ValueError(f"Unknown environment type: {cfg.env.type}")
 
@@ -691,7 +698,14 @@ def tune(cfg: DictConfig):
             step=t,
         )
 
-    env = MjxGymnaxWrapper(cfg.env.name, episode_length=cfg.env.max_episode_steps)
+    env_config = OmegaConf.select(cfg, "env.config")
+    if env_config is not None:
+        env_config = OmegaConf.to_container(env_config, resolve=True)
+    env = MjxGymnaxWrapper(
+        cfg.env.name,
+        episode_length=cfg.env.max_episode_steps,
+        config=env_config,
+    )
 
     def train_agent():
         wandb.init(project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}")

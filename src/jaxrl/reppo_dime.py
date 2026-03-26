@@ -1,4 +1,7 @@
 import logging
+import os
+import pickle
+import re
 import time
 import typing
 from typing import Callable, Any
@@ -46,6 +49,33 @@ from src.networks.jax_models import (
 )
 
 logging.basicConfig(level=logging.INFO)
+
+def _sanitize_filename_component(text: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(text).strip())
+    return cleaned or "run"
+
+
+def _saved_models_dir() -> str:
+    # Hydra changes CWD into `outputs/...`; write checkpoints relative to repo root.
+    try:
+        repo_root = hydra.utils.get_original_cwd()
+    except Exception:
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    path = os.path.join(repo_root, "saved_models")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _to_numpy_tree(tree):
+    return jax.tree.map(lambda x: np.asarray(x), tree)
+
+
+def _take_last_metrics(metrics: dict) -> dict:
+    def _last(x):
+        x = jnp.asarray(x)
+        return x[-1] if x.ndim > 0 else x
+
+    return jax.tree.map(_last, metrics)
 
 
 def _sectioned_wandb_key(key: str) -> str:
@@ -139,6 +169,7 @@ class ReppoConfig(struct.PyTreeNode):
     hl_gauss: bool = False
     kl_bound: float = 1.0
     aux_loss_mult: float = 0.0
+    normalize_reward: bool = False
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
     use_critic_norm: bool = True
@@ -1313,11 +1344,15 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             terminate=cfg.env.terminate,
         )
     elif cfg.env.type == "mjx":
+        env_config = OmegaConf.select(cfg, "env.config")
+        if env_config is not None:
+            env_config = OmegaConf.to_container(env_config, resolve=True)
         env = MjxGymnaxWrapper(
             cfg.env.name,
             episode_length=cfg.env.max_episode_steps,
             reward_scale=cfg.env.reward_scaling,
             push_distractions=cfg.env.get("push_distractions", False),
+            config=env_config,
             asymmetric_observation=cfg.env.get("asymmetric_observation", False),
         )
     else:
@@ -1356,11 +1391,57 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
         key = jax.random.PRNGKey(cfg.seed)
         start = time.perf_counter()
-        _, metrics = jax.jit(train_fn, static_argnums=(1,))(
+        state, metrics = jax.jit(train_fn, static_argnums=(1,))(
             key, ReppoConfig(**cfg.hyperparameters)
         )
         jax.block_until_ready(metrics)
         duration = time.perf_counter() - start
+
+        # Export final weights into repo_root/saved_models with a descriptive filename.
+        try:
+            final_metrics = _take_last_metrics(metrics)
+            method_name = "reppo_dime"
+            env_name = str(cfg.env.name)
+            timestamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+            filename = "__".join(
+                [
+                    _sanitize_filename_component(method_name),
+                    _sanitize_filename_component(env_name),
+                    f"seed{int(cfg.seed)}",
+                    f"trial{i}",
+                    f"ts{timestamp}",
+                ]
+            ) + ".pkl"
+            save_path = os.path.join(_saved_models_dir(), filename)
+            checkpoint = {
+                "method_name": method_name,
+                "env_name": env_name,
+                "seed": int(cfg.seed),
+                "trial": int(i),
+                "saved_at": time.time(),
+                "num_seeds": int(np.asarray(state.time_steps).shape[0])
+                if np.asarray(state.time_steps).ndim > 0
+                else 1,
+                "actor_params": _to_numpy_tree(state.actor.params),
+                "actor_target_params": _to_numpy_tree(state.actor_target.params),
+                "critic_params": _to_numpy_tree(state.critic.params),
+                "actor_step": _to_numpy_tree(state.actor.step),
+                "critic_step": _to_numpy_tree(state.critic.step),
+                "time_steps": _to_numpy_tree(state.time_steps),
+                "iteration": _to_numpy_tree(state.iteration),
+                "last_env_state": _to_numpy_tree(state.last_env_state)
+                if bool(getattr(cfg.hyperparameters, "normalize_env", False))
+                else None,
+                "final_eval_metrics": _to_numpy_tree(
+                    utils.filter_prefix("eval", final_metrics)
+                ),
+                "cfg": OmegaConf.to_container(cfg, resolve=True),
+            }
+            with open(save_path, "wb") as f:
+                pickle.dump(checkpoint, f)
+            logging.info("Saved final model checkpoint to %s", save_path)
+        except Exception as e:
+            logging.exception("Failed to export final model checkpoint: %s", e)
 
         # Save metrics and finish the run
         logging.info(f"Training took {duration:.2f} seconds.")

@@ -106,6 +106,25 @@ def _to_numpy_tree(tree):
     return jax.tree.map(lambda x: np.asarray(x), tree)
 
 
+def _saved_models_dir() -> str:
+    # Hydra changes CWD into `outputs/...`; write checkpoints relative to repo root.
+    try:
+        repo_root = hydra.utils.get_original_cwd()
+    except Exception:
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    path = os.path.join(repo_root, "saved_models")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _take_last_metrics(metrics: dict) -> dict:
+    def _last(x):
+        x = jnp.asarray(x)
+        return x[-1] if x.ndim > 0 else x
+
+    return jax.tree.map(_last, metrics)
+
+
 class Policy(typing.Protocol):
     def __call__(
         self,
@@ -431,6 +450,7 @@ class ReppoDMERLTrainer:
                 obs_for_actor = maybe_add_q_grad(
                     obs, critic_obs, actor_model, critic_model, use_langevin
                 )
+                #jax.debug.print("eval_step_env shape: {shape}", shape=policy_key.shape)
                 action, *_ = actor_model.vmap_sample_next_step(
                     obs_for_actor, policy_key
                 )
@@ -1059,6 +1079,7 @@ class ReppoDMERLTrainer:
         next_obs_for_actor = maybe_add_q_grad(
             next_obs, next_critic_obs, actor_model, critic_model, use_langevin
         )
+        # print key shapez
         next_action, next_gen_log_prob, next_dest_log_prob = (
             actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
         )
@@ -1668,11 +1689,15 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     if cfg.env.type == "brax":
         raise ValueError("Wrappers are not implemented yet")
     elif cfg.env.type == "mjx":
+        env_config = OmegaConf.select(cfg, "env.config")
+        if env_config is not None:
+            env_config = OmegaConf.to_container(env_config, resolve=True)
         env = MjxGymnaxWrapper(
             cfg.env.name,
             episode_length=cfg.env.max_episode_steps,
             reward_scale=cfg.env.reward_scaling,
             push_distractions=cfg.env.get("push_distractions", False),
+            config=env_config,
             asymmetric_observation=cfg.env.get("asymmetric_observation", False),
         )
         diff_cfg = cfg.hyperparameters.diffusion
@@ -1721,10 +1746,60 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         logging.info(OmegaConf.to_yaml(cfg))
         key = jax.random.PRNGKey(cfg.seed)
         start = time.perf_counter()
-        _, metrics = jax.jit(train_fn, static_argnums=(1,))(key, trainer.cfg)
+        state, metrics = jax.jit(train_fn, static_argnums=(1,))(key, trainer.cfg)
         jax.block_until_ready(metrics)
         duration = time.perf_counter() - start
         logging.info(f"Training took {duration:.2f} seconds.")
+
+        # Export final weights into repo_root/saved_models with a descriptive filename.
+        try:
+            final_metrics = _take_last_metrics(metrics)
+            method_name = "reppo_DMERL_new"
+            env_name = str(cfg.env.name)
+            train_mode = str(getattr(cfg.hyperparameters, "train_mode", "reparam"))
+            timestamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+            filename = "__".join(
+                [
+                    _sanitize_dir_name(method_name),
+                    _sanitize_dir_name(env_name),
+                    f"trainmode{_sanitize_dir_name(train_mode)}",
+                    f"seed{int(cfg.seed)}",
+                    f"trial{i}",
+                    f"ts{timestamp}",
+                ]
+            ) + ".pkl"
+            save_path = os.path.join(_saved_models_dir(), filename)
+            checkpoint = {
+                "method_name": method_name,
+                "env_name": env_name,
+                "train_mode": train_mode,
+                "seed": int(cfg.seed),
+                "trial": int(i),
+                "saved_at": time.time(),
+                "actor_params": _to_numpy_tree(state.actor.params),
+                "actor_target_params": _to_numpy_tree(state.actor_target.params),
+                "critic_params": _to_numpy_tree(state.critic.params),
+                "actor_step": _to_numpy_tree(state.actor.step),
+                "critic_step": _to_numpy_tree(state.critic.step),
+                "time_steps": _to_numpy_tree(state.time_steps),
+                "iteration": _to_numpy_tree(state.iteration),
+                "num_seeds": int(np.asarray(state.time_steps).shape[0])
+                if np.asarray(state.time_steps).ndim > 0
+                else 1,
+                "last_env_state": _to_numpy_tree(state.last_env_state)
+                if bool(getattr(cfg.hyperparameters, "normalize_env", False))
+                else None,
+                "final_eval_metrics": _to_numpy_tree(
+                    utils.filter_prefix("eval", final_metrics)
+                ),
+                "cfg": OmegaConf.to_container(cfg, resolve=True),
+            }
+            with open(save_path, "wb") as f:
+                pickle.dump(checkpoint, f)
+            logging.info("Saved final model checkpoint to %s", save_path)
+        except Exception as e:
+            logging.exception("Failed to export final model checkpoint: %s", e)
+
         jnp.savez("metrics.npz", **metrics)
         wandb.finish()
         sweep_metrics.append(metrics["eval/episode_return"])

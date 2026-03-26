@@ -1516,31 +1516,77 @@ class DMERLActor(nnx.Module):
         return out_dict, key
     
     def vmap_sample_next_step(self, obs, keys):
-        in_axes = (0, 0, 0, 0) # keys, current_x, step, obs
+        """Vectorized sampling of one diffusion step.
 
+        `obs` is a dict-like pytree with (at least) keys:
+          - orig_obs: (B, obs_dim)
+          - orig_actions: (B, action_dim)
+          - diff_time_step: (B, 1)
+
+        RNG handling:
+          - If `keys` is a single PRNGKey of shape (2,), we split it into (B, 2) so each
+            environment gets independent randomness.
+          - If `keys` is already batched (B, 2), we assume the caller provided per-env keys.
+
+        This prevents accidentally reusing the same RNG stream across the vmapped batch.
+        """
+        # jax.debug.print("vmap_sample_next_step: keys.shape={s}", s=keys.shape)
+        # jax.debug.print(
+        #     "vmap_sample_next_step: orig_obs.shape={o} orig_actions.shape={a} diff_time_step.shape={t}",
+        #     o=obs["orig_obs"].shape,
+        #     a=obs["orig_actions"].shape,
+        #     t=obs["diff_time_step"].shape,
+        # )
+
+        batch = obs["orig_obs"].shape[0]
+        if keys.ndim == 1:
+            keys = jax.random.split(keys, num=batch)
+            #jax.debug.print("vmap_sample_next_step: split keys.shape={s}", s=keys.shape)
+
+        in_axes = (0, 0, 0, 0)  # keys, current_x, step, obs
         current_x = obs["orig_actions"]
-        step = obs["diff_time_step"][...,0]
-        keys = jax.random.split(keys, num=obs["orig_obs"].shape[0]) ### TODO pay attention are keys correctly split?
-        out_dict, keys = jax.vmap(self._sample_next_step, in_axes=in_axes)(keys, current_x, step, obs)
+        step = obs["diff_time_step"][..., 0]
+
+        out_dict, keys = jax.vmap(self._sample_next_step, in_axes=in_axes)(
+            keys, current_x, step, obs
+        )
         x_new = out_dict["x_new"]
         gen_log_prob = out_dict["gen_log_prob"]
         dest_log_prob = out_dict["dest_log_prob"]
         actions = x_new
         return actions, gen_log_prob, dest_log_prob
-
     def _ode_sample_next_step(self, key, current_x, step, obs):
         out_dict, key = ODE_integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
         return out_dict, key
     
     def vmap_ode_sample_next_step(self, obs, keys):
-        in_axes = (None, 0, 0, 0) # keys, current_x, step, obs
+        """Vectorized ODE sampling of one diffusion step.
 
+        Even in the ODE path, the integrator takes an RNG key (e.g. for dropout or other
+        stochastic components). We split a single PRNGKey into per-env keys to avoid
+        sharing randomness across the batch.
+        """
+        # jax.debug.print("vmap_ode_sample_next_step: keys.shape={s}", s=keys.shape)
+        # jax.debug.print(
+        #     "vmap_ode_sample_next_step: orig_obs.shape={o} orig_actions.shape={a} diff_time_step.shape={t}",
+        #     o=obs["orig_obs"].shape,
+        #     a=obs["orig_actions"].shape,
+        #     t=obs["diff_time_step"].shape,
+        # )
+
+        batch = obs["orig_obs"].shape[0]
+        if keys.ndim == 1:
+            keys = jax.random.split(keys, num=batch)
+            #jax.debug.print("vmap_ode_sample_next_step: split keys.shape={s}", s=keys.shape)
+
+        in_axes = (0, 0, 0, 0)  # keys, current_x, step, obs
         current_x = obs["orig_actions"]
-        step = obs["diff_time_step"][...,0]
-        out_dict, keys = jax.vmap(self._ode_sample_next_step, in_axes=in_axes)(keys, current_x, step, obs)
+        step = obs["diff_time_step"][..., 0]
+        out_dict, keys = jax.vmap(self._ode_sample_next_step, in_axes=in_axes)(
+            keys, current_x, step, obs
+        )
         actions = out_dict["x_new"]
         return actions, keys
-    
     def sample_complete_loop(self, obs_dict , key):
         batch_size = obs_dict["orig_obs"].shape[0]
         key, key_gen = jax.random.split(key)

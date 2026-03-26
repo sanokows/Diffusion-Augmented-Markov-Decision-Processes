@@ -8,7 +8,6 @@ hyperparameters:
   # env and run settings (mostly don't touch)
   total_time_steps: 50_000_000
   normalize_env: true
-  normalize_reward: false
   max_episode_steps: 1000
   eval_interval: 2
   num_eval: 20

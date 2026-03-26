@@ -1269,11 +1269,15 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             terminate=cfg.env.terminate,
         )
     elif cfg.env.type == "mjx":
+        env_config = OmegaConf.select(cfg, "env.config")
+        if env_config is not None:
+            env_config = OmegaConf.to_container(env_config, resolve=True)
         env = MjxGymnaxWrapper(
             cfg.env.name,
             episode_length=cfg.env.max_episode_steps,
             reward_scale=cfg.env.reward_scaling,
             push_distractions=cfg.env.get("push_distractions", False),
+            config=env_config,
             asymmetric_observation=cfg.env.get("asymmetric_obs", False),
         )
     else:

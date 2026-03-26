@@ -1245,7 +1245,14 @@ def run(cfg: DictConfig):
         env = BraxGymnaxWrapper(cfg.env.name)
         raise ValueError("Brax not supported for DiffPPO.")
     elif cfg.env.type == "mjx":
-        env = MjxGymnaxWrapper(cfg.env.name, episode_length=cfg.env.max_episode_steps)
+        env_config = OmegaConf.select(cfg, "env.config")
+        if env_config is not None:
+            env_config = OmegaConf.to_container(env_config, resolve=True)
+        env = MjxGymnaxWrapper(
+            cfg.env.name,
+            episode_length=cfg.env.max_episode_steps,
+            config=env_config,
+        )
         diff_cfg = cfg.hyperparameters.diffusion
         env_action_clip_value = OmegaConf.select(
             cfg, "hyperparameters.env_action_clip_value", default=1.0
@@ -1302,7 +1309,14 @@ def tune(cfg: DictConfig):
             step=t,
         )
 
-    env = MjxGymnaxWrapper(cfg.env.name, episode_length=cfg.env.max_episode_steps)
+    env_config = OmegaConf.select(cfg, "env.config")
+    if env_config is not None:
+        env_config = OmegaConf.to_container(env_config, resolve=True)
+    env = MjxGymnaxWrapper(
+        cfg.env.name,
+        episode_length=cfg.env.max_episode_steps,
+        config=env_config,
+    )
     diff_cfg = cfg.hyperparameters.diffusion
     env_action_clip_value = OmegaConf.select(
         cfg, "hyperparameters.env_action_clip_value", default=1.0
