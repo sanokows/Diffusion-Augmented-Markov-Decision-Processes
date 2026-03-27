@@ -27,7 +27,7 @@ python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_over
 
 python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50 hyperparameters.log_torso_com=true
 
-python -m src.jaxrl.reppo env.name=TurningDoubleWellEnv env=mjx_double_well experiment_overrides=mjx_double_well_large_data hyperparameters.num_eval=50
+exec  python -m src.jaxrl.reppo env.name=TurningDoubleWellEnv env=mjx_double_well experiment_overrides=mjx_double_well_large_data hyperparameters.num_eval=50
 
 
 

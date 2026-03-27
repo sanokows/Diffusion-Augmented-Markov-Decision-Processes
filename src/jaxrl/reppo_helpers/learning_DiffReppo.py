@@ -67,7 +67,7 @@ def compute_action_q_grads(actor_model, critic_model, obs, critic_obs):
         )
     #jax.debug.print("Time norm shape: {shape}, q_grad shape: {shape2}", shape=time_norm.shape, shape2 = q_grad.shape)
     #blended_grad = (1.0 - time_norm) * prior_grad - time_norm * q_grad
-    blended_grad = - q_grad
+    blended_grad = - time_norm*q_grad
     return blended_grad
 
 

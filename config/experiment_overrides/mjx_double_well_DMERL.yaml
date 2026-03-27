@@ -19,11 +19,12 @@ hyperparameters:
   lr: 1e-3
   temperature_lr: 3e-4
   lagrangian_lr: 3e-4
-  ent_target_mult: 1.5
+  ent_target_mult: 5.
   ent_start: 0.01
   tanh_transform: false
   gamma: 0.999
   lmbda: 0.98
+
   diffusion:
     learn_friction: true
     learn_dt: true
@@ -35,6 +36,7 @@ hyperparameters:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
       total_steps: ${hyperparameters.diffusion.diff_steps}
       min: 0.05
+
 
 
 

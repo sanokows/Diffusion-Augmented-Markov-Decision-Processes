@@ -2,6 +2,11 @@ import distrax
 import flax
 import jax
 import jax.numpy as jnp
+import numpy as np
+import time
+from jax.experimental import io_callback
+
+_PERF_COUNTER_ORIGIN = time.perf_counter()
 
 
 def describe(values: jnp.ndarray, axis: tuple | int = 0) -> dict[str, jnp.ndarray]:
@@ -197,3 +202,68 @@ def tree_norm(tree):
 
 def count_params(params):
     return sum([p.size for p in jax.tree_util.tree_leaves(params)])
+
+
+def _host_perf_counter_callback() -> np.ndarray:
+    return np.asarray(time.perf_counter() - _PERF_COUNTER_ORIGIN, dtype=np.float32)
+
+
+def _host_perf_counter_with_anchor_callback(_anchor: np.ndarray) -> np.ndarray:
+    return np.asarray(time.perf_counter() - _PERF_COUNTER_ORIGIN, dtype=np.float32)
+
+
+def host_perf_counter(anchor: jax.Array | None = None) -> jax.Array:
+    """Read host wall-clock time from inside jitted code."""
+    if anchor is not None:
+        anchor = jnp.asarray(anchor)
+        return io_callback(
+            _host_perf_counter_with_anchor_callback,
+            jax.ShapeDtypeStruct((), jnp.float32),
+            anchor,
+            ordered=True,
+        )
+    return io_callback(
+        _host_perf_counter_callback,
+        jax.ShapeDtypeStruct((), jnp.float32),
+        ordered=True,
+    )
+
+
+def timing_metrics(
+    rollout_start: jax.Array,
+    rollout_end: jax.Array,
+    update_end: jax.Array,
+) -> dict[str, jax.Array]:
+    """Build standardized rollout/update timing metrics in seconds."""
+    rollout_seconds = jnp.maximum(rollout_end - rollout_start, 0.0)
+    update_seconds = jnp.maximum(update_end - rollout_end, 0.0)
+    total_seconds = jnp.maximum(update_end - rollout_start, 0.0)
+    return {
+        "timing/rollout_seconds": rollout_seconds,
+        "timing/update_seconds": update_seconds,
+        "timing/total_seconds": total_seconds,
+    }
+
+
+def split_dict_by_prefix(
+    metrics: dict, prefix: str, sep: str = "/"
+) -> tuple[dict, dict]:
+    """Split dict into (matching_prefix, remaining) while keeping original keys."""
+    full_prefix = f"{prefix}{sep}"
+    matching = {}
+    remaining = {}
+    for key, value in metrics.items():
+        if key.startswith(full_prefix):
+            matching[key] = value
+        else:
+            remaining[key] = value
+    return matching, remaining
+
+
+def tree_scalar_anchor(tree) -> jax.Array:
+    """Build a scalar dependency anchor from a pytree."""
+    leaves = jax.tree_util.tree_leaves(tree)
+    if not leaves:
+        return jnp.array(0.0, dtype=jnp.float32)
+    leaf = jnp.asarray(leaves[0], dtype=jnp.float32)
+    return jnp.sum(leaf)

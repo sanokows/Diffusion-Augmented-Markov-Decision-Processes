@@ -637,6 +637,7 @@ def run(cfg: DictConfig):
         )
         log_data = {
             "eval/episode_return": episode_return,
+            "sps": sps,
             "train/advantages": wandb.Histogram(advantages),
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }

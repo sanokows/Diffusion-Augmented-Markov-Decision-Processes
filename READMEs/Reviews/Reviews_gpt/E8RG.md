@@ -1,0 +1,28 @@
+# 1) Rebuttal: Maximum Entropy RL for Diffusion-Based Policies
+
+We thank the reviewer for the careful reading and constructive feedback. We are encouraged that the reviewer finds the problem relevant and the paper easy to follow. Below we address the main concerns and clarify the relation to prior work; we will incorporate these clarifications in the revision.
+
+**(1) Length of Sec. 2 / log-variance discussion.**  
+We agree that Secs. 2/2.1 can be condensed. Our goal was to make the paper self-contained and establish notation, but we can present the standard max-ent RL background more compactly. We will shorten this part and move non-essential discussion out of the main text. That said, this section is not only background: unlike the standard Jensen-style derivation often used in max-ent RL, we use the data processing inequality, which is particularly convenient for deriving the diffusion-MDP formulation and the resulting step-wise surrogate objective, cf. the single-step DME objective in Eqs. (3)–(4).
+
+**(2) Related work / difference to DIME and REPPO-DIME / runtime.**  
+We agree that the distinction to DIME should be stated clearly in the main text rather than mainly in the appendix, and we will add a compact related-work paragraph after the method section. We will also reconsider the title to avoid confusion.
+
+The key difference is that DIME / REPPO-DIME optimize objectives over the **full reverse diffusion trajectory**. (Add github link and say that there is a overview table) This is visible directly in the policy loss and KL regularizer, which are defined over \(a_t^{0:K}\) in Eqs. (1)–(2) and Eqs. (5)–(6). As a result, both the policy-training loss and the old/new-policy KL require simulating the whole reverse chain, giving \(\mathcal{O}(K)\) time and memory. In contrast, our method defines both losses at a **single sampled reverse step** conditioned on the augmented state \(\tilde s_{\tilde t}=(s_t,a_t^k,k)\); see Eqs. (3)–(4) and Eqs. (7)–(8). This is what enables subsampling over diffusion steps and yields \(\mathcal{O}(1)\) per sampled step and \(\mathcal{O}(\kappa)\) memory for a minibatch of \(\kappa\) sampled steps.
+
+This is the main algorithmic advantage: flexibility and scalability of optimization, not necessarily a guaranteed wall-clock speedup in every small-scale benchmark (??). In our experiments, runtime is also affected by implementation choices (e.g. more gradient steps with smaller diffusion-step batches). The benefit of the step-wise formulation becomes more important for larger policies, longer diffusion horizons, or settings such as fine-tuning large diffusion/VLA-style policies, where full-chain backpropagation becomes increasingly costly.
+
+**(3) Comparison to other on-policy diffusion/flow RL methods.**  
+We agree that broader comparison would strengthen the paper and will expand this where feasible. Importantly, DME-PPO reduces to DPPO at \(\Tau=0\); thus DPPO is a special case of our formulation, while our method generalizes it to the max-ent setting for arbitrary \(\Tau\). We will make this connection more prominent in the main text (as we explain in l...) (possibly add ablation).
+
+**(4) Diffusion MDP / latent-action Q-function / critic learning / entropy term.**  
+These questions are closely related. The diffusion MDP is needed not because it changes the environment reward itself, but because it changes the **state-action structure**. Once diffusion is incorporated into the control problem, the relevant state is the augmented state \(\tilde s_{\tilde t}=(s_t,a_t^k,k)\) and the action is the next denoising step \(a_t^{k-1}\). This is exactly why the DME Q-function must depend on latent actions; see the augmented critic definition in Eq. (11) and the associated value function in Eq. (12). By contrast, the DIME side still reasons over the full latent trajectory through Eqs. (9)–(10). (TODO make explicit whether eq form table or paper are meant)
+
+Although the environment reward is only received at the terminal denoising step, the value function still contains the reverse/forward log-ratio term, which appears explicitly in Eq. (12). Thus the diffusion process enters the return in an essential way. This augmented formulation is precisely what enables step-wise optimization and diffusion-step subsampling. Likewise, we never need the intractable marginal over final actions: the entropy term is handled through the tractable reverse/forward log-ratio at the sampled diffusion step, as seen directly in Eqs. (3)–(4) and Eq. (12).
+
+We also agree that critic learning should be explained more explicitly. In our formulation, the critic is trained on augmented tuples \((\tilde s_{\tilde t},a_t^{k-1})\) via the loss in Eq. (14), with TD-\(\lambda\)/GAE-style targets given in Eqs. (17)–(18). This is the DME analogue of the DIME critic loss in Eq. (13) with targets in Eqs. (15)–(16). We will make this much clearer in the revision and add pseudocode. (TODO in the final paper version we will also add such detailed explanations for DME-PPO and DME_WPO)
+
+**(5) Statistical reporting.**  
+We agree that stronger statistical reporting would improve the paper. In the revision, we will report IQM with 95% bootstrapped confidence intervals, and, if additional runs finish in time, we will include more seeds as well. (TODO add that the reviewer can find this in the github link, IQM leads to simialr results as the mean)
+
+We thank the reviewer again for the helpful comments. We believe these revisions will substantially improve the clarity of the paper.

@@ -81,6 +81,8 @@ def _take_last_metrics(metrics: dict) -> dict:
 def _sectioned_wandb_key(key: str) -> str:
     if key.startswith("/"):
         key = key.lstrip("/")
+    if key == "sps":
+        return "sps"
     if key.startswith("train/"):
         suffix = key.split("/", 1)[1]
         if suffix.startswith(("temp", "entropy", "target_entropy")):
@@ -836,10 +838,12 @@ def make_train_fn(
         )
         # Reshape data to (num_steps * num_envs, ...)
         # print min max and mean values of target_values for debugging
-        jax.debug.print("target_values stats - min: {min}, max: {max}, mean: {mean}",
-                        min=jnp.min(target_values),
-                        max=jnp.max(target_values),
-                        mean=jnp.mean(target_values))
+        # jax.debug.print(
+        #     "target_values stats - min: {min}, max: {max}, mean: {mean}",
+        #     min=jnp.min(target_values),
+        #     max=jnp.max(target_values),
+        #     mean=jnp.mean(target_values),
+        # )
         
         data = (batch, target_values)
         data = jax.tree.map(
@@ -1258,10 +1262,9 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             sps = 0
 
         metric_history.append(metrics)
-        #please also print the actions and the rewards at every step
-        print("metrics[\"eval/actions\"]", metrics.get("eval/actions", "N/A"))
-        print("metrics[\"eval/rewards\"]", metrics.get("eval/rewards", "N/A"))
-        print("metrics[\"eval/episode_return\"]",metrics["eval/episode_return"])
+        # print("metrics[\"eval/actions\"]", metrics.get("eval/actions", "N/A"))
+        # print("metrics[\"eval/rewards\"]", metrics.get("eval/rewards", "N/A"))
+        # print("metrics[\"eval/episode_return\"]", metrics["eval/episode_return"])
         episode_return = metrics["eval/episode_return"].mean()
         eval_length = metrics["eval/episode_length"].mean()
         torso_com_traj = metrics.pop("eval/torso_com_traj", None)

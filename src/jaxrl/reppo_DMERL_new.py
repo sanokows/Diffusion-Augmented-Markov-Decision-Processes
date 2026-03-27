@@ -66,6 +66,8 @@ logging.basicConfig(level=logging.INFO)
 def _sectioned_wandb_key(key: str) -> str:
     if key.startswith("/"):
         key = key.lstrip("/")
+    if key == "sps":
+        return "sps"
     if key.startswith("train/"):
         suffix = key.split("/", 1)[1]
         if suffix.startswith(("temp", "entropy")):

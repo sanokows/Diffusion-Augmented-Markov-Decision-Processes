@@ -449,7 +449,9 @@ class MjxDiffEnvWrapper(Wrapper):
     def step(self, key, state: MjxDiffEnvState, action):
         diff_time_step = state.diff_time_step + jnp.ones_like(state.diff_time_step)
         steps_since_reset = state.steps_since_reset + jnp.ones_like(state.steps_since_reset)
-        reset_due = jnp.any(diff_time_step >= self.num_diff_steps)
+        # Diffusion time is globally synchronized across envs in this wrapper.
+        # Use a single scalar predicate to gate the expensive original-env step.
+        reset_due = diff_time_step.reshape(-1)[0] >= self.num_diff_steps
         #print reset due with jax debug and also diff_time_step
         # jax.debug.print("Diff time step: {dts}, Reset due: {rd}", dts=diff_time_step, rd=reset_due)
 

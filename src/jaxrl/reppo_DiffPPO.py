@@ -54,6 +54,8 @@ logging.basicConfig(level=logging.INFO)
 def _sectioned_wandb_key(key: str) -> str:
     if key.startswith("/"):
         key = key.lstrip("/")
+    if key == "sps":
+        return "sps"
     if key.startswith("train/"):
         suffix = key.split("/", 1)[1]
         if suffix.startswith(("temp", "entropy", "target_entropy")):
@@ -1233,6 +1235,7 @@ def run(cfg: DictConfig):
         )
         log_data = {
             "eval/episode_return": episode_return,
+            "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
         if advantages_hist is not None:

@@ -5,6 +5,7 @@ import pickle
 import sys
 import importlib
 import ast
+import math
 from typing import Any
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -37,6 +38,15 @@ def _artifacts_dir() -> str:
     return path
 
 
+def _method_display_name(method_name: str) -> str:
+    method_lower = str(method_name).lower()
+    if "dime" in method_lower:
+        return "REPPO-DIME"
+    if "dmerl" in method_lower:
+        return "DME-REPPO"
+    return "REPPO"
+
+
 def _resolve_render_out(
     *,
     method_name: str,
@@ -46,20 +56,13 @@ def _resolve_render_out(
 ) -> str:
     # Always write renders into repo_root/artifacts (ignore any provided directory).
     artifacts_dir = _artifacts_dir()
-    method_lower = str(method_name).lower()
-    if "dime" in method_lower:
-        method_tag = "dime"
-    elif "dmerl" in method_lower:
-        method_tag = "DMERL"
-    else:
-        method_tag = "reppo"
+    method_tag = _method_display_name(method_name)
     sampler_lower = str(diffusion_sampler or "").lower()
     sampler_tag = sampler_lower if sampler_lower in ("sde", "ode") else None
     ckpt_base = os.path.splitext(os.path.basename(checkpoint_path))[0]
     if out_path is None:
-        # Most checkpoints already encode the method in their filename. Only prefix when missing.
         ckpt_lower = ckpt_base.lower()
-        if ("dmerl" in ckpt_lower) or ("dime" in ckpt_lower) or ckpt_lower.startswith(("reppo__", "dime__")):
+        if ckpt_lower.startswith(method_tag.lower() + "__"):
             stub = ckpt_base
         else:
             stub = f"{method_tag}__{ckpt_base}"
@@ -98,6 +101,13 @@ def _resolve_tdw_analysis_out(*, checkpoint_path: str, out_path: str | None) -> 
     return os.path.join(artifacts_dir, base)
 
 
+def _resolve_tdw_analysis_out_pair(*, checkpoint_path: str, out_path: str | None) -> tuple[str, str]:
+    hist_out = _resolve_tdw_analysis_out(checkpoint_path=checkpoint_path, out_path=out_path)
+    stem, ext = os.path.splitext(hist_out)
+    q_out = f"{stem}__q{ext}"
+    return hist_out, q_out
+
+
 def _tdw_build_env_for_analysis(cfg):
     # Use the checkpoint config, but force the discrete-initial-heading assumption.
     env_config = OmegaConf.select(cfg, "env.config")
@@ -134,6 +144,27 @@ def _normalize_obs(raw_obs: jax.Array, norm_state, *, critic: bool = False) -> j
     return (raw_obs - mean) / jnp.sqrt(var + 1e-2)
 
 
+def _tdw_subplot_grid(n_plots: int, max_cols: int = 4) -> tuple[int, int]:
+    n_plots = max(1, int(n_plots))
+    ncols = min(int(max_cols), max(1, int(math.ceil(math.sqrt(n_plots)))))
+    nrows = int(math.ceil(n_plots / ncols))
+    return nrows, ncols
+
+
+def _tdw_state_title(theta_radians: jax.Array) -> str:
+    theta_deg = float((np.rad2deg(float(theta_radians)) + 360.0) % 360.0)
+    return rf"$\theta_0 = {theta_deg:.1f}^\circ$"
+
+
+def _tdw_apply_axis_style(ax, *, xlabel: str, ylabel: str, title: str) -> None:
+    ax.set_xlim(-1.0, 1.0)
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_title(title, fontsize=14, pad=8)
+    ax.tick_params(axis="both", labelsize=10)
+    ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.28)
+
+
 def _tdw_action_analysis_sac(
     *,
     cfg,
@@ -152,6 +183,8 @@ def _tdw_action_analysis_sac(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     env = _tdw_build_env_for_analysis(cfg)
     angles = _tdw_discrete_starting_angles(env)
@@ -161,18 +194,43 @@ def _tdw_action_analysis_sac(
 
     grid_actions = jnp.linspace(-1.0, 1.0, int(num_grid), dtype=jnp.float32)
     grid_actions_np = np.asarray(jax.device_get(grid_actions))
+    method_display = _method_display_name("reppo")
 
-    fig, axes = plt.subplots(
-        nrows=len(angles_np),
-        ncols=2,
-        figsize=(12, max(2.2, 2.2 * len(angles_np))),
+    nrows, ncols = _tdw_subplot_grid(len(angles_np), max_cols=4)
+    fig_hist, axes_hist = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(5.0 * ncols, 3.8 * nrows),
         squeeze=False,
     )
+    fig_hist.suptitle(
+        f"{method_display} | Action Samples and Reward Curve",
+        fontsize=20,
+        fontweight="bold",
+        y=0.975,
+    )
+    hist_axes = axes_hist.reshape(-1)
+    fig_q = None
+    q_axes = None
+    if critic_model is not None:
+        fig_q, axes_q = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(5.0 * ncols, 3.8 * nrows),
+            squeeze=False,
+        )
+        fig_q.suptitle(
+            f"{method_display} | Q(s,a) Over Action Grid",
+            fontsize=20,
+            fontweight="bold",
+            y=0.975,
+        )
+        q_axes = axes_q.reshape(-1)
 
     base_key = jax.random.PRNGKey(int(seed))
     keys = jax.random.split(base_key, len(angles_np))
 
-    for row_idx, (theta, key) in enumerate(zip(angles_np, keys)):
+    for plot_idx, (theta, key) in enumerate(zip(angles_np, keys)):
         theta = jnp.asarray(theta, dtype=jnp.float32)
         raw_obs = _tdw_obs_from_angle(env, theta)
         obs = _normalize_obs(raw_obs, norm_state, critic=False)
@@ -183,48 +241,71 @@ def _tdw_action_analysis_sac(
         sampled = pi.sample(seed=key, sample_shape=(int(num_samples),))
         sampled_np = np.asarray(jax.device_get(sampled)).reshape(-1)
 
-        # Reward curve over actions for this starting angle.
-        next_angle = env._wrap_angle(theta + grid_actions * env.max_turn_radians)
-        reward_curve = env.reward_from_angle(next_angle)
+        # Reward curve over actions (depends only on delta turn, not absolute orientation).
+        delta = grid_actions * env.max_turn_radians
+        reward_curve = env.reward_from_angle(delta)
         reward_curve_np = np.asarray(jax.device_get(reward_curve)).reshape(-1)
 
         # Q curve over actions for this starting angle (if critic is available).
         q_curve_np = None
-        if critic_model is not None:
+        if fig_q is not None:
             critic_obs_grid = jnp.broadcast_to(critic_obs, (grid_actions.shape[0],) + critic_obs.shape)
             action_grid = grid_actions.reshape(-1, 1)
             q_vals = critic_model.critic(critic_obs_grid, action_grid).squeeze(-1)
             q_curve_np = np.asarray(jax.device_get(q_vals)).reshape(-1)
 
-        ax_hist = axes[row_idx, 0]
-        ax_q = axes[row_idx, 1]
-
-        ax_hist.hist(sampled_np, bins=int(num_bins), range=(-1.0, 1.0), density=True, alpha=0.6)
-        ax_hist.set_xlim(-1.0, 1.0)
-        ax_hist.set_ylabel("density")
-        theta_deg = float((np.rad2deg(float(theta)) + 360.0) % 360.0)
-        ax_hist.set_title(f"θ0={theta_deg:.1f}°: action samples + reward")
+        state_title = _tdw_state_title(theta)
+        ax_hist = hist_axes[plot_idx]
+        ax_hist.hist(
+            sampled_np,
+            bins=int(num_bins),
+            range=(-1.0, 1.0),
+            density=True,
+            alpha=0.45,
+            color="tab:blue",
+        )
+        _tdw_apply_axis_style(ax_hist, xlabel="action", ylabel="density", title=state_title)
         ax_hist2 = ax_hist.twinx()
-        ax_hist2.plot(grid_actions_np, reward_curve_np, color="tab:red", linewidth=2.0)
+        ax_hist2.plot(grid_actions_np, reward_curve_np, color="tab:red", linewidth=2.6)
         ax_hist2.set_ylim(-0.05, 1.05)
-        ax_hist2.set_ylabel("reward")
+        ax_hist2.set_ylabel("reward", fontsize=12, color="tab:red")
+        ax_hist2.tick_params(axis="y", labelsize=10, colors="tab:red")
+        ax_hist2.spines["right"].set_color("tab:red")
 
-        if q_curve_np is not None:
-            ax_q.plot(grid_actions_np, q_curve_np, color="tab:blue", linewidth=2.0)
-            ax_q.set_title("Q(s,a) over action grid")
-            ax_q.set_xlim(-1.0, 1.0)
-            ax_q.set_xlabel("action")
-            ax_q.set_ylabel("Q")
-        else:
-            ax_q.axis("off")
-            ax_q.text(0.5, 0.5, "No critic in checkpoint", ha="center", va="center")
+        if fig_q is not None and q_curve_np is not None:
+            ax_q = q_axes[plot_idx]
+            ax_q.plot(grid_actions_np, q_curve_np, color="tab:blue", linewidth=2.4)
+            _tdw_apply_axis_style(ax_q, xlabel="action", ylabel="Q", title=state_title)
 
-    fig.tight_layout()
-    out_path = _resolve_tdw_analysis_out(checkpoint_path=checkpoint_path, out_path=out_path)
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    logging.info("Saved TurningDoubleWell action analysis to %s", out_path)
+    for ax in hist_axes[len(angles_np) :]:
+        ax.axis("off")
+    fig_hist.legend(
+        handles=[
+            Patch(facecolor="tab:blue", edgecolor="tab:blue", alpha=0.45, label="Policy action samples (histogram)"),
+            Line2D([0], [0], color="tab:red", linewidth=2.6, label="Reward curve"),
+        ],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=2,
+        frameon=False,
+        fontsize=12,
+    )
+    fig_hist.tight_layout(rect=(0.0, 0.0, 1.0, 0.91))
+    hist_out_path, q_out_path = _resolve_tdw_analysis_out_pair(
+        checkpoint_path=checkpoint_path, out_path=out_path
+    )
+    os.makedirs(os.path.dirname(hist_out_path) or ".", exist_ok=True)
+    fig_hist.savefig(hist_out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig_hist)
+    logging.info("Saved TurningDoubleWell action histogram analysis to %s", hist_out_path)
+
+    if fig_q is not None:
+        for ax in q_axes[len(angles_np) :]:
+            ax.axis("off")
+        fig_q.tight_layout(rect=(0.0, 0.0, 1.0, 0.93))
+        fig_q.savefig(q_out_path, dpi=200, bbox_inches="tight")
+        plt.close(fig_q)
+        logging.info("Saved TurningDoubleWell Q-function analysis to %s", q_out_path)
 
 
 def _tdw_action_analysis_dmerl(
@@ -245,6 +326,8 @@ def _tdw_action_analysis_dmerl(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     env = _tdw_build_env_for_analysis(cfg)
     angles = _tdw_discrete_starting_angles(env)
@@ -275,18 +358,43 @@ def _tdw_action_analysis_dmerl(
 
     grid_actions = jnp.linspace(-1.0, 1.0, int(num_grid), dtype=jnp.float32)
     grid_actions_np = np.asarray(jax.device_get(grid_actions))
+    method_display = _method_display_name("reppo_DMERL_new")
 
-    fig, axes = plt.subplots(
-        nrows=len(angles_np),
-        ncols=2,
-        figsize=(12, max(2.2, 2.2 * len(angles_np))),
+    nrows, ncols = _tdw_subplot_grid(len(angles_np), max_cols=4)
+    fig_hist, axes_hist = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(5.0 * ncols, 3.8 * nrows),
         squeeze=False,
     )
+    fig_hist.suptitle(
+        f"{method_display} | Action Samples and Reward Curve",
+        fontsize=20,
+        fontweight="bold",
+        y=0.975,
+    )
+    hist_axes = axes_hist.reshape(-1)
+    fig_q = None
+    q_axes = None
+    if critic_model is not None:
+        fig_q, axes_q = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(5.0 * ncols, 3.8 * nrows),
+            squeeze=False,
+        )
+        fig_q.suptitle(
+            f"{method_display} | Q(s,a) Over Action Grid",
+            fontsize=20,
+            fontweight="bold",
+            y=0.975,
+        )
+        q_axes = axes_q.reshape(-1)
 
     base_key = jax.random.PRNGKey(int(seed))
     keys = jax.random.split(base_key, len(angles_np))
 
-    for row_idx, (theta, key) in enumerate(zip(angles_np, keys)):
+    for plot_idx, (theta, key) in enumerate(zip(angles_np, keys)):
         theta = jnp.asarray(theta, dtype=jnp.float32)
         raw_obs = _tdw_obs_from_angle(env, theta)
         obs_norm = _norm_obs(raw_obs)
@@ -311,14 +419,14 @@ def _tdw_action_analysis_dmerl(
         sampled_actions = jnp.tanh(current_x)
         sampled_np = np.asarray(jax.device_get(sampled_actions)).reshape(-1)
 
-        # Reward curve over env actions for this starting angle.
-        next_angle = env._wrap_angle(theta + grid_actions * env.max_turn_radians)
-        reward_curve = env.reward_from_angle(next_angle)
+        # Reward curve over env actions (depends only on delta turn, not absolute orientation).
+        delta = grid_actions * env.max_turn_radians
+        reward_curve = env.reward_from_angle(delta)
         reward_curve_np = np.asarray(jax.device_get(reward_curve)).reshape(-1)
 
         # Q curve: evaluate critic at last diffusion step with a neutral "previous action" (zeros).
         q_curve_np = None
-        if critic_model is not None:
+        if fig_q is not None:
             prev_x = jnp.zeros((1,), dtype=jnp.float32)
             obs_dict_last = {
                 "orig_obs": obs_norm[None, :],
@@ -332,35 +440,58 @@ def _tdw_action_analysis_dmerl(
             q_vals = critic_model.critic(critic_in, raw_action).squeeze(-1)
             q_curve_np = np.asarray(jax.device_get(q_vals)).reshape(-1)
 
-        ax_hist = axes[row_idx, 0]
-        ax_q = axes[row_idx, 1]
-
-        ax_hist.hist(sampled_np, bins=int(num_bins), range=(-1.0, 1.0), density=True, alpha=0.6)
-        ax_hist.set_xlim(-1.0, 1.0)
-        ax_hist.set_ylabel("density")
-        theta_deg = float((np.rad2deg(float(theta)) + 360.0) % 360.0)
-        ax_hist.set_title(f"θ0={theta_deg:.1f}°: DMERL final-step actions + reward")
+        state_title = _tdw_state_title(theta)
+        ax_hist = hist_axes[plot_idx]
+        ax_hist.hist(
+            sampled_np,
+            bins=int(num_bins),
+            range=(-1.0, 1.0),
+            density=True,
+            alpha=0.45,
+            color="tab:blue",
+        )
+        _tdw_apply_axis_style(ax_hist, xlabel="action", ylabel="density", title=state_title)
         ax_hist2 = ax_hist.twinx()
-        ax_hist2.plot(grid_actions_np, reward_curve_np, color="tab:red", linewidth=2.0)
+        ax_hist2.plot(grid_actions_np, reward_curve_np, color="tab:red", linewidth=2.6)
         ax_hist2.set_ylim(-0.05, 1.05)
-        ax_hist2.set_ylabel("reward")
+        ax_hist2.set_ylabel("reward", fontsize=12, color="tab:red")
+        ax_hist2.tick_params(axis="y", labelsize=10, colors="tab:red")
+        ax_hist2.spines["right"].set_color("tab:red")
 
-        if q_curve_np is not None:
-            ax_q.plot(grid_actions_np, q_curve_np, color="tab:blue", linewidth=2.0)
-            ax_q.set_title(f"Q(s,a) at diffusion step {last_step}")
-            ax_q.set_xlim(-1.0, 1.0)
-            ax_q.set_xlabel("env action (tanh(raw))")
-            ax_q.set_ylabel("Q")
-        else:
-            ax_q.axis("off")
-            ax_q.text(0.5, 0.5, "No critic available", ha="center", va="center")
+        if fig_q is not None and q_curve_np is not None:
+            ax_q = q_axes[plot_idx]
+            ax_q.plot(grid_actions_np, q_curve_np, color="tab:blue", linewidth=2.4)
+            _tdw_apply_axis_style(ax_q, xlabel="env action (tanh(raw))", ylabel="Q", title=state_title)
 
-    fig.tight_layout()
-    out_path = _resolve_tdw_analysis_out(checkpoint_path=checkpoint_path, out_path=out_path)
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    logging.info("Saved TurningDoubleWell action analysis to %s", out_path)
+    for ax in hist_axes[len(angles_np) :]:
+        ax.axis("off")
+    fig_hist.legend(
+        handles=[
+            Patch(facecolor="tab:blue", edgecolor="tab:blue", alpha=0.45, label="Policy action samples (histogram)"),
+            Line2D([0], [0], color="tab:red", linewidth=2.6, label="Reward curve"),
+        ],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=2,
+        frameon=False,
+        fontsize=12,
+    )
+    fig_hist.tight_layout(rect=(0.0, 0.0, 1.0, 0.91))
+    hist_out_path, q_out_path = _resolve_tdw_analysis_out_pair(
+        checkpoint_path=checkpoint_path, out_path=out_path
+    )
+    os.makedirs(os.path.dirname(hist_out_path) or ".", exist_ok=True)
+    fig_hist.savefig(hist_out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig_hist)
+    logging.info("Saved TurningDoubleWell action histogram analysis to %s", hist_out_path)
+
+    if fig_q is not None:
+        for ax in q_axes[len(angles_np) :]:
+            ax.axis("off")
+        fig_q.tight_layout(rect=(0.0, 0.0, 1.0, 0.93))
+        fig_q.savefig(q_out_path, dpi=200, bbox_inches="tight")
+        plt.close(fig_q)
+        logging.info("Saved TurningDoubleWell Q-function analysis to %s", q_out_path)
 
 
 def _tdw_action_analysis_dime(
@@ -381,6 +512,8 @@ def _tdw_action_analysis_dime(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     env = _tdw_build_env_for_analysis(cfg)
     angles = _tdw_discrete_starting_angles(env)
@@ -390,18 +523,43 @@ def _tdw_action_analysis_dime(
 
     grid_actions = jnp.linspace(-1.0, 1.0, int(num_grid), dtype=jnp.float32)
     grid_actions_np = np.asarray(jax.device_get(grid_actions))
+    method_display = _method_display_name("reppo_dime")
 
-    fig, axes = plt.subplots(
-        nrows=len(angles_np),
-        ncols=2,
-        figsize=(12, max(2.2, 2.2 * len(angles_np))),
+    nrows, ncols = _tdw_subplot_grid(len(angles_np), max_cols=4)
+    fig_hist, axes_hist = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(5.0 * ncols, 3.8 * nrows),
         squeeze=False,
     )
+    fig_hist.suptitle(
+        f"{method_display} | Action Samples and Reward Curve",
+        fontsize=20,
+        fontweight="bold",
+        y=0.975,
+    )
+    hist_axes = axes_hist.reshape(-1)
+    fig_q = None
+    q_axes = None
+    if critic_model is not None:
+        fig_q, axes_q = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(5.0 * ncols, 3.8 * nrows),
+            squeeze=False,
+        )
+        fig_q.suptitle(
+            f"{method_display} | Q(s,a) Over Action Grid",
+            fontsize=20,
+            fontweight="bold",
+            y=0.975,
+        )
+        q_axes = axes_q.reshape(-1)
 
     base_key = jax.random.PRNGKey(int(seed))
     keys = jax.random.split(base_key, len(angles_np))
 
-    for row_idx, (theta, key) in enumerate(zip(angles_np, keys)):
+    for plot_idx, (theta, key) in enumerate(zip(angles_np, keys)):
         theta = jnp.asarray(theta, dtype=jnp.float32)
         raw_obs = _tdw_obs_from_angle(env, theta)
         obs = _normalize_obs(raw_obs, norm_state, critic=False)
@@ -417,46 +575,69 @@ def _tdw_action_analysis_dime(
         sampled = jax.vmap(_one)(sample_keys)
         sampled_np = np.asarray(jax.device_get(sampled)).reshape(-1)
 
-        next_angle = env._wrap_angle(theta + grid_actions * env.max_turn_radians)
-        reward_curve = env.reward_from_angle(next_angle)
+        delta = grid_actions * env.max_turn_radians
+        reward_curve = env.reward_from_angle(delta)
         reward_curve_np = np.asarray(jax.device_get(reward_curve)).reshape(-1)
 
         q_curve_np = None
-        if critic_model is not None:
+        if fig_q is not None:
             critic_obs_grid = jnp.broadcast_to(critic_obs, (grid_actions.shape[0],) + critic_obs.shape)
             action_grid = grid_actions.reshape(-1, 1)
             q_vals = critic_model.critic(critic_obs_grid, action_grid).squeeze(-1)
             q_curve_np = np.asarray(jax.device_get(q_vals)).reshape(-1)
 
-        ax_hist = axes[row_idx, 0]
-        ax_q = axes[row_idx, 1]
-
-        ax_hist.hist(sampled_np, bins=int(num_bins), range=(-1.0, 1.0), density=True, alpha=0.6)
-        ax_hist.set_xlim(-1.0, 1.0)
-        ax_hist.set_ylabel("density")
-        theta_deg = float((np.rad2deg(float(theta)) + 360.0) % 360.0)
-        ax_hist.set_title(f"θ0={theta_deg:.1f}°: DIME action samples + reward")
+        state_title = _tdw_state_title(theta)
+        ax_hist = hist_axes[plot_idx]
+        ax_hist.hist(
+            sampled_np,
+            bins=int(num_bins),
+            range=(-1.0, 1.0),
+            density=True,
+            alpha=0.45,
+            color="tab:blue",
+        )
+        _tdw_apply_axis_style(ax_hist, xlabel="action", ylabel="density", title=state_title)
         ax_hist2 = ax_hist.twinx()
-        ax_hist2.plot(grid_actions_np, reward_curve_np, color="tab:red", linewidth=2.0)
+        ax_hist2.plot(grid_actions_np, reward_curve_np, color="tab:red", linewidth=2.6)
         ax_hist2.set_ylim(-0.05, 1.05)
-        ax_hist2.set_ylabel("reward")
+        ax_hist2.set_ylabel("reward", fontsize=12, color="tab:red")
+        ax_hist2.tick_params(axis="y", labelsize=10, colors="tab:red")
+        ax_hist2.spines["right"].set_color("tab:red")
 
-        if q_curve_np is not None:
-            ax_q.plot(grid_actions_np, q_curve_np, color="tab:blue", linewidth=2.0)
-            ax_q.set_title("Q(s,a) over action grid")
-            ax_q.set_xlim(-1.0, 1.0)
-            ax_q.set_xlabel("action")
-            ax_q.set_ylabel("Q")
-        else:
-            ax_q.axis("off")
-            ax_q.text(0.5, 0.5, "No critic in checkpoint", ha="center", va="center")
+        if fig_q is not None and q_curve_np is not None:
+            ax_q = q_axes[plot_idx]
+            ax_q.plot(grid_actions_np, q_curve_np, color="tab:blue", linewidth=2.4)
+            _tdw_apply_axis_style(ax_q, xlabel="action", ylabel="Q", title=state_title)
 
-    fig.tight_layout()
-    out_path = _resolve_tdw_analysis_out(checkpoint_path=checkpoint_path, out_path=out_path)
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    logging.info("Saved TurningDoubleWell action analysis to %s", out_path)
+    for ax in hist_axes[len(angles_np) :]:
+        ax.axis("off")
+    fig_hist.legend(
+        handles=[
+            Patch(facecolor="tab:blue", edgecolor="tab:blue", alpha=0.45, label="Policy action samples (histogram)"),
+            Line2D([0], [0], color="tab:red", linewidth=2.6, label="Reward curve"),
+        ],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=2,
+        frameon=False,
+        fontsize=12,
+    )
+    fig_hist.tight_layout(rect=(0.0, 0.0, 1.0, 0.91))
+    hist_out_path, q_out_path = _resolve_tdw_analysis_out_pair(
+        checkpoint_path=checkpoint_path, out_path=out_path
+    )
+    os.makedirs(os.path.dirname(hist_out_path) or ".", exist_ok=True)
+    fig_hist.savefig(hist_out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig_hist)
+    logging.info("Saved TurningDoubleWell action histogram analysis to %s", hist_out_path)
+
+    if fig_q is not None:
+        for ax in q_axes[len(angles_np) :]:
+            ax.axis("off")
+        fig_q.tight_layout(rect=(0.0, 0.0, 1.0, 0.93))
+        fig_q.savefig(q_out_path, dpi=200, bbox_inches="tight")
+        plt.close(fig_q)
+        logging.info("Saved TurningDoubleWell Q-function analysis to %s", q_out_path)
 
 
 def _load_checkpoint(path: str) -> dict[str, Any]:
@@ -582,6 +763,7 @@ def _render_turning_double_well_reppo(
     fps: int,
     seed: int,
 ) -> None:
+    method_display = _method_display_name(method_name)
     is_dmerl = str(method_name) == "reppo_DMERL_new"
     is_dime = "dime" in str(method_name).lower()
     sampler = str(diffusion_sampler or "auto").lower()
@@ -689,7 +871,6 @@ def _render_turning_double_well_reppo(
         return cur
 
     states = [_state_to_numpy(_unwrap_env_state(env_state))]
-    rewards = []
 
     if is_dmerl:
         from src.jaxrl.reppo_helpers.learning_DiffReppo import maybe_add_q_grad
@@ -718,12 +899,11 @@ def _render_turning_double_well_reppo(
             else:
                 raise ValueError(f"Unknown diffusion sampler: {sampler_mode}")
             step_keys = jax.random.split(env_key, int(num_envs))
-            obs, critic_obs, env_state, reward, done, info = env.step(
+            obs, critic_obs, env_state, _reward, done, info = env.step(
                 step_keys, env_state, action
             )
             # Only append when the underlying env advanced (once per diffusion loop).
             if (step_idx + 1) % diff_steps == 0:
-                rewards.append(np.asarray(reward))
                 states.append(_state_to_numpy(_unwrap_env_state(env_state)))
     else:
         for _ in range(int(horizon)):
@@ -739,20 +919,21 @@ def _render_turning_double_well_reppo(
                     action, *_ = actor_model.det_action(act_key, obs, ode=True, ode_coef=1.0)
             else:
                 action = actor_model.det_action(obs)
-            obs, critic_obs, env_state, reward, done, info = env.step(
+            obs, critic_obs, env_state, _reward, done, info = env.step(
                 step_keys, env_state, action
             )
-            rewards.append(np.asarray(reward))
             states.append(_state_to_numpy(_unwrap_env_state(env_state)))
 
-    rewards_np = np.stack(rewards, axis=0) if rewards else None
     frames = base_env.render_trajectory(
         states,
-        rewards=rewards_np,
+        rewards=None,
         width=int(width),
         height=int(height),
         overlay=bool(overlay),
         max_envs=int(num_envs),
+        figure_title=method_display,
+        title_fontsize=18,
+        show_reward=False,
     )
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -824,7 +1005,10 @@ def _eval_reppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, float]:
     if bool(getattr(args, "tdw_action_analysis", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
         actor_model = nnx.merge(actor_graphdef, actor_params)
         critic_model = None
-        critic_params = checkpoint.get("critic_params", None)
+        if bool(getattr(args, "tdw_action_analysis_q", False)):
+            critic_params = checkpoint.get("critic_params", None)
+        else:
+            critic_params = None
         if critic_params is not None:
             from src.networks.jax_models import CriticNetwork, CategoricalCriticNetwork
 
@@ -985,7 +1169,9 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, fl
 
     if bool(getattr(args, "tdw_action_analysis", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
         actor_model = nnx.merge(train_state.actor.graphdef, train_state.actor.params)
-        critic_model = nnx.merge(train_state.critic.graphdef, train_state.critic.params)
+        critic_model = None
+        if bool(getattr(args, "tdw_action_analysis_q", False)):
+            critic_model = nnx.merge(train_state.critic.graphdef, train_state.critic.params)
         _tdw_action_analysis_dmerl(
             cfg=cfg,
             checkpoint_path=str(args.checkpoint),
@@ -1207,7 +1393,10 @@ def _eval_reppo_dime(checkpoint: dict[str, Any], cfg, args) -> dict[str, float]:
     if bool(getattr(args, "tdw_action_analysis", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
         actor_model = nnx.merge(actor_graphdef, actor_params)
         critic_model = None
-        critic_params = checkpoint.get("critic_params", None)
+        if bool(getattr(args, "tdw_action_analysis_q", False)):
+            critic_params = checkpoint.get("critic_params", None)
+        else:
+            critic_params = None
         if critic_params is not None:
             from src.networks.jax_models import CriticNetwork, CategoricalCriticNetwork
 
@@ -1359,7 +1548,7 @@ def main() -> None:
         "--render-out",
         type=str,
         default=None,
-        help="Output GIF name (basename only). The file is always written to artifacts/. If you pass a custom name, it will be prefixed with `reppo__`, `DMERL__`, or `dime__` if missing.",
+        help="Output GIF name (basename only). The file is always written to artifacts/. If you pass a custom name, it will be prefixed with `REPPO__`, `DME-REPPO__`, or `REPPO-DIME__` if missing.",
     )
     # Overlay is now the default; keep --render-overlay as a silent compatibility flag.
     parser.add_argument("--render-overlay", action="store_true", help=argparse.SUPPRESS)
@@ -1381,15 +1570,29 @@ def main() -> None:
             "If env.name=TurningDoubleWellEnv, enumerate all discrete starting headings "
             "(multiples of well_angle_deg) and, for each heading, sample many actions and plot: "
             "(1) action histogram overlaid with the one-step reward curve and "
-            "(2) Q(s,a) over the action grid when the critic is available."
+            "(2) optional Q(s,a) over the action grid as a separate plot "
+            "(enable with --tdw-action-analysis-q)."
         ),
     )
     parser.add_argument("--tdw-action-analysis-samples", type=int, default=4096, help="Number of action samples per starting heading.")
     parser.add_argument("--tdw-action-analysis-grid", type=int, default=401, help="Number of action grid points for reward/Q curves.")
     parser.add_argument("--tdw-action-analysis-bins", type=int, default=60, help="Histogram bins.")
     parser.add_argument("--tdw-action-analysis-seed", type=int, default=0, help="PRNG seed used for action sampling.")
-    parser.add_argument("--tdw-action-analysis-out", type=str, default=None, help="PNG basename (written into artifacts/).")
+    parser.add_argument(
+        "--tdw-action-analysis-out",
+        type=str,
+        default=None,
+        help=(
+            "Histogram PNG basename (written into artifacts/). "
+            "When --tdw-action-analysis-q is enabled, Q-curve output uses the same basename with __q suffix."
+        ),
+    )
     parser.add_argument("--tdw-action-analysis-max-states", type=int, default=None, help="Optional cap on number of starting headings to plot (useful when well_angle_deg is small).")
+    parser.add_argument(
+        "--tdw-action-analysis-q",
+        action="store_true",
+        help="Also evaluate and plot Q(s,a) over the action grid (disabled by default).",
+    )
 
     args = parser.parse_args()
 

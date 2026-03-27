@@ -1085,7 +1085,7 @@ def make_train_fn(
                 state, update_metrics = learn_step(
                     key=learn_key, train_state=state, batch=transitions
                 )
-                metrics = {**update_metrics, **update_metrics}
+                metrics = {**update_metrics}
                 state = state.replace(iteration=state.iteration + 1)
                 return state, metrics
 

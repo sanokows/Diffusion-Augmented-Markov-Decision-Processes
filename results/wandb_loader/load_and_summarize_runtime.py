@@ -300,9 +300,30 @@ def summarize_group(df: pd.DataFrame, time_unit: str, baseline_method: str) -> p
             return float("nan")
         return float(series.mean())
 
+    def std_or_nan(series: pd.Series) -> float:
+        series = series.dropna()
+        if series.empty:
+            return float("nan")
+        return float(series.std())
+
+    def min_or_nan(series: pd.Series) -> float:
+        series = series.dropna()
+        if series.empty:
+            return float("nan")
+        return float(series.min())
+
+    def max_or_nan(series: pd.Series) -> float:
+        series = series.dropna()
+        if series.empty:
+            return float("nan")
+        return float(series.max())
+
     agg = df.groupby(["env", "method"]).agg(
         run_count=("run_id", "count"),
         runtime_mean_s=("runtime_s", mean_or_nan),
+        runtime_std_s=("runtime_s", std_or_nan),
+        runtime_min_s=("runtime_s", min_or_nan),
+        runtime_max_s=("runtime_s", max_or_nan),
         runtime_count=("runtime_s", "count"),
         critic_params_mean=("critic_params", mean_or_nan),
         critic_params_count=("critic_params", "count"),
@@ -311,6 +332,9 @@ def summarize_group(df: pd.DataFrame, time_unit: str, baseline_method: str) -> p
     )
     agg = agg.reset_index()
     agg["runtime_mean"] = agg["runtime_mean_s"].apply(lambda v: seconds_to_unit(v, time_unit))
+    agg["runtime_std"] = agg["runtime_std_s"].apply(lambda v: seconds_to_unit(v, time_unit))
+    agg["runtime_min"] = agg["runtime_min_s"].apply(lambda v: seconds_to_unit(v, time_unit))
+    agg["runtime_max"] = agg["runtime_max_s"].apply(lambda v: seconds_to_unit(v, time_unit))
     baseline_map = (
         agg.loc[agg["method"] == baseline_method, ["env", "runtime_mean"]]
         .set_index("env")["runtime_mean"]
@@ -369,6 +393,37 @@ def format_latex_runtime_table(
         lambda v: f"{v:.2f}" if pd.notna(v) else "--"
     )
     return table.to_latex(index=False, escape=False)
+
+
+def print_env_runtime_breakdown(env_summary: pd.DataFrame, time_unit: str) -> None:
+    runtime_cols = [
+        "env",
+        "method",
+        "runtime_mean",
+        "runtime_std",
+        "runtime_min",
+        "runtime_max",
+        "runtime_count",
+    ]
+    runtime_view = env_summary[runtime_cols].copy()
+    runtime_view = runtime_view.sort_values(["env", "method"])
+
+    print(f"\nAverage runtime by env and method ({time_unit})")
+    for env_name, group in runtime_view.groupby("env", sort=True):
+        print(f"{env_name}:")
+        for _, row in group.iterrows():
+            runtime_mean = row["runtime_mean"]
+            runtime_std = row["runtime_std"]
+            runtime_min = row["runtime_min"]
+            runtime_max = row["runtime_max"]
+            mean_str = f"{runtime_mean:.3f}" if pd.notna(runtime_mean) else "--"
+            std_str = f"{runtime_std:.3f}" if pd.notna(runtime_std) else "--"
+            min_str = f"{runtime_min:.3f}" if pd.notna(runtime_min) else "--"
+            max_str = f"{runtime_max:.3f}" if pd.notna(runtime_max) else "--"
+            print(
+                f"  {row['method']}: mean={mean_str}, std={std_str}, min={min_str}, max={max_str} "
+                f"(n={int(row['runtime_count'])} runs with runtime)"
+            )
 
 
 def main() -> int:
@@ -511,6 +566,8 @@ def main() -> int:
         print(f"Wrote {out_path}")
         if multi_env:
             print(f"Wrote {overall_path}")
+
+    print_env_runtime_breakdown(env_summary, args.time_unit)
 
     return 0
 

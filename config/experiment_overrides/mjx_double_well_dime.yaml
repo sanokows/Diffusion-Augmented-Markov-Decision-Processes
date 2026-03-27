@@ -9,5 +9,5 @@ hyperparameters:
   vmin: -20
   vmax: 130
   ent_start: 0.01
-  ent_target_mult: 2.5
+  ent_target_mult: 4.
   normalize_env: true

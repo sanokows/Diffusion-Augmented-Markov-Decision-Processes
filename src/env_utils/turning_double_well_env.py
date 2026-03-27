@@ -1,4 +1,4 @@
-"""2-D walker with relative turning actions and a double-well heading reward."""
+"""2-D walker with relative turning actions and a double-well turn reward."""
 
 from __future__ import annotations
 
@@ -214,7 +214,8 @@ class TurningDoubleWellEnv:
         rng, noise = self._sample_transition_noise(state.rng)
 
         delta_angle_raw = turn_action * self.max_turn_radians + noise
-        next_angle_for_reward = self._wrap_angle(state.angle + delta_angle_raw)
+        # Reward depends only on the raw turn delta (not on the absolute orientation).
+        reward = self.reward_from_angle(delta_angle_raw)
 
         if self.snap_action_to_optimal:
             sign = jnp.where(turn_action >= 0.0, 1.0, -1.0).astype(jnp.float32)
@@ -230,7 +231,6 @@ class TurningDoubleWellEnv:
         next_direction = self._angle_to_direction(next_angle)
         next_pos = state.pos + self.step_size * next_direction
         next_t = state.t + 1
-        reward = self.reward_from_angle(next_angle_for_reward)
         done = next_t >= self.horizon
         info = {
             "steps": jnp.asarray(next_t, dtype=jnp.float32),
@@ -267,6 +267,7 @@ class TurningDoubleWellEnv:
         return 1.0 - self.reward_from_angle(angle)
 
     def reward_from_angle(self, angle: jax.Array) -> jax.Array:
+        """Reward profile for a signed angle delta (radians)."""
         wrapped_deg = jnp.rad2deg(self._wrap_angle(angle))
         clamped_deg = jnp.clip(wrapped_deg, -90.0, 90.0)
         u = jnp.square(clamped_deg / 90.0)
@@ -307,8 +308,9 @@ class TurningDoubleWellEnv:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         actions = np.linspace(-1.0, 1.0, num_points, dtype=np.float32)
         turn_degrees = actions * float(np.rad2deg(np.asarray(self.max_turn_radians)))
-        heading_degrees = reference_heading_deg + turn_degrees
-        radians = np.deg2rad(heading_degrees).astype(np.float32)
+        # Reward/potential depend only on the turn delta; reference heading is ignored.
+        heading_degrees = turn_degrees
+        radians = np.deg2rad(turn_degrees).astype(np.float32)
         potential = np.asarray(self.potential_from_angle(jnp.asarray(radians)))
         return actions, heading_degrees, potential
 
@@ -320,8 +322,9 @@ class TurningDoubleWellEnv:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         actions = np.linspace(-1.0, 1.0, num_points, dtype=np.float32)
         turn_degrees = actions * self.max_turn_deg
-        heading_degrees = reference_heading_deg + turn_degrees
-        radians = np.deg2rad(heading_degrees).astype(np.float32)
+        # Reward depends only on the turn delta; reference heading is ignored.
+        heading_degrees = turn_degrees
+        radians = np.deg2rad(turn_degrees).astype(np.float32)
         rewards = np.asarray(self.reward_from_angle(jnp.asarray(radians)))
         return actions, heading_degrees, rewards
 
@@ -340,6 +343,9 @@ class TurningDoubleWellEnv:
         show_preferred_directions: bool = False,
         max_envs: int | None = 9,
         titles: Sequence[str] | None = None,
+        figure_title: str | None = None,
+        title_fontsize: int = 16,
+        show_reward: bool = True,
     ) -> list[np.ndarray]:
         import matplotlib
 
@@ -347,6 +353,8 @@ class TurningDoubleWellEnv:
         import matplotlib.pyplot as plt
 
         positions, directions, step_rewards = self._coerce_render_inputs(trajectory, rewards)
+        if not bool(show_reward):
+            step_rewards = None
         if positions.ndim == 2:
             positions = positions[:, None, :]
             directions = directions[:, None, :]
@@ -416,7 +424,8 @@ class TurningDoubleWellEnv:
                         idx,
                         color,
                         reward=None if step_rewards is None or idx == 0 else step_rewards[idx - 1, env_idx],
-                        title=f"All envs at t={idx}",
+                        title=None,
+                        title_fontsize=max(10, int(0.72 * title_fontsize)),
                     )
             else:
                 for env_idx, ax in enumerate(axes):
@@ -444,9 +453,19 @@ class TurningDoubleWellEnv:
                             if titles is not None and env_idx < len(titles)
                             else f"env={env_idx}, t={idx}"
                         ),
+                        title_fontsize=max(10, int(0.72 * title_fontsize)),
                     )
 
-            fig.tight_layout(pad=0.6)
+            if figure_title is not None:
+                fig.suptitle(
+                    f"{figure_title} | t={idx}",
+                    fontsize=int(title_fontsize),
+                    fontweight="bold",
+                    y=0.94,
+                )
+                fig.tight_layout(pad=0.6, rect=(0.0, 0.0, 1.0, 0.95))
+            else:
+                fig.tight_layout(pad=0.6)
             fig.canvas.draw()
             buffer = np.asarray(fig.canvas.buffer_rgba())
             frames.append(buffer[:, :, :3].copy())
@@ -555,6 +574,7 @@ class TurningDoubleWellEnv:
     ) -> None:
         ax.axhline(0.0, color="0.85", linewidth=0.8)
         ax.axvline(0.0, color="0.85", linewidth=0.8)
+        ax.set_facecolor("#f8fbff")
         if show_preferred_directions:
             ray_length = max(x_extent, y_extent)
             for vec in preferred:
@@ -579,11 +599,20 @@ class TurningDoubleWellEnv:
         idx: int,
         color: np.ndarray,
         reward: float | np.ndarray | None,
-        title: str,
+        title: str | None,
+        title_fontsize: int = 10,
     ) -> None:
-        ax.plot(positions[:, 0], positions[:, 1], color=color, linewidth=1.0, alpha=0.25)
-        ax.plot(positions[: idx + 1, 0], positions[: idx + 1, 1], color=color, linewidth=2.0)
-        ax.scatter(positions[idx, 0], positions[idx, 1], color="red", s=28, zorder=3)
+        ax.plot(positions[:, 0], positions[:, 1], color=color, linewidth=1.2, alpha=0.2)
+        ax.plot(positions[: idx + 1, 0], positions[: idx + 1, 1], color=color, linewidth=2.6)
+        ax.scatter(
+            positions[idx, 0],
+            positions[idx, 1],
+            color="#d62728",
+            s=36,
+            edgecolors="white",
+            linewidths=0.8,
+            zorder=3,
+        )
         ax.quiver(
             positions[idx, 0],
             positions[idx, 1],
@@ -596,7 +625,8 @@ class TurningDoubleWellEnv:
             width=0.01,
             zorder=4,
         )
-        ax.set_title(title, fontsize=8)
+        if title:
+            ax.set_title(title, fontsize=title_fontsize, fontweight="semibold")
         if reward is not None:
             reward_value = float(np.asarray(reward))
             ax.text(
