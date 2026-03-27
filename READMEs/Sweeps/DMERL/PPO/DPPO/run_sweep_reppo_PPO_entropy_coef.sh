@@ -2,9 +2,8 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    AcrobotSwingup
     PendulumSwingup
-    HopperStand
+    #HopperStand
     # Add more env names here
 )
 
@@ -13,13 +12,12 @@ ENTROPY_COEFS=(
     0
     1e-5
     1e-4
-    4e-4
 )
 
 # Step 3: Configure vmapped seeds (parallel seeds in one run on one GPU)
 NUM_SEEDS=1
 BASE_SEED=0
-TRIALS=1
+TRIALS=5
 
 # Step 4: Defaults aligned with run_sweep_dmerl_PPO_control_1.sh
 WANDB_PROJECT_SUFFIX="_FR_PPO_temp_abl"

@@ -1,7 +1,7 @@
 hyperparameters:
   num_envs: 1024
   num_steps: 128
-  num_mini_batches: 8 # *diff_steps = 64 -> same num of updates
+  #num_mini_batches: 8 # *diff_steps = 64 -> same num of updates
   num_epochs: 8
   kl_bound: 0.1 # 0.2
   kl_start: 0.3 # 0.15
@@ -40,7 +40,7 @@ hyperparameters:
       use_path_gradient: false
       use_target_score: false
       num_layers: 2
-      num_hid: 124
+      num_hid: 64
       num_time_hid: 32
       num_time_out: 16
       outer_clip: 1e4

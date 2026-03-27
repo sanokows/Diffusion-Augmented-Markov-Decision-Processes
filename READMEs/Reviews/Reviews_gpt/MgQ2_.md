@@ -1,0 +1,24 @@
+We thank the reviewer for the thoughtful and constructive feedback. Below we address the main concerns and clarify the core contributions and trade-offs of the paper.
+
+**W3, Q1, Q3 Why introduce the diffusion MDP at all? Could one avoid it?**  
+Yes, one can derive diffusion-RL objectives without redefining the problem as an augmented MDP; this is essentially what DIME does (see [[link](https://github.com/dmerlicml/DMERL_Rebuttal)] for a one-to-one comparison; equations there are denoted by T-Eq. X). However, that route leads to objectives over the **full reverse diffusion chain**, see T-Eqs. (1), (5), and (10). Our diffusion-MDP formulation instead yields a **step-wise** objective: training is performed at sampled diffusion steps with the corresponding diffusion-aware value function, without backpropagating through the full chain; see T-Eqs. (3), (7), and (11). This is the key reason for introducing diffusion steps as MDP states, and we will make this clearer in the revision.
+
+**W1 Complexity of the formulation / notation clarity.**  
+We agree that the current presentation is too dense. In the revision, we will simplify the exposition, add pseudo-code, include one-to-one comparisons to REPPO-DIME, and explain the unnormalized target distribution more carefully.
+
+**W2 Is the contribution mainly a unified formulation?**  
+We respectfully disagree that the paper is only a repackaging of existing methods. The maximum-entropy diffusion MDP itself (Eqs. 11–13) is new and provides a principled recipe for deriving diffusion-policy variants of max-ent RL algorithms. From it we derive DME-PPO, DME-REPPO, and DME-WPO (Eq. 14), which are all novel. As stated in L.077ff, the only direct connection to an existing method is that DPPO appears as the zero-temperature special case of DME-PPO.
+
+**W3, Q4 Exploration / multimodality / expressiveness.**  
+We added a toy example ([link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/MultimodalActions/multi_agents.gif)) showing that the method can learn multimodal action distributions. A 2D agent outputs actions in \([-1,1]\), corresponding to directions between \(-90^\circ\) and \(90^\circ\). Rewards are given by a double-well potential with optima at \(-45^\circ\) and \(45^\circ\). States are the agent orientation. The transition rounds the resulting action to the closest global minimum of the double well, but the reward is computed from the unrounded action. As a result, there are only 8 possible states for each of which we can plot a corresponding action histogram ([link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/MultimodalActions/histo.png)) and compare it to the reward landscape. We compare REPPO, DIME-REPPO, and DME-REPPO. REPPO exhibits mode collapse because a Gaussian policy can select only one mode, causing the agent to move to the lower-left corner regardless of initialization. In contrast, DIME-REPPO and DME-REPPO cover both reward maxima for each state, leading to richer behavior in all directions.
+
+**W4 Compute overhead / scaling / practical benefit / performance-compute tradeoff.**  
+We do not claim that diffusion policies must dominate on every standard control benchmark, especially since reward alone does not reveal how much of the action distribution is covered. To the best of our knowledge, RL currently lacks an established metric for this. Our toy example illustrates the issue: all methods reach nearly identical reward (\(\approx 0.98\)), but diffusion-based methods exhibit richer behavior and visit all states more frequently. Their state entropy is larger, but this is not reflected in the reward metric. We believe developing metrics that capture this is an important direction for future work.
+
+**Q2 Value-guided diffusion sampling / Q-guidance.**  
+We agree this is an interesting direction. In principle, Q-guidance could improve performance or reduce the number of diffusion steps. In our preliminary experiments, however, integrating it during training (as frequently done in diffusion samplers, where the energy gradient is used for guidance) was unstable, likely because Q-gradients are highly non-stationary. We did not test using Q-guidance only at evaluation time, which would be interesting, but it would add inference cost since evaluation otherwise does not require the Q-function.
+
+**Q5 Performance / compute normalization.**  
+All results in Figures 1 and 2 are already normalized by environment interactions. The runtime/compute trade-off is discussed in L.411ff and Appendix Table 1.
+
+We thank the reviewer again for the helpful comments. We believe the revision will improve clarity and make the trade-offs more transparent.

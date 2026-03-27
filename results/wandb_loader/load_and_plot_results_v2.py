@@ -103,6 +103,7 @@ AXIS_LABEL_FONTSIZE = 20
 TICK_LABEL_FONTSIZE = 17
 LEGEND_FONTSIZE = 18
 LEGEND_FONTSIZE_all = 14
+LEGEND_HANDLELENGTH = 4.0
 TITLE_FONTSIZE = 22
 GRID_ALPHA = 0.9
 alpha = 0.1
@@ -122,6 +123,42 @@ METHOD_STYLE_OVERRIDES = {
     "DME-REPPO (ours)": "-",
     "REPPO-DiME": "-",
 }
+STYLE_VERSION_LEGACY = "legacy"
+STYLE_VERSION_REVIEWER = "reviewer"
+REVIEWER_STYLE_CHOICES = [STYLE_VERSION_LEGACY, STYLE_VERSION_REVIEWER]
+REVIEWER_LINESTYLE_BY_CATEGORY = {
+    "proposed": "-",
+    "paired_baseline": "--",
+    "other_baseline": ":",
+}
+REVIEWER_CATEGORY_ORDER = {
+    "proposed": 0,
+    "paired_baseline": 1,
+    "other_baseline": 2,
+}
+REVIEWER_PROPOSED_TO_BASELINES = {
+    "dme-ppo": {"ppo (r)", "ppo_brax", "ppo"},
+    "dme-reppo": {"reppo"},
+    "dme-wpo": {"wpo", "me-wpo"},
+}
+REVIEWER_EXTRA_PROPOSED = {"reppo-dime"}
+REVIEWER_SPECIAL_LINESTYLE = (0, (7, 2.2, 1.8, 2.2))
+REVIEWER_METHOD_STYLE_OVERRIDES = {
+    "wpo": REVIEWER_SPECIAL_LINESTYLE,
+    "reppo-dime": REVIEWER_SPECIAL_LINESTYLE,
+}
+REVIEWER_PALETTE = [
+    "#0072B2",
+    "#D55E00",
+    "#009E73",
+    "#CC79A7",
+    "#56B4E9",
+    "#E69F00",
+    "#332288",
+    "#117733",
+    "#AA4499",
+    "#44AA99",
+]
 MEAN_FIGURES_SUBDIR = "mean"
 IQM_FIGURES_SUBDIR = "IQM"
 
@@ -188,6 +225,15 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=GRID_LINEWIDTH,
         help="Gridline linewidth for plots.",
+    )
+    parser.add_argument(
+        "--style-version",
+        choices=REVIEWER_STYLE_CHOICES,
+        default=STYLE_VERSION_LEGACY,
+        help=(
+            "Plot style preset. 'legacy' keeps the original color/style settings; "
+            "'reviewer' uses higher-contrast colors and 3 line-style categories."
+        ),
     )
     return parser.parse_args()
 
@@ -286,6 +332,119 @@ def clean_method_name(raw_name: str) -> str:
             break
     cleaned = re.sub(r"[_\- ]+", "_", cleaned).strip("_-")
     return cleaned or raw_name
+
+
+def canonical_method_name(method_name: str) -> str:
+    canonical = method_name.lower().strip()
+    canonical = canonical.replace("(ours)", "").strip()
+    canonical = re.sub(r"\s+", " ", canonical)
+    return canonical
+
+
+def build_reviewer_categories(methods: set[str]) -> dict[str, str]:
+    canonical_by_method = {method: canonical_method_name(method) for method in methods}
+    methods_by_canonical: dict[str, set[str]] = defaultdict(set)
+    for method, canonical in canonical_by_method.items():
+        methods_by_canonical[canonical].add(method)
+
+    proposed_methods = {
+        method
+        for method in methods
+        if "(ours)" in method.lower()
+        or canonical_by_method[method].startswith("dme-")
+        or canonical_by_method[method] in REVIEWER_EXTRA_PROPOSED
+    }
+
+    paired_baselines: set[str] = set()
+    for proposed in proposed_methods:
+        proposed_canonical = canonical_by_method[proposed]
+        baseline_canonicals = REVIEWER_PROPOSED_TO_BASELINES.get(proposed_canonical, set())
+        for baseline_canonical in baseline_canonicals:
+            for baseline in methods_by_canonical.get(baseline_canonical, set()):
+                if baseline not in proposed_methods:
+                    paired_baselines.add(baseline)
+
+    categories = {method: "other_baseline" for method in methods}
+    for method in proposed_methods:
+        categories[method] = "proposed"
+    for method in paired_baselines:
+        categories[method] = "paired_baseline"
+    return categories
+
+
+def build_reviewer_style_maps(
+    methods: set[str],
+) -> tuple[dict[str, str], dict[str, object], dict[str, str]]:
+    categories = build_reviewer_categories(methods)
+    canonical_by_method = {method: canonical_method_name(method) for method in methods}
+    colors: dict[str, str] = {}
+    styles: dict[str, object] = {}
+    color_index = 0
+
+    def next_color() -> str:
+        nonlocal color_index
+        color = REVIEWER_PALETTE[color_index % len(REVIEWER_PALETTE)]
+        color_index += 1
+        return color
+
+    proposed_methods = sorted(
+        [method for method in methods if categories.get(method) == "proposed"],
+        key=canonical_method_name,
+    )
+    for method in proposed_methods:
+        colors[method] = next_color()
+
+    for method in sorted(
+        [m for m in methods if categories.get(m) == "paired_baseline"],
+        key=canonical_method_name,
+    ):
+        baseline_canonical = canonical_by_method[method]
+        matched_color = None
+        for proposed in proposed_methods:
+            proposed_canonical = canonical_by_method[proposed]
+            candidate_baselines = REVIEWER_PROPOSED_TO_BASELINES.get(
+                proposed_canonical, set()
+            )
+            if baseline_canonical in candidate_baselines:
+                matched_color = colors.get(proposed)
+                break
+        colors[method] = matched_color or next_color()
+
+    for method in sorted(
+        [m for m in methods if m not in colors], key=canonical_method_name
+    ):
+        colors[method] = next_color()
+
+    for method in methods:
+        category = categories.get(method, "other_baseline")
+        styles[method] = REVIEWER_LINESTYLE_BY_CATEGORY.get(category, ":")
+        canonical = canonical_by_method[method]
+        if canonical in REVIEWER_METHOD_STYLE_OVERRIDES:
+            styles[method] = REVIEWER_METHOD_STYLE_OVERRIDES[canonical]
+
+    return colors, styles, categories
+
+
+def build_method_order(methods: set[str], categories: dict[str, str]) -> list[str]:
+    return sorted(
+        methods,
+        key=lambda method: (
+            REVIEWER_CATEGORY_ORDER.get(categories.get(method, "other_baseline"), 99),
+            canonical_method_name(method),
+        ),
+    )
+
+
+def ordered_methods_present(df: pd.DataFrame, method_order: list[str]) -> list[str]:
+    present = set(df["method"].unique())
+    return [method for method in method_order if method in present]
+
+
+def make_legend_clearer(legend: object) -> None:
+    if legend is None:
+        return
+    for line in legend.get_lines():
+        line.set_alpha(1.0)
 
 
 def build_distinct_palette(count: int) -> list[str]:
@@ -470,8 +629,13 @@ def main() -> int:
         multi_env = False
 
     figures_dir = os.path.join("results", "wandb_loader", "Figures")
-    mean_figures_dir = os.path.join(figures_dir, MEAN_FIGURES_SUBDIR)
-    iqm_figures_dir = os.path.join(figures_dir, IQM_FIGURES_SUBDIR)
+    style_dir_suffix = (
+        ""
+        if args.style_version == STYLE_VERSION_LEGACY
+        else f"_{args.style_version}"
+    )
+    mean_figures_dir = os.path.join(figures_dir, f"{MEAN_FIGURES_SUBDIR}{style_dir_suffix}")
+    iqm_figures_dir = os.path.join(figures_dir, f"{IQM_FIGURES_SUBDIR}{style_dir_suffix}")
     os.makedirs(mean_figures_dir, exist_ok=True)
     os.makedirs(iqm_figures_dir, exist_ok=True)
     out_stem: str | None = None
@@ -636,16 +800,24 @@ def main() -> int:
             }
         )
 
-    color_by_method = {}
-    style_by_method = {}
-    palette = build_distinct_palette(len(all_methods))
-    for idx, method in enumerate(sorted(all_methods)):
-        color_by_method[method] = palette[idx % len(palette)]
-        style_by_method[method] = LINE_STYLES[idx % len(LINE_STYLES)]
-    for method, color in method_color_overrides.items():
-        color_by_method[method] = color
-    for method, style in method_style_overrides.items():
-        style_by_method[method] = style
+    if args.style_version == STYLE_VERSION_REVIEWER:
+        color_by_method, style_by_method, method_categories = build_reviewer_style_maps(
+            all_methods
+        )
+    else:
+        color_by_method = {}
+        style_by_method = {}
+        method_categories = {method: "legacy" for method in all_methods}
+        palette = build_distinct_palette(len(all_methods))
+        for idx, method in enumerate(sorted(all_methods)):
+            color_by_method[method] = palette[idx % len(palette)]
+            style_by_method[method] = LINE_STYLES[idx % len(LINE_STYLES)]
+        for method, color in method_color_overrides.items():
+            color_by_method[method] = color
+        for method, style in method_style_overrides.items():
+            style_by_method[method] = style
+
+    method_order = build_method_order(all_methods, method_categories)
 
     for result in env_results:
         env_name = result["env_name"]
@@ -660,8 +832,8 @@ def main() -> int:
         result["merged_iqm"] = merged_iqm
 
         plt.figure(figsize=(9, 5))
-        for method, method_df in merged.groupby("method"):
-            method_df = method_df.sort_values("step")
+        for method in ordered_methods_present(merged, method_order):
+            method_df = merged[merged["method"] == method].sort_values("step")
             run_count = len(method_run_counts[method])
             label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
@@ -687,7 +859,13 @@ def main() -> int:
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"{env_name}", fontsize = TITLE_FONTSIZE)
-        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE)
+        legend = plt.legend(
+            loc="lower right",
+            ncol=2,
+            fontsize=LEGEND_FONTSIZE,
+            handlelength=LEGEND_HANDLELENGTH,
+        )
+        make_legend_clearer(legend)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.xlim(left=0, right=PLOT_MAX_STEPS)
@@ -707,8 +885,8 @@ def main() -> int:
         plt.close()
 
         plt.figure(figsize=(9, 5))
-        for method, method_df in merged_iqm.groupby("method"):
-            method_df = method_df.sort_values("step")
+        for method in ordered_methods_present(merged_iqm, method_order):
+            method_df = merged_iqm[merged_iqm["method"] == method].sort_values("step")
             run_count = len(method_run_counts[method])
             label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
@@ -734,7 +912,13 @@ def main() -> int:
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"{env_name} (IQM)", fontsize=TITLE_FONTSIZE)
-        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE)
+        legend = plt.legend(
+            loc="lower right",
+            ncol=2,
+            fontsize=LEGEND_FONTSIZE,
+            handlelength=LEGEND_HANDLELENGTH,
+        )
+        make_legend_clearer(legend)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.xlim(left=0, right=PLOT_MAX_STEPS)
@@ -778,8 +962,8 @@ def main() -> int:
             merged = result["merged"]
             method_run_counts = result["method_run_counts"]
 
-            for method, method_df in merged.groupby("method"):
-                method_df = method_df.sort_values("step")
+            for method in ordered_methods_present(merged, method_order):
+                method_df = merged[merged["method"] == method].sort_values("step")
                 run_count = len(method_run_counts[method])
                 label = f"{method}"# (n={run_count})"
                 color = color_by_method.get(method)
@@ -814,17 +998,21 @@ def main() -> int:
         fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         fig.supylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
         if legend_handles:
-            handles = [legend_handles[m] for m in sorted(legend_handles.keys())]
+            handles = [
+                legend_handles[m] for m in method_order if m in legend_handles
+            ]
             labels = [h.get_label() for h in handles]
             legend_cols = max(1, math.ceil(len(handles) / 2))
-            fig.legend(
+            legend = fig.legend(
                 handles,
                 labels,
                 loc="upper center",
                 bbox_to_anchor=(0.5, 0.995),
                 ncol=legend_cols,
                 fontsize=LEGEND_FONTSIZE,
+                handlelength=LEGEND_HANDLELENGTH,
             )
+            make_legend_clearer(legend)
         fig.tight_layout(rect=[0, 0, 1, 0.92])
 
         if out_stem is not None:
@@ -856,8 +1044,8 @@ def main() -> int:
             merged_iqm = result["merged_iqm"]
             method_run_counts = result["method_run_counts"]
 
-            for method, method_df in merged_iqm.groupby("method"):
-                method_df = method_df.sort_values("step")
+            for method in ordered_methods_present(merged_iqm, method_order):
+                method_df = merged_iqm[merged_iqm["method"] == method].sort_values("step")
                 run_count = len(method_run_counts[method])
                 label = f"{method}"# (n={run_count})"
                 color = color_by_method.get(method)
@@ -892,17 +1080,21 @@ def main() -> int:
         fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         fig.supylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
         if legend_handles:
-            handles = [legend_handles[m] for m in sorted(legend_handles.keys())]
+            handles = [
+                legend_handles[m] for m in method_order if m in legend_handles
+            ]
             labels = [h.get_label() for h in handles]
             legend_cols = max(1, math.ceil(len(handles) / 2))
-            fig.legend(
+            legend = fig.legend(
                 handles,
                 labels,
                 loc="upper center",
                 bbox_to_anchor=(0.5, 0.995),
                 ncol=legend_cols,
                 fontsize=LEGEND_FONTSIZE,
+                handlelength=LEGEND_HANDLELENGTH,
             )
+            make_legend_clearer(legend)
         fig.tight_layout(rect=[0, 0, 1, 0.92])
 
         if out_stem is not None:
@@ -927,8 +1119,8 @@ def main() -> int:
         overall_run_counts = {method: len(runs) for method, runs in overall_method_runs.items()}
 
         plt.figure(figsize=(9, 5))
-        for method, method_df in overall_merged.groupby("method"):
-            method_df = method_df.sort_values("step")
+        for method in ordered_methods_present(overall_merged, method_order):
+            method_df = overall_merged[overall_merged["method"] == method].sort_values("step")
             run_count = overall_run_counts.get(method, 0)
             label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
@@ -954,7 +1146,13 @@ def main() -> int:
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
         plt.title(f"All environments", fontsize=TITLE_FONTSIZE)
-        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE_all)
+        legend = plt.legend(
+            loc="lower right",
+            ncol=2,
+            fontsize=LEGEND_FONTSIZE_all,
+            handlelength=LEGEND_HANDLELENGTH,
+        )
+        make_legend_clearer(legend)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.tight_layout()
@@ -965,8 +1163,10 @@ def main() -> int:
         plt.close()
 
         plt.figure(figsize=(9, 5))
-        for method, method_df in overall_merged_iqm.groupby("method"):
-            method_df = method_df.sort_values("step")
+        for method in ordered_methods_present(overall_merged_iqm, method_order):
+            method_df = overall_merged_iqm[overall_merged_iqm["method"] == method].sort_values(
+                "step"
+            )
             run_count = overall_run_counts.get(method, 0)
             label = f"{method}"# (n={run_count})"
             color = color_by_method.get(method)
@@ -992,7 +1192,13 @@ def main() -> int:
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
         plt.title("All environments (IQM)", fontsize=TITLE_FONTSIZE)
-        plt.legend(loc="lower right", ncol=2, fontsize=LEGEND_FONTSIZE_all)
+        legend = plt.legend(
+            loc="lower right",
+            ncol=2,
+            fontsize=LEGEND_FONTSIZE_all,
+            handlelength=LEGEND_HANDLELENGTH,
+        )
+        make_legend_clearer(legend)
         plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
         plt.tight_layout()

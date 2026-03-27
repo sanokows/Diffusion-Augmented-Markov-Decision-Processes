@@ -2,7 +2,6 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    FishSwim
     HopperHop
     HopperStand
 )
@@ -18,7 +17,7 @@ DIFF_STEPS=(
 # Step 3: Configure vmapped seeds (single process, multiple seeds on one GPU)
 NUM_SEEDS=1
 BASE_SEED=0
-NUM_TRIALS=1
+NUM_TRIALS=8
 
 # Step 4: Optional run-level defaults
 WANDB_PROJECT_SUFFIX="_FR_more_steps_small_nets_vmapped"
@@ -33,6 +32,18 @@ declare -A LMBDA_BY_STEP=(
     ["4"]="0.972"
     ["8"]="0.98"
     ["16"]="0.983"
+)
+declare -A ENT_TARGET_MULT_BY_STEP=(
+    ["2"]="3"
+    ["4"]="3.5"
+    ["8"]="4."
+    ["16"]="4.5"
+)
+declare -A NUM_MINI_BATCHES_BY_STEP=(
+    ["2"]="32"
+    ["4"]="16"
+    ["8"]="8"
+    ["16"]="4"
 )
 
 # Step 6: Define GPU pool and round-robin scheduling.
@@ -83,6 +94,8 @@ launch_run() {
     local DIFF_STEP="$2"
     local GAMMA="$3"
     local LMBDA="$4"
+    local ENT_TARGET_MULT="$5"
+    local NUM_MINI_BATCHES="$6"
 
     local GPU_SLOT=$((GPU_INDEX % NUM_GPUS))
     local GPU_DEVICE="${GPU_DEVICES[$GPU_SLOT]}"
@@ -92,15 +105,17 @@ launch_run() {
         wait "${GPU_PIDS[$GPU_SLOT]}"
     fi
 
-    echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP gamma=$GAMMA lmbda=$LMBDA num_seeds=$NUM_SEEDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
+    echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP gamma=$GAMMA lmbda=$LMBDA ent_target_mult=$ENT_TARGET_MULT num_mini_batches=$NUM_MINI_BATCHES num_seeds=$NUM_SEEDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
         wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
         hyperparameters.num_eval="$NUM_EVAL" \
         hyperparameters.total_time_steps="$TOTAL_TIME_STEPS" \
+        hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
         hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
         hyperparameters.gamma="$GAMMA" \
         hyperparameters.lmbda="$LMBDA" \
+        hyperparameters.ent_target_mult="$ENT_TARGET_MULT" \
         env=mjx_dmc \
         num_trials="$NUM_TRIALS" \
         num_seeds="$NUM_SEEDS" \
@@ -117,11 +132,13 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         DIFF_STEP="${DIFF_STEP%,}"
         GAMMA="$(python -c "import math; print(f'{math.pow(${GAMMA_BASE}, 1.0/${DIFF_STEP}):.10f}')")"
         LMBDA="${LMBDA_BY_STEP[$DIFF_STEP]}"
-        if [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
-            echo "Missing gamma/lmbda for diff_steps=$DIFF_STEP. Please fill LMBDA_BY_STEP and check GAMMA_BASE."
+        ENT_TARGET_MULT="${ENT_TARGET_MULT_BY_STEP[$DIFF_STEP]}"
+        NUM_MINI_BATCHES="${NUM_MINI_BATCHES_BY_STEP[$DIFF_STEP]}"
+        if [ -z "$GAMMA" ] || [ -z "$LMBDA" ] || [ -z "$ENT_TARGET_MULT" ] || [ -z "$NUM_MINI_BATCHES" ]; then
+            echo "Missing gamma/lmbda/ent_target_mult/num_mini_batches for diff_steps=$DIFF_STEP. Please fill *_BY_STEP maps and check GAMMA_BASE."
             exit 1
         fi
-        launch_run "$ENV_NAME" "$DIFF_STEP" "$GAMMA" "$LMBDA"
+        launch_run "$ENV_NAME" "$DIFF_STEP" "$GAMMA" "$LMBDA" "$ENT_TARGET_MULT" "$NUM_MINI_BATCHES"
     done
 done
 
