@@ -25,18 +25,14 @@ WANDB_PROJECT_SUFFIX="_FR_more_steps_small_nets_vmapped"
 TOTAL_TIME_STEPS=50000000
 NUM_EVAL=50
 
-# Step 5: Per-diff-step gamma and lambda
-declare -A GAMMA_BY_STEP=(
-    ["2"]="0.9810"
-    ["4"]="0.9878"
-    ["8"]="0.9938"
-    ["16"]="0.9969"
-)
+# Step 5: Gamma base and per-diff-step lambda
+# Gamma is computed automatically as: GAMMA_BASE^(1 / diff_steps)
+GAMMA_BASE=0.99
 declare -A LMBDA_BY_STEP=(
-    ["2"]="0.9500"
-    ["4"]="0.9600"
-    ["8"]="0.9700"
-    ["16"]="0.9800"
+    ["2"]="0.970"
+    ["4"]="0.972"
+    ["8"]="0.98"
+    ["16"]="0.983"
 )
 
 # Step 6: Define GPU pool and round-robin scheduling.
@@ -119,10 +115,10 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
     for DIFF_STEP in "${DIFF_STEPS[@]}"; do
         DIFF_STEP="${DIFF_STEP%,}"
-        GAMMA="${GAMMA_BY_STEP[$DIFF_STEP]}"
+        GAMMA="$(python -c "import math; print(f'{math.pow(${GAMMA_BASE}, 1.0/${DIFF_STEP}):.10f}')")"
         LMBDA="${LMBDA_BY_STEP[$DIFF_STEP]}"
         if [ -z "$GAMMA" ] || [ -z "$LMBDA" ]; then
-            echo "Missing gamma/lmbda for diff_steps=$DIFF_STEP. Please fill GAMMA_BY_STEP and LMBDA_BY_STEP."
+            echo "Missing gamma/lmbda for diff_steps=$DIFF_STEP. Please fill LMBDA_BY_STEP and check GAMMA_BASE."
             exit 1
         fi
         launch_run "$ENV_NAME" "$DIFF_STEP" "$GAMMA" "$LMBDA"

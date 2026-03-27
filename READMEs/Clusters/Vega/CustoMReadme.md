@@ -45,4 +45,6 @@ sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps_no_learn_diff.sh
 
 sbatch ./READMEs/Clusters/Vega/run_gpu_dmerl_more_steps.sh
 sbatch ./READMEs/Clusters/Vega/FinalStepRuns/run_gpu_dmerl_4_steps.sh
+sbatch ./READMEs/Clusters/Vega/Rebuttal/run_gpu_dmerl_small_nets_vmapped.sh
+sbatch ./READMEs/Clusters/Vega/Rebuttal/run_gpu_dppo_entropy_sweep.sh
 ```
