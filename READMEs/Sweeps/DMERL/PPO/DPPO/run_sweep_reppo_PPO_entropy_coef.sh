@@ -17,12 +17,12 @@ ENTROPY_COEFS=(
 )
 
 # Step 3: Configure vmapped seeds (parallel seeds in one run on one GPU)
-NUM_SEEDS=4
+NUM_SEEDS=1
 BASE_SEED=0
 TRIALS=1
 
 # Step 4: Defaults aligned with run_sweep_dmerl_PPO_control_1.sh
-WANDB_PROJECT_SUFFIX="_FR_test_PPO"
+WANDB_PROJECT_SUFFIX="_FR_PPO_temp_abl"
 TOTAL_TIME_STEPS=50000000
 NUM_EVAL=50
 NUM_MINI_BATCHES=8

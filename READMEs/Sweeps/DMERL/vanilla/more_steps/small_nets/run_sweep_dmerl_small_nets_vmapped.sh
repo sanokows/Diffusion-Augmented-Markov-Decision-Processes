@@ -16,7 +16,7 @@ DIFF_STEPS=(
 )
 
 # Step 3: Configure vmapped seeds (single process, multiple seeds on one GPU)
-NUM_SEEDS=4
+NUM_SEEDS=1
 BASE_SEED=0
 NUM_TRIALS=1
 
