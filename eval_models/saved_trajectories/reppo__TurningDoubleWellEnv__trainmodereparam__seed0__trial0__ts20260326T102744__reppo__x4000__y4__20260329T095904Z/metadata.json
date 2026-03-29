@@ -1,0 +1,29 @@
+{
+  "checkpoint_path": "/home/it4i-sanokows/code/DIMEReppo/saved_models/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744.pkl",
+  "created_at_utc": "2026-03-29T09:59:04.912465+00:00",
+  "data_file": "/home/it4i-sanokows/code/DIMEReppo/eval_models/saved_trajectories/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744__reppo__x4000__y4__20260329T095904Z/trajectories.npz",
+  "diffusion_sampler": "auto",
+  "env_name": "TurningDoubleWellEnv",
+  "env_type": "mjx",
+  "horizon": 100,
+  "knn_entropy": {
+    "knn_mode": "both",
+    "knn_states_dim": 2.0,
+    "knn_states_entropy_bits": -90.23960440926516,
+    "knn_states_entropy_nats": -62.54932737112695,
+    "knn_states_k": 5.0,
+    "knn_states_num_samples": 20000.0,
+    "knn_trajectories_dim": 202.0,
+    "knn_trajectories_entropy_bits": -11089.300827663335,
+    "knn_trajectories_entropy_nats": -7686.5176030759085,
+    "knn_trajectories_k": 5.0,
+    "knn_trajectories_num_samples": 16000.0
+  },
+  "method_name": "reppo",
+  "num_envs": 4000,
+  "num_trajectories": 16000,
+  "repeats": 4,
+  "state_dim": 2,
+  "train_mode": "reparam",
+  "trajectory_steps": 101
+}

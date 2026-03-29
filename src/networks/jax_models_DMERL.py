@@ -1577,6 +1577,7 @@ class DMERLActor(nnx.Module):
         batch = obs["orig_obs"].shape[0]
         if keys.ndim == 1:
             keys = jax.random.split(keys, num=batch)
+            #jax.debug.print("vmap_sample_next_step: split keys.shape={s}", s=keys.shape)
             #jax.debug.print("vmap_ode_sample_next_step: split keys.shape={s}", s=keys.shape)
 
         in_axes = (0, 0, 0, 0)  # keys, current_x, step, obs

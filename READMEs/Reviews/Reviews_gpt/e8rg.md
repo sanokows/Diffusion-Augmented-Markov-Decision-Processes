@@ -1,32 +1,41 @@
-We thank the reviewer for the positive assessment of the theoretical development, the reverse-KL motivation, and the generality of the framework. We also appreciate the constructive comments on evaluation and presentation. Below we address the main points and indicate the revisions we will make.
+We thank the reviewer for the positive assessment of the theoretical development, the reverse-KL motivation, and the generality of the framework. We appreciate the constructive comments on evaluation and presentation. Below we address the main points.
 
 **W2 No experiments on multimodal tasks.**  
-We added a toy example ([link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/MultimodalActions/multi_agents.gif)) showing that the method can learn multimodal action distributions. A 2D agent outputs actions in \([-1,1]\), corresponding to movement directions between \(-90^\circ\) and \(90^\circ\). Rewards are given by a double-well potential with optima at \(-45^\circ\) and \(45^\circ\). The state is the agent’s current orientation. The transition rounds the resulting action to the closest global minimum of the double well, while the reward is computed from the unrounded action. As a result, there are only 8 possible states for each of which we can plot a corresponding action histogram ([link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/MultimodalActions/histo.png)) and compare it to the reward landscape. We compare REPPO, DIME-REPPO, and DME-REPPO on this environment. REPPO exhibits mode collapse because a Gaussian policy can represent only one mode, causing the agent to move toward the lower-left corner regardless of initialization. In contrast, DIME-REPPO and DME-REPPO cover both reward maxima for each state, leading to richer behavior in all directions.
+To address this concern, we added a toy multimodal control example that directly tests whether the compared methods can learn multimodal action distributions. A visualization of the learned behaviors is provided here ([gif](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/MultimodalActions/multi_agents.gif)), and the corresponding per-state action histograms are shown here ([histograms](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/MultimodalActions/histo.png)).
+
+In this environment, a 2D agent outputs actions in $[-1,1]$, corresponding to movement directions between $-90^\circ$ and $90^\circ$. The reward is a double-well potential with two optima at $-45^\circ$ and $45^\circ$, making the optimal policy inherently multimodal. The state is the agent’s current orientation. After an action is taken, the transition maps it to the nearest global minimum of the double-well potential, while the reward is still computed from the original, unrounded action. This yields only 8 possible states, allowing us to visualize for each state the learned action histogram together with the reward landscape.
+
+We compare **REPPO, DIME-REPPO, DPPO, DME-REPPO, DME-WPO, and DME-PPO** on this task. **REPPO** suffers from mode collapse because its Gaussian policy can represent only a single mode; consequently, the agent consistently moves toward the lower-left corner regardless of initialization. **DPPO** [2], which corresponds to DME-PPO at temperature zero, also fails to represent the multimodal action distribution, leading the agent to cycle rather than cover both optimal directions. By contrast, **DIME-REPPO** and our methods namely **DME-REPPO, DME-WPO, and DME-PPO** all assign probability mass to both reward maxima for each state, demonstrating successful learning of multimodal action distributions and substantially richer behavior.
+
+While this experiment is intentionally simple, it provides direct evidence that our approach can model and exploit multimodal action structure, unlike unimodal baselines and other diffusion-based baselines such as DPPO.
 
 **Q1 Figure 1 visualization.**  
-Thank you for this suggestion. Our current plotting scheme is organized as follows: each vanilla Gaussian-policy method is shown with a dotted line in a specific color, while the corresponding diffusion-based variant uses the same color with a solid line. REPPO-DIME and WPO currently use colors similar to their respective counterparts. We agree that it would be more consistent to also show WPO with a dotted line. At [link], we provide an updated figure in which we incorporated the reviewer’s feedback.
+We thank the reviewer for this suggestion and have incorporated the feedback in the updated figure: [link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/IQM/all_envs_methods_iqm_eval_return.png).
 
 **Q2 ODE-based variants / faster inference.**  
 This is an interesting question, and we agree that ODE-based variants are a natural direction to consider.
 
 A maximum-entropy RL formulation for ODE-based samplers appears possible, since the process is not fully deterministic: the initial condition is still sampled from a prior distribution. The corresponding log-density can be written as
-\[
+$
 \log p_\theta(x) = \log p_0(x_0) - \int_0^1 \nabla \cdot u_\theta(x_t)\, dt,
 \qquad
 x_t = x_0 + \int_0^t u_s(x_s)\, ds.
-\]
-Thus, the log-probability of a sample decomposes over flow-integration steps, in a way that is conceptually similar to gaussian or diffusion policies in RL. Based on this, we believe that a policy-gradient argument on the left-hand side of Eq. 1 could in principle also be applied directly over the flow-integration steps. However, computing \(\nabla \cdot u_\theta(x_t)\) is expensive, so one would likely need to rely on the Hutchinson trace estimators. This is our current intuition, but we think that the mathematical details would need to be worked out more carefully.
+$
+Thus, the log-probability of a sample decomposes over flow-integration steps, conceptually similar to Gaussian or diffusion policies in RL. Based on this, we believe that a policy-gradient argument on the left-hand side of Eq. 1 could in principle also be applied directly over the flow-integration steps. However, computing $\nabla \cdot u_\theta(x_t)$ is expensive, so one would likely need Hutchinson trace estimators. This is our current intuition, but the mathematical details would need to be worked out more carefully.
 
-ODE-based formulations may also be possible through approaches such as (Tian et al. 2024), where flow samplers are trained with physics-informed losses (Raissi et al. 2019). At the same time, such flow-based samplers have empirically been found to perform weakly even on low-dimensional tasks (He et al. 2025). 
+ODE-based formulations may also be possible through approaches such as [3], where flow samplers are trained with physics-informed losses [1]. At the same time, such flow-based samplers have empirically been found to perform weakly even on low-dimensional tasks [4].
 
-Finally, we would also like to note that, after training, it is already possible to sample from the diffusion model by simulating the corresponding probability-flow ODE ( Song et al. 2021 (Eq. 7)).
+Finally, we would also like to note that, after training, it is already possible to sample from the diffusion model by simulating the corresponding probability-flow ODE [5].
 
-We thank the reviewer again for the helpful comments. We believe these revisions will improve the presentation and better clarify both the current scope of the experiments and the broader design space opened by the proposed framework.
+We thank the reviewer again for the helpful comments. We believe these revisions improve the updated manuscript of this paper.
 
-Raissi, Maziar, Paris Perdikaris, and George E. Karniadakis. "Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations." Journal of Computational physics 378 (2019): 686-707.
+**References**  
+[1] Raissi, M., Perdikaris, P., and Karniadakis, G. E. *Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations.* Journal of Computational Physics, 2019.  
 
-Tian, Yifeng, Nishant Panda, and Yen Ting Lin. "Liouville flow importance sampler." Proceedings of the 41st International Conference on Machine Learning. 2024.
+[2] Ren, A. Z., et al. *Diffusion Policy Policy Optimization.* ICLR, 2025.  
 
-He, Jiajun, et al. "No Trick, No Treat: Pursuits and Challenges Towards Simulation-free Training of Neural Samplers." Frontiers in Probabilistic Inference: Learning meets Sampling. 2025.
+[3] Tian, Y., Panda, N., and Lin, Y. T. *Liouville flow importance sampler.* ICML, 2024.  
 
-Song, Yang, et al. "Maximum likelihood training of score-based diffusion models." Advances in neural information processing systems 34 (2021): 1415-1428.
+[4] He, J., et al. *No Trick, No Treat: Pursuits and Challenges Towards Simulation-free Training of Neural Samplers.* Frontiers in Probabilistic Inference: Learning meets Sampling, 2025.  
+
+[5] Song, Y., et al. *Maximum likelihood training of score-based diffusion models.* NeurIPS, 2021.

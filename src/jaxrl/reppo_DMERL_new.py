@@ -222,6 +222,7 @@ class ReppoConfig(struct.PyTreeNode):
     aux_loss_alpha: float = 0.9
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
+    stop_grad_entropy: bool = True
     use_augmented_lagrangian_dual: bool = False
     augmented_lagrangian_entropy_coef: float = 1.0
     augmented_lagrangian_kl_coef: float = 1.0

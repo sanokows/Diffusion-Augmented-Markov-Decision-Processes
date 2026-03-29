@@ -15,6 +15,7 @@ from ml_collections import ConfigDict
 from mujoco_playground import MjxEnv, registry
 from src.env_utils.planar_path_env import PlanarPathEnv
 from src.env_utils.turning_double_well_env import TurningDoubleWellEnv
+from src.env_utils.turning_multi_well_env import TurningMultiWellEnv
 from mujoco_playground._src.wrapper import wrap_for_brax_training, Wrapper
 import distrax
 
@@ -51,6 +52,24 @@ class MjxGymnaxWrapper(Environment):
                 env_kwargs = dict(config) if config is not None else {}
                 env_kwargs.setdefault("horizon", episode_length or 200)
                 self.env = TurningDoubleWellEnv(**env_kwargs)
+                self.sanitize_nans = False
+                self.reward_scale = reward_scale
+                self.episode_length = self.env.horizon
+                if isinstance(self.env.observation_size, int):
+                    self.dict_obs = False
+                else:
+                    self.dict_obs = True
+                if asymmetric_observation:
+                    self.dict_obs_key = "privileged_state"
+                else:
+                    self.dict_obs_key = "state"
+                print(self.dict_obs_key)
+                super().__init__()
+                return
+            if env_or_name == "TurningMultiWellEnv":
+                env_kwargs = dict(config) if config is not None else {}
+                env_kwargs.setdefault("horizon", episode_length or 200)
+                self.env = TurningMultiWellEnv(**env_kwargs)
                 self.sanitize_nans = False
                 self.reward_scale = reward_scale
                 self.episode_length = self.env.horizon

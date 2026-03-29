@@ -10,7 +10,7 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from src.env_utils.jax_wrappers import MjxGymnaxWrapper, MjxDiffEnvWrapper
-from src.jaxrl.reppo_DMERL_old import ReppoDMERLTrainer, ReppoConfig
+from src.jaxrl.reppo_DMERL_new import ReppoDMERLTrainer, ReppoConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,8 +24,14 @@ def _to_jax_tree(tree):
     return jax.tree.map(lambda x: jnp.asarray(x), tree)
 
 
-def _select_seed(tree, seed_idx: int = 0):
-    return jax.tree.map(lambda x: x[seed_idx], tree)
+def _select_seed(tree, seed_idx: int, num_seeds: int):
+    def _maybe_index(x):
+        x = np.asarray(x)
+        if num_seeds > 0 and x.ndim > 0 and x.shape[0] == num_seeds:
+            return x[seed_idx]
+        return x
+
+    return jax.tree.map(_maybe_index, tree)
 
 
 def _build_env(cfg):
@@ -100,12 +106,11 @@ def main() -> None:
     actor_target_params = checkpoint.get("actor_target_params", actor_params)
     norm_state = checkpoint.get("last_env_state", None)
 
-    if num_seeds > 1:
-        actor_params = _select_seed(actor_params)
-        critic_params = _select_seed(critic_params)
-        actor_target_params = _select_seed(actor_target_params)
-        if norm_state is not None:
-            norm_state = _select_seed(norm_state)
+    actor_params = _select_seed(actor_params, seed_idx=0, num_seeds=num_seeds)
+    critic_params = _select_seed(critic_params, seed_idx=0, num_seeds=num_seeds)
+    actor_target_params = _select_seed(actor_target_params, seed_idx=0, num_seeds=num_seeds)
+    if norm_state is not None:
+        norm_state = _select_seed(norm_state, seed_idx=0, num_seeds=num_seeds)
 
     actor_params = _to_jax_tree(actor_params)
     critic_params = _to_jax_tree(critic_params)

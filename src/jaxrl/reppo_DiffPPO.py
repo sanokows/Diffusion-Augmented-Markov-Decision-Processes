@@ -1,5 +1,8 @@
 import logging
 import math
+import os
+import pickle
+import re
 import time
 import typing
 from typing import Any, Callable, Optional
@@ -49,6 +52,44 @@ from src.jaxrl.reppo_DMERL_old import randomize_env_steps
 
 
 logging.basicConfig(level=logging.INFO)
+
+
+def _sanitize_filename_component(text: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(text).strip())
+    return cleaned or "run"
+
+
+def _saved_models_dir() -> str:
+    # Hydra changes CWD into `outputs/...`; write checkpoints relative to repo root.
+    try:
+        repo_root = hydra.utils.get_original_cwd()
+    except Exception:
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    path = os.path.join(repo_root, "saved_models")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _to_numpy_tree(tree):
+    return jax.tree.map(lambda x: np.asarray(x), tree)
+
+
+def _take_last_metrics(metrics: dict) -> dict:
+    def _last(x):
+        x = jnp.asarray(x)
+        return x[-1] if x.ndim > 0 else x
+
+    return jax.tree.map(_last, metrics)
+
+
+def _resolve_train_mode(cfg: DictConfig) -> str:
+    mode = OmegaConf.select(cfg, "hyperparameters.train_mode")
+    if mode is not None and str(mode).strip():
+        return str(mode)
+    mode = OmegaConf.select(cfg, "hyperparameters.diffusion.train_mode")
+    if mode is not None and str(mode).strip():
+        return str(mode)
+    return "reparam"
 
 
 def _sectioned_wandb_key(key: str) -> str:
@@ -1293,9 +1334,62 @@ def run(cfg: DictConfig):
             save_code=True,
         )
         start = time.perf_counter()
-        _, metrics = jax.jit(train_fn, static_argnums=(1,))(train_key, trainer.cfg)
+        state, metrics = jax.jit(train_fn, static_argnums=(1,))(train_key, trainer.cfg)
         jax.block_until_ready(metrics)
         duration = time.perf_counter() - start
+
+        # Export final weights into repo_root/saved_models with a descriptive filename.
+        try:
+            final_metrics = _take_last_metrics(metrics)
+            method_name = "reppo_DiffPPO"
+            env_name = str(cfg.env.name)
+            train_mode = _resolve_train_mode(cfg)
+            timestamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+            filename = "__".join(
+                [
+                    _sanitize_filename_component(method_name),
+                    _sanitize_filename_component(env_name),
+                    f"trainmode{_sanitize_filename_component(train_mode)}",
+                    f"seed{int(cfg.seed)}",
+                    f"trial{i}",
+                    f"ts{timestamp}",
+                ]
+            ) + ".pkl"
+            save_path = os.path.join(_saved_models_dir(), filename)
+            checkpoint = {
+                "method_name": method_name,
+                "env_name": env_name,
+                "train_mode": train_mode,
+                "seed": int(cfg.seed),
+                "trial": int(i),
+                "saved_at": time.time(),
+                "num_seeds": int(np.asarray(state.time_steps).shape[0])
+                if np.asarray(state.time_steps).ndim > 0
+                else 1,
+                "params": _to_numpy_tree(state.params),
+                "time_steps": _to_numpy_tree(state.time_steps),
+                "iteration": _to_numpy_tree(state.iteration),
+                "normalization_state": _to_numpy_tree(state.normalization_state)
+                if bool(getattr(cfg.hyperparameters, "normalize_env", False))
+                else None,
+                "critic_normalization_state": _to_numpy_tree(state.critic_normalization_state)
+                if bool(getattr(cfg.hyperparameters, "normalize_env", False))
+                else None,
+                "reward_normalization_state": _to_numpy_tree(state.reward_normalization_state)
+                if bool(getattr(cfg.hyperparameters, "normalize_reward", False))
+                or bool(getattr(cfg.hyperparameters, "normalize_soft_reward", False))
+                else None,
+                "last_env_state": _to_numpy_tree(state.last_env_state),
+                "final_eval_metrics": _to_numpy_tree(
+                    utils.filter_prefix("eval", final_metrics)
+                ),
+                "cfg": OmegaConf.to_container(cfg, resolve=True),
+            }
+            with open(save_path, "wb") as f:
+                pickle.dump(checkpoint, f)
+            logging.info("Saved final model checkpoint to %s", save_path)
+        except Exception as e:
+            logging.exception("Failed to export final model checkpoint: %s", e)
 
         logging.info(f"Training took {duration:.2f} seconds.")
         wandb.finish()

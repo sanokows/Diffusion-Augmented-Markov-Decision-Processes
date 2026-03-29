@@ -95,6 +95,7 @@ hyperparameters:
   ent_start: 0.01
   ent_target_mult: 3.
   update_entropy_lagrangian: true
+  stop_grad_entropy: true
   augmented_lagrangian_entropy_coef: 1.0
   # optional: exponentially decay temperature instead of learning it
   use_temperature_decay: false

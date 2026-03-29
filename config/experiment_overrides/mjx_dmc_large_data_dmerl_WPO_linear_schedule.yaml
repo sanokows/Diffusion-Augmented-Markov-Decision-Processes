@@ -20,7 +20,7 @@ hyperparameters:
   env_action_clip_value: 1.
   action_clip_value: 1.
   use_W2_kl: false
-  remove_fisher_precond: false
+  remove_fisher_precond: true
   
   lr: 1e-3
   temperature_lr: 3e-4
@@ -31,7 +31,7 @@ hyperparameters:
   lmbda: 0.98
   
   diffusion:
-    learn_friction: true
+    learn_friction: false
     learn_dt: true
     per_step_dt: true
     per_dim_friction: true

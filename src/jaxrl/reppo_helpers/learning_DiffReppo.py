@@ -39,6 +39,12 @@ def _resolve_temperature(actor_model, cfg, train_state=None) -> jax.Array:
     return start_val * jnp.exp(progress * log_ratio)
 
 
+def _maybe_stop_grad_entropy(entropy: jax.Array, cfg) -> jax.Array:
+    if bool(getattr(cfg, "stop_grad_entropy", True)):
+        return jax.lax.stop_gradient(entropy)
+    return entropy
+
+
 def compute_action_q_grads(actor_model, critic_model, obs, critic_obs):
     """Compute time-interpolated gradient between prior and Q wrt actions."""
     actions = obs["orig_actions"]
@@ -205,7 +211,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
-        entropy = jax.lax.stop_gradient(entropy)
+        entropy = _maybe_stop_grad_entropy(entropy, cfg)
         # print the entropy in jax debug mode also print the target entropy and the temperature
         #jax.debug.print("Entropy: {ent}, target: {tar}, temp: {temp}", ent=entropy, tar=action_size_target, temp=actor_model.temperature())
 
@@ -227,6 +233,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         target_entropy = action_size_target + entropy
         kl_constraint = kl - cfg.kl_bound
         if cfg.use_augmented_lagrangian_dual:
+            raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
             if cfg.actor_kl_clip_mode == "full":
                 raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
             elif cfg.actor_kl_clip_mode == "clipped":
@@ -344,7 +351,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         def _single_gen_log_prob(p, obs, key):
             actor_single = nnx.merge(updated_state.actor.graphdef, p)
             obs_batched = jax.tree_util.tree_map(lambda x: x[None], obs)
-            jax.debug.print("train_update_step_4_env shape: {shape}", shape=key.shape)
+            #jax.debug.print("train_update_step_4_env shape: {shape}", shape=key.shape)
             _, gen_log_prob, _ = actor_single.vmap_sample_next_step(obs_batched, key)
             return gen_log_prob.squeeze()
 
@@ -352,6 +359,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             fisher_actor_model = nnx.merge(updated_state.actor.graphdef, params)
             actor_model = fisher_actor_model
         else:
+            raise ValueError("Fisher preconditioning is currently required for WPO loss.")
             per_sample_grads = jax.vmap(
                 jax.grad(_single_gen_log_prob), in_axes=(None, 0, 0)
             )(params, obs_for_actions, fisher_keys)
@@ -393,22 +401,24 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
                 actor_model = nnx.merge(updated_state.actor.graphdef, params)
         temperature = _resolve_temperature(actor_model, cfg, updated_state)
 
-        jax.debug.print("train_update_step_5_env shape: {shape}", shape=step_key.shape)
+        #jax.debug.print("train_update_step_5_env shape: {shape}", shape=step_key.shape)
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
         )
         entropy_prior = actor_model.get_prior_entropy()
         log_prob_ratio = gen_log_prob - dest_log_prob
         #print the shape of log_prob_ratio
-        #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
+        #jax.debug.print("log_prob_ratio shape: {shape}, {key_shape}", shape=log_prob_ratio.shape, key_shape=step_key.shape)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
-        entropy = jax.lax.stop_gradient(entropy)
+        entropy = _maybe_stop_grad_entropy(entropy, cfg)
 
         stop_pred_action = jax.lax.stop_gradient(pred_action)
 
         def single_q(obs, act):
             batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
-            return jnp.squeeze(critic_current_model.critic(batched_obs, act[None]), axis=0)
+            q_val = critic_current_model.critic(batched_obs, act[None])
+            # Expected shape is scalar-like (e.g. (1,) or (1, 1)); squeeze to scalar.
+            return jnp.squeeze(q_val)
 
         def single_log_probs(obs, act):
             batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
@@ -426,11 +436,13 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         use_W2_kl = cfg.use_W2_kl
         if use_W2_kl:
+            raise ValueError("W2 KL is currently not supported for WPO loss.")
             def target_single_log_probs(obs, act):
                 batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
                 ### should new states be sampled here?
                 gen_lp_old, _ = actor_target_model.vmap_eval_log_prob(batched_obs, act[None])
-                return jnp.squeeze(gen_lp_old, axis=0)
+                # Expected shape is scalar-like (e.g. (1,)); squeeze to scalar.
+                return jnp.squeeze(gen_lp_old)
 
 
             target_log_prob_grad = jax.vmap( 
@@ -478,7 +490,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             axis=-1,
         )
 
-        actor_WPO_loss = temperature*jnp.mean((jax.lax.stop_gradient(log_prob_action_grad - stop_q_action_grad/temperature)**2).sum(axis=-1))
+        actor_WPO_loss = temperature*jnp.mean(((jax.lax.stop_gradient(log_prob_action_grad) - jax.lax.stop_gradient(stop_q_action_grad)/temperature)**2).sum(axis=-1))
 
         clip_ratio = jnp.mean((kl_clip_value >= cfg.kl_bound).astype(jnp.float32))
         if cfg.actor_kl_clip_mode == "full":
@@ -499,7 +511,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         kl_constraint = kl_clip_value - cfg.kl_bound
 
         target_entropy_loss = (
-            temperature * jax.lax.stop_gradient(target_entropy)
+            temperature * target_entropy # + _maybe_stop_grad_entropy(actor_WPO_loss, cfg) todo intoruce new lagrange multiplier for this instead!
         ).mean()
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
@@ -519,6 +531,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         metrics = dict(
             actor_loss=actor_loss_val,
             actor_WPO_loss=actor_WPO_loss,
+            Kl_reg_loss = kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
             loss=loss,
             temp=temperature,
             abs_batch_action=jnp.abs(minibatch.action).mean(),
@@ -532,6 +545,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             run_cost=0.0,
             sto_cost=0.0,
             terminal_cost=0.0,
+            entropy_target=-action_size_target,
             entropy=entropy,
             entropy_loss=target_entropy_loss,
             entropy_penalty=entropy_penalty,
@@ -565,7 +579,6 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         next_obs, next_critic_obs, actor_model, critic_model, use_langevin
     )
 
-    jax.debug.print("train_update_step_2_env shape: {shape}", shape=next_act_key.shape)
     next_action, next_gen_log_prob, next_dest_log_prob = (
         actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
     )

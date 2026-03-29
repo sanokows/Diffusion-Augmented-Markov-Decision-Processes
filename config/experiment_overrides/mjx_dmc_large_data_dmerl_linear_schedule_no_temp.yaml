@@ -7,7 +7,7 @@ hyperparameters:
   kl_start: 0.3 # 0.15
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
-  num_collection_step_factor: 1.
+  num_collection_step_factor: 0.5
   vmin: -100
   vmax: 200
   num_bins: 151

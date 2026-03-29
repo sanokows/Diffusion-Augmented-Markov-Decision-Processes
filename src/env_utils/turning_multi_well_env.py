@@ -1,19 +1,14 @@
-"""2-D walker with relative turning actions and a classic double-well turn reward.
+"""2-D walker with relative turning actions and a configurable multi-well turn reward.
 
-This environment is the original turning task used in the project:
-- action is a single normalized turn command in [-1, 1]
-- the command is mapped to a relative turn delta in [-max_turn_deg, max_turn_deg]
-- reward is highest near +/-well_angle_deg, lower at 0 and near +/-90 deg
-
-Use this env when you want the baseline two-mode behavior.
-For a harder configurable n-minima variant, use `TurningMultiWellEnv`.
+Compared to the classic double-well env, this version supports `num_minima >= 2`
+preferred turn deltas in [-90, 90] and is intended as a harder variant.
+Reward between minima is cosine-modulated and outer tails are polynomial.
 """
 
 from __future__ import annotations
 
-from fractions import Fraction
 from functools import partial
-from math import ceil, gcd, sqrt
+from math import ceil, sqrt
 from typing import Sequence
 
 from flax import struct
@@ -23,8 +18,8 @@ import numpy as np
 
 
 @struct.dataclass
-class TurningDoubleWellState:
-    """Environment state for `TurningDoubleWellEnv`."""
+class TurningMultiWellState:
+    """Environment state for `TurningMultiWellEnv`."""
     pos: jax.Array
     direction: jax.Array
     angle: jax.Array
@@ -36,22 +31,21 @@ class TurningDoubleWellState:
     info: dict
 
 
-class TurningDoubleWellEnv:
-    """Original double-well turning environment.
+class TurningMultiWellEnv:
+    """Configurable n-minima turning environment.
 
     What it does:
-    - Simulates a point agent moving in 2-D with heading-based dynamics.
-    - Each step applies a relative turn and then moves forward by `step_size`.
-    - One-step reward depends only on the relative turn delta, not absolute heading.
-    - Reward profile has two preferred turn deltas: `-well_angle_deg` and `+well_angle_deg`.
+    - Simulates the same 2-D heading dynamics as `TurningDoubleWellEnv`.
+    - Defines `num_minima` preferred relative turn angles within [-90, 90].
+    - Uses cosine-modulated interior wells and polynomial outer tails to +/-90 deg.
+    - Supports optional inclusion of opposite headings (+180 deg) for reset sampling.
 
     Main configuration knobs:
-    - `well_angle_deg`: location of the two reward maxima in relative turn space.
-    - `well_height`: reward at 0-turn (barrier between the two maxima).
-    - `max_turn_deg`: action-to-turn scaling range.
-    - `snap_action_to_optimal`: snaps transition turn to +/-`well_angle_deg`.
-    - `randomize_initial_heading`: random heading at reset.
-    - `mask_state_in_observation` / `use_distance_state`: observation variants.
+    - `num_minima`: number of reward maxima in relative turn space.
+    - `well_height`: barrier reward level between adjacent minima.
+    - `multi_minima_tail_power`: sharpness of tail decay outside outer minima.
+    - `include_opposite_headings`: if True, snapped reset headings include +180 deg copies.
+    - `snap_action_to_optimal`: snaps transition turn to nearest configured minimum.
     """
     def __init__(
         self,
@@ -61,15 +55,17 @@ class TurningDoubleWellEnv:
         max_turn_deg: float = 90.0,
         initial_heading_deg: float = 0.0,
         randomize_initial_heading: bool = True,
-        well_angle_deg: float = 45.0,
+        num_minima: int = 2,
         well_height: float = 0.85,
+        multi_minima_tail_power: float = 2.0,
+        include_opposite_headings: bool = True,
         transition_noise_deg: float = 0.,
         snap_action_to_optimal: bool = True,
         mask_state_in_observation: bool = False,
         use_distance_state: bool = False,
         jit: bool = False,
     ) -> None:
-        """Create a double-well turning environment.
+        """Create a multi-well turning environment.
 
         Args:
             horizon: Episode length in steps.
@@ -77,10 +73,12 @@ class TurningDoubleWellEnv:
             max_turn_deg: Max absolute relative turn corresponding to action +/-1.
             initial_heading_deg: Fixed reset heading when randomization is disabled.
             randomize_initial_heading: If True, sample initial heading at reset.
-            well_angle_deg: Preferred turn magnitude (two maxima at +/-well_angle_deg).
-            well_height: Reward at zero-turn (barrier height between wells), in [0, 1].
+            num_minima: Number of preferred turn deltas (>= 2).
+            well_height: Barrier reward level between neighboring minima, in [0, 1].
+            multi_minima_tail_power: Polynomial exponent for reward tails near +/-90 deg.
+            include_opposite_headings: If True, reset support includes minima + 180 deg headings.
             transition_noise_deg: Uniform noise half-range added to turn delta.
-            snap_action_to_optimal: If True, transition turn is snapped to +/-well_angle_deg.
+            snap_action_to_optimal: If True, transition turn is snapped to nearest configured minimum.
             mask_state_in_observation: If True, observations are zeroed.
             use_distance_state: If True, observation is distance-to-origin scalar instead of direction.
             jit: If True, `reset` and `step` are wrapped with `jax.jit`.
@@ -93,11 +91,10 @@ class TurningDoubleWellEnv:
             jnp.asarray(initial_heading_deg, dtype=jnp.float32)
         )
         self.randomize_initial_heading = bool(randomize_initial_heading)
-        self.well_angle_deg = float(abs(well_angle_deg))
-        self.well_angle_radians = jnp.deg2rad(
-            jnp.asarray(abs(well_angle_deg), dtype=jnp.float32)
-        )
+        self.num_minima = int(num_minima)
         self.well_height = float(well_height)
+        self.multi_minima_tail_power = float(multi_minima_tail_power)
+        self.include_opposite_headings = bool(include_opposite_headings)
         self.transition_noise_radians = jnp.deg2rad(
             jnp.asarray(abs(transition_noise_deg), dtype=jnp.float32)
         )
@@ -113,26 +110,35 @@ class TurningDoubleWellEnv:
             raise ValueError("step_size must be positive.")
         if not (0.0 <= self.well_height <= 1.0):
             raise ValueError("well_height must be in [0, 1].")
-        if not (0.0 < self.well_angle_deg < 90.0):
-            raise ValueError("well_angle_deg must be in (0, 90).")
-        self._peak_u = jnp.asarray((self.well_angle_deg / 90.0) ** 2, dtype=jnp.float32)
+        if self.num_minima < 2:
+            raise ValueError("num_minima must be >= 2.")
+        if self.multi_minima_tail_power <= 0.0:
+            raise ValueError("multi_minima_tail_power must be > 0.")
 
-        # Discrete set of initial headings used when both:
-        # - randomize_initial_heading=True
-        # - snap_action_to_optimal=True
-        # The set covers all unique angles of the form k * well_angle_deg (mod 360).
-        well_angle_frac = Fraction(self.well_angle_deg).limit_denominator(3600)
-        denom = int(well_angle_frac.denominator)
-        numer = int(well_angle_frac.numerator)
-        period = (360 * denom) // gcd(numer, 360 * denom)
-        if period <= 0:
-            period = 1
-        if period > 8192:
-            raise ValueError(
-                "well_angle_deg yields too many discrete initial headings "
-                f"({period}); increase well_angle_deg."
-            )
-        heading_degrees = (np.arange(period, dtype=np.float64) * (numer / denom)).astype(np.float32)
+        # Minima over relative turn angle in [-90, 90], user-specified parameterization:
+        # theta_i = 90 - 90/n - 2*90/n * i, i in {0, ..., n-1}.
+        self._minima_spacing_deg = 180.0 / float(self.num_minima)
+        ks = np.arange(self.num_minima, dtype=np.float32)
+        minima_deg = (
+            90.0
+            - 90.0 / float(self.num_minima)
+            - (180.0 / float(self.num_minima)) * ks
+        )
+        minima_deg = np.sort(minima_deg.astype(np.float32))
+        self._preferred_turn_angles_deg = jnp.asarray(minima_deg, dtype=jnp.float32)
+        self._preferred_turn_angles_radians = jnp.deg2rad(self._preferred_turn_angles_deg)
+        self._snappable_turn_angles_radians = jnp.clip(
+            self._preferred_turn_angles_radians,
+            -self.max_turn_radians,
+            self.max_turn_radians,
+        )
+
+        if self.include_opposite_headings:
+            heading_degrees = np.concatenate([minima_deg, minima_deg + 180.0], axis=0)
+            heading_degrees = ((heading_degrees + 180.0) % 360.0) - 180.0
+            heading_degrees = np.unique(np.round(heading_degrees, 6)).astype(np.float32)
+        else:
+            heading_degrees = minima_deg
         self._snapped_initial_heading_support_radians = jnp.deg2rad(
             jnp.asarray(heading_degrees, dtype=jnp.float32)
         )
@@ -212,7 +218,7 @@ class TurningDoubleWellEnv:
         )
         return next_rng, angle
 
-    def _reset_impl(self, rng: jax.Array) -> TurningDoubleWellState:
+    def _reset_impl(self, rng: jax.Array) -> TurningMultiWellState:
         rng, angle = self._sample_initial_heading(rng)
         if rng.ndim == 2:
             batch = rng.shape[0]
@@ -232,7 +238,7 @@ class TurningDoubleWellEnv:
         }
         #jax.debug.print("print info steps and truncation", steps=info["steps"], truncation=info["truncation"])
         obs = self._observation(pos, direction)
-        return TurningDoubleWellState(
+        return TurningMultiWellState(
             pos=pos,
             direction=direction,
             angle=angle,
@@ -244,10 +250,10 @@ class TurningDoubleWellEnv:
             info=info,
         )
 
-    def reset(self, rng: jax.Array) -> TurningDoubleWellState:
+    def reset(self, rng: jax.Array) -> TurningMultiWellState:
         return self._reset_fn(rng)
 
-    def _step_impl(self, state: TurningDoubleWellState, action: jax.Array) -> TurningDoubleWellState:
+    def _step_impl(self, state: TurningMultiWellState, action: jax.Array) -> TurningMultiWellState:
         # Auto-reset on the step *after* termination: if the caller provides a terminal
         # state, return a fresh reset state with done=False/truncation=0.
         reset_state = self._reset_impl(state.rng)
@@ -260,12 +266,11 @@ class TurningDoubleWellEnv:
         reward = self.reward_from_angle(delta_angle_raw)
 
         if self.snap_action_to_optimal:
-            sign = jnp.where(turn_action >= 0.0, 1.0, -1.0).astype(jnp.float32)
-            inv_max_turn = jnp.where(self.max_turn_radians > 0.0, 1.0 / self.max_turn_radians, 0.0)
-            ratio = (self.well_angle_radians * inv_max_turn).astype(jnp.float32)
-            ratio = jnp.minimum(ratio, jnp.asarray(1.0, dtype=jnp.float32))
-            snapped_turn_action = jnp.clip(sign * ratio, -1.0, 1.0)
-            delta_angle_transition = snapped_turn_action * self.max_turn_radians + noise
+            preferred = self._snappable_turn_angles_radians
+            expanded_delta = jnp.expand_dims(delta_angle_raw, axis=-1)
+            nearest_idx = jnp.argmin(jnp.abs(expanded_delta - preferred), axis=-1)
+            snapped_delta = jnp.take(preferred, nearest_idx, axis=0)
+            delta_angle_transition = snapped_delta + noise
         else:
             delta_angle_transition = delta_angle_raw
 
@@ -278,7 +283,7 @@ class TurningDoubleWellEnv:
             "steps": jnp.asarray(next_t, dtype=jnp.float32),
             "truncation": done.astype(jnp.float32),
         }
-        stepped_state = TurningDoubleWellState(
+        stepped_state = TurningMultiWellState(
             pos=next_pos,
             direction=next_direction,
             angle=next_angle,
@@ -302,7 +307,7 @@ class TurningDoubleWellEnv:
             stepped_state,
         )
 
-    def step(self, state: TurningDoubleWellState, action: jax.Array) -> TurningDoubleWellState:
+    def step(self, state: TurningMultiWellState, action: jax.Array) -> TurningMultiWellState:
         return self._step_fn(state, action)
 
     def potential_from_angle(self, angle: jax.Array) -> jax.Array:
@@ -312,18 +317,29 @@ class TurningDoubleWellEnv:
         """Reward profile for a signed angle delta (radians)."""
         wrapped_deg = jnp.rad2deg(self._wrap_angle(angle))
         clamped_deg = jnp.clip(wrapped_deg, -90.0, 90.0)
-        u = jnp.square(clamped_deg / 90.0)
+        barrier_height = jnp.asarray(self.well_height, dtype=jnp.float32)
+        minima = self._preferred_turn_angles_deg
+        left_min = minima[0]
+        right_min = minima[-1]
+        spacing = jnp.asarray(self._minima_spacing_deg, dtype=jnp.float32)
 
-        # Piecewise polynomial profile in u=(theta/90)^2:
-        # - from 0 to peak_u: monotonic increase from well_height to 1
-        # - from peak_u to 1: monotonic decrease from 1 to 0
-        peak_u = self._peak_u
-        left_s = jnp.clip(u / peak_u, 0.0, 1.0)
-        right_t = jnp.clip((u - peak_u) / (1.0 - peak_u), 0.0, 1.0)
+        # Cosine-modulated interior: maxima in reward at minima turn locations.
+        phase = (clamped_deg - left_min) / spacing
+        interior_wave = 0.5 * (1.0 + jnp.cos(2.0 * jnp.pi * phase))
+        interior_reward = barrier_height + (1.0 - barrier_height) * interior_wave
 
-        left_reward = self.well_height + (1.0 - self.well_height) * (1.0 - (1.0 - left_s) ** 2)
-        right_reward = 1.0 - right_t**2
-        return jnp.where(u <= peak_u, left_reward, right_reward)
+        left_progress = jnp.clip((clamped_deg + 90.0) / (left_min + 90.0), 0.0, 1.0)
+        right_progress = jnp.clip((90.0 - clamped_deg) / (90.0 - right_min), 0.0, 1.0)
+        tail_power = jnp.asarray(self.multi_minima_tail_power, dtype=jnp.float32)
+        left_tail_reward = left_progress ** tail_power
+        right_tail_reward = right_progress ** tail_power
+
+        reward = jnp.where(
+            clamped_deg < left_min,
+            left_tail_reward,
+            jnp.where(clamped_deg > right_min, right_tail_reward, interior_reward),
+        )
+        return jnp.clip(reward, 0.0, 1.0)
 
     def reward_landscape(
         self,
@@ -370,13 +386,13 @@ class TurningDoubleWellEnv:
         rewards = np.asarray(self.reward_from_angle(jnp.asarray(radians)))
         return actions, heading_degrees, rewards
 
-    def rollout_positions(self, states: Sequence[TurningDoubleWellState]) -> np.ndarray:
+    def rollout_positions(self, states: Sequence[TurningMultiWellState]) -> np.ndarray:
         positions, _, _ = self._states_to_arrays(states)
         return positions
 
     def render_trajectory(
         self,
-        trajectory: Sequence[TurningDoubleWellState] | np.ndarray,
+        trajectory: Sequence[TurningMultiWellState] | np.ndarray,
         rewards: np.ndarray | None = None,
         *,
         height: int = 240,
@@ -411,10 +427,13 @@ class TurningDoubleWellEnv:
                 step_rewards = step_rewards[:, :num_envs]
 
         preferred = np.asarray(
-            [
-                [np.cos(float(self.well_angle_radians)), np.sin(float(self.well_angle_radians))],
-                [np.cos(float(self.well_angle_radians)), -np.sin(float(self.well_angle_radians))],
-            ],
+            np.stack(
+                [
+                    np.cos(np.asarray(self._preferred_turn_angles_radians)),
+                    np.sin(np.asarray(self._preferred_turn_angles_radians)),
+                ],
+                axis=-1,
+            ),
             dtype=np.float32,
         )
 
@@ -555,7 +574,7 @@ class TurningDoubleWellEnv:
 
     def _coerce_render_inputs(
         self,
-        trajectory: Sequence[TurningDoubleWellState] | np.ndarray,
+        trajectory: Sequence[TurningMultiWellState] | np.ndarray,
         rewards: np.ndarray | None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
         if isinstance(trajectory, np.ndarray):
@@ -569,7 +588,7 @@ class TurningDoubleWellEnv:
 
     def _states_to_arrays(
         self,
-        states: Sequence[TurningDoubleWellState],
+        states: Sequence[TurningMultiWellState],
         rewards: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
         if len(states) == 0:

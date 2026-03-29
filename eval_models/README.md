@@ -18,6 +18,87 @@ Common options:
   This is only safe when `hyperparameters.normalize_env=false` (the script will ignore it otherwise).
 - `--env-config-override key=value` (repeatable): override entries in `cfg.env.config` loaded from the checkpoint.
   For `TurningDoubleWellEnv` this maps to `TurningDoubleWellEnv(**kwargs)` (e.g. `randomize_initial_heading=true`).
+- `--collect-trajectories`: save state trajectories for offline analysis.
+- `--traj-num-envs <int>` / `--traj-repeats <int>`: run `X` parallel envs repeated `Y` times (`X*Y` trajectories total).
+- `--traj-knn-mode {both,trajectories,states}`: compute kNN entropy over either:
+  1. full trajectories as points (one trajectory = one point),
+  2. pooled states as points (one state = one point), or
+  3. both (default).
+
+Trajectory data is saved to `eval_models/saved_trajectories/<run>/trajectories.npz` with:
+
+- `state_trajectories`: shape `[repeats, horizon+1, num_envs, state_dim]`
+
+and metadata in `metadata.json`.
+
+Example:
+
+```bash
+python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/<checkpoint>.pkl \
+  --collect-trajectories \
+  --traj-num-envs 8000 \
+  --traj-repeats 4 \
+  --traj-knn-mode both
+```
+
+
+```bash
+python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744.pkl \
+  --collect-trajectories \
+  --traj-num-envs 1000 \
+  --traj-repeats 4 \
+  --traj-knn-mode both
+```
+
+```bash
+exec python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744.pkl \
+  --collect-trajectories \
+  --traj-num-envs 4000 \
+  --traj-repeats 4 \
+  --traj-knn-mode both\
+    --traj-knn-max-samples 20000 \
+  --traj-knn-k 5
+```
+```bash
+exec python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
+  --collect-trajectories \
+  --traj-num-envs 4000 \
+  --traj-repeats 4 \
+  --traj-knn-mode both \
+  --traj-knn-max-samples 20000 \
+  --traj-knn-k 5
+```
+
+```bash
+exec python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_dime__TurningDoubleWellEnv__seed0__trial0__ts20260326T110236.pkl \
+  --collect-trajectories \
+  --traj-num-envs 4000 \
+  --traj-repeats 4 \
+  --traj-knn-mode both \
+  --traj-knn-max-samples 20000 \
+  --traj-knn-k 5
+```
+
+
+### Horizon And `k`
+
+- Set rollout horizon with `--horizon <int>`. If omitted, the checkpoint `env.max_episode_steps` is used.
+- Saved trajectory length is always `horizon + 1` states (initial state + one state per env step).
+- Set kNN neighborhood size with `--traj-knn-k <int>`.
+- Practical default is `k=5`; compare with `k=3` and `k=10` for sensitivity.
+- For trajectory-point entropy (`--traj-knn-mode trajectories`), sample count is `X*Y` so keep `k` relatively small unless `X*Y` is large.
+- For state-point entropy (`--traj-knn-mode states`), sample count is `(horizon+1)*X*Y`, so larger `k` is usually stable.
+- The evaluator automatically caps `k` to be `< N` in each mode.
+
+### State Definition For Diffusion Methods
+
+- For `reppo_DMERL_new` and `reppo_DiffPPO`, trajectory collection records states only when the underlying environment advances (i.e. at the last diffusion step of each diffusion cycle), plus the initial reset state.
+- Stored states are taken from the diffusion wrapper's raw underlying environment observation (`MjxDiffEnvState.obs`), not the normalized observation tensor used by the policy wrapper.
 
 ### Overriding Environment Flags
 
@@ -85,11 +166,57 @@ python eval_models/eval_saved_model.py \
 
 ### dime high temp reppo_dime__TurningDoubleWellEnv__seed0__trial0__ts20260325T220431
 
-The script auto-detects whether the checkpoint is for `reppo` vs `reppo_DMERL_new` via `checkpoint["method_name"]` (and falls back to checking whether `cfg.hyperparameters.diffusion` exists).
+```bash
+python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl \
+  --horizon 100 \
+  --render --render-num-envs 20 \
+    --tdw-action-analysis \
+  --tdw-action-analysis-samples 5000 \
+  --tdw-action-analysis-grid 401 \
+  --env-config-override randomize_initial_heading=true \
+  --env-config-override snap_action_to_optimal=true \
+  --diffusion-sampler sde \
+  --render-width 1200 --render-height 800
+```
+
+
+```bash
+python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
+  --horizon 100 \
+  --render --render-num-envs 20 \
+    --tdw-action-analysis \
+  --tdw-action-analysis-samples 5000 \
+  --tdw-action-analysis-grid 401 \
+  --env-config-override randomize_initial_heading=true \
+  --env-config-override snap_action_to_optimal=true \
+  --diffusion-sampler sde \
+  --render-width 1200 --render-height 800
+```
+
+### WPO
+```bash
+python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl \
+  --horizon 100 \
+  --render --render-num-envs 20 \
+    --tdw-action-analysis \
+  --tdw-action-analysis-samples 5000 \
+  --tdw-action-analysis-grid 401 \
+  --env-config-override randomize_initial_heading=true \
+  --env-config-override snap_action_to_optimal=true \
+  --diffusion-sampler sde \
+  --render-width 1200 --render-height 800
+```
+
+
+
+The script auto-detects whether the checkpoint is for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, or `reppo_dime` via `checkpoint["method_name"]` (with a config-based fallback for older checkpoints).
 
 ## TurningDoubleWellEnv Trajectory Rendering
 
-If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/test_turning_double_well_env.py` (works for both `reppo` and `reppo_DMERL_new` checkpoints):
+If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/test_turning_double_well_env.py` (works for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime` checkpoints):
 
 ```bash
 python eval_models/eval_saved_model.py \
@@ -99,7 +226,7 @@ python eval_models/eval_saved_model.py \
   --render-num-envs 10
 ```
 
-This produces a GIF (and also a PNG snapshot of the last frame) in the repo's `artifacts/` folder. By default, the GIF name is prefixed with `REPPO__...`, `DME-REPPO__...`, or `REPPO-DIME__...` depending on the checkpoint/method.
+This produces a GIF (and also a PNG snapshot of the last frame) in the repo's `artifacts/` folder. By default, the GIF name is prefixed with `REPPO__...`, `DME-REPPO__...`, `DME-WPO__...` (for WPO mode), or `REPPO-DIME__...` depending on the checkpoint/method.
 
 Rendering options:
 

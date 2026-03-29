@@ -8,17 +8,17 @@ asymmetric_obs: false
 
 # Extra kwargs passed to `TurningDoubleWellEnv(...)` when `env.name=TurningDoubleWellEnv`.
 config:
-  step_size: 1.0
-  max_turn_deg: 90.0
-  initial_heading_deg: 0.0
-  snap_action_to_optimal: true
-  randomize_initial_heading: true
-  well_angle_deg: 45.0
-  well_height: 0.85
-  transition_noise_deg: 0.0
-  mask_state_in_observation: false
-  use_distance_state: false
-  jit: false
+  step_size: 1.0                  # Forward movement magnitude per step.
+  max_turn_deg: 90.0              # Action +/-1 maps to +/-max_turn_deg relative turn.
+  initial_heading_deg: 0.0        # Used only when randomize_initial_heading=false.
+  snap_action_to_optimal: true    # If true, transition turn snaps to +/-well_angle_deg.
+  randomize_initial_heading: true # If true, reset heading is sampled (per env logic).
+  well_angle_deg: 45.0            # Double-well reward maxima at +/-well_angle_deg.
+  well_height: 0.85               # Reward at zero-turn (barrier between wells), in [0,1].
+  transition_noise_deg: 0.0       # Uniform turn noise half-range in degrees.
+  mask_state_in_observation: false # If true, observation is zeroed.
+  use_distance_state: false       # If true, obs is scalar distance-to-origin.
+  jit: false                      # JIT-compile env reset/step functions.
 
-vmin: -20
-vmax: 130
+# vmin: -20
+# vmax: 130

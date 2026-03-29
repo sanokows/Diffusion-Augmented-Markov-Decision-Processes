@@ -229,7 +229,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--style-version",
         choices=REVIEWER_STYLE_CHOICES,
-        default=STYLE_VERSION_LEGACY,
+        default=STYLE_VERSION_REVIEWER,
         help=(
             "Plot style preset. 'legacy' keeps the original color/style settings; "
             "'reviewer' uses higher-contrast colors and 3 line-style categories."
@@ -911,7 +911,7 @@ def main() -> int:
 
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.title(f"{env_name} (IQM)", fontsize=TITLE_FONTSIZE)
+        plt.title(env_name, fontsize=TITLE_FONTSIZE)
         legend = plt.legend(
             loc="lower right",
             ncol=2,
@@ -1070,7 +1070,7 @@ def main() -> int:
                         alpha=alpha,
                     )
 
-            ax.set_title(f"{env_name} (IQM)", fontsize=TITLE_FONTSIZE)
+            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
             ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
             ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
             ax.set_xlim(left=0, right=PLOT_MAX_STEPS)
@@ -1191,7 +1191,7 @@ def main() -> int:
 
         plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
         plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.title("All environments (IQM)", fontsize=TITLE_FONTSIZE)
+        plt.title("All environments", fontsize=TITLE_FONTSIZE)
         legend = plt.legend(
             loc="lower right",
             ncol=2,
