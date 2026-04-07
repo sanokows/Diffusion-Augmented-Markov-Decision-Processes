@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --partition=gpu
 #SBATCH --mem=94GB
-#SBATCH --account=d2023d12-053-users
+#SBATCH --account=d2025d09-019-users
 #SBATCH --signal=INT@60
 
 # cd /ceph/hpc/home/eusebastians/code/DMERL
