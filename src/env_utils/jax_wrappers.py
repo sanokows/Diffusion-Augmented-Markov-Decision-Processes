@@ -120,6 +120,28 @@ class MjxGymnaxWrapper(Environment):
         print(self.dict_obs_key)
         super().__init__()
 
+    def render(
+        self,
+        trajectory,
+        height: int = 240,
+        width: int = 320,
+        camera: str | None = None,
+        scene_option=None,
+        modify_scene_fns=None,
+    ):
+        if not hasattr(self.env, "render"):
+            raise AttributeError(
+                "Underlying MJX environment does not implement render()."
+            )
+        return self.env.render(
+            trajectory=trajectory,
+            height=height,
+            width=width,
+            camera=camera,
+            scene_option=scene_option,
+            modify_scene_fns=modify_scene_fns,
+        )
+
     def action_space(self, params):
         return gymnax.environments.spaces.Box(
             low=-1.0,

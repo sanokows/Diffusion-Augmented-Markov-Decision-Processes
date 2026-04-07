@@ -8,8 +8,13 @@ import importlib
 import ast
 import math
 import inspect
+import re
 from datetime import datetime, timezone
 from typing import Any
+
+# Prefer headless EGL rendering unless the user explicitly selected a backend.
+os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
@@ -62,6 +67,20 @@ def _artifacts_dir() -> str:
     path = os.path.join(_REPO_ROOT, "artifacts")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def _sanitize_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name).strip())
+    return cleaned or "run"
+
+
+def _artifact_run_dir(stem: str) -> str:
+    root = _artifacts_dir()
+    base = os.path.join(root, _sanitize_name(stem))
+    if not os.path.exists(base):
+        return base
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{base}__{ts}"
 
 
 def _trajectory_data_dir() -> str:
@@ -415,8 +434,7 @@ def _resolve_render_out(
     out_path: str | None,
     diffusion_sampler: str | None = None,
 ) -> str:
-    # Always write renders into repo_root/artifacts (ignore any provided directory).
-    artifacts_dir = _artifacts_dir()
+    # Always write renders into repo_root/artifacts/<run_dir>/ (ignore any provided directory).
     method_tag = _method_display_name(
         method_name, train_mode=train_mode, entropy_coef=entropy_coef
     )
@@ -437,11 +455,13 @@ def _resolve_render_out(
             filename = f"{stub}__turning_double_well_traj.gif"
         else:
             filename = f"{stub}__{sampler_tag}__turning_double_well_traj.gif"
-        return os.path.join(artifacts_dir, filename)
+        run_dir = _artifact_run_dir(os.path.splitext(filename)[0])
+        os.makedirs(run_dir, exist_ok=True)
+        return os.path.join(run_dir, filename)
     base = os.path.basename(out_path)
     if not base:
         base = f"{method_tag}__{ckpt_base}__turning_double_well_traj.gif"
-    if not base.lower().endswith(".gif"):
+    if os.path.splitext(base)[1] == "":
         base = base + ".gif"
     # Ensure the method is encoded in the name even when the user passes a custom basename.
     if not base.lower().startswith(method_tag.lower() + "__"):
@@ -451,7 +471,9 @@ def _resolve_render_out(
         rest = base[len(method_tag) + 2 :] if base.lower().startswith(prefix) else base
         if not rest.lower().startswith(sampler_tag + "__"):
             base = f"{method_tag}__{sampler_tag}__{rest}"
-    return os.path.join(artifacts_dir, base)
+    run_dir = _artifact_run_dir(os.path.splitext(base)[0])
+    os.makedirs(run_dir, exist_ok=True)
+    return os.path.join(run_dir, base)
 
 
 def _resolve_tdw_analysis_out(*, checkpoint_path: str, out_path: str | None) -> str:
@@ -1349,6 +1371,1230 @@ def _unwrap_env(env):
     return cur
 
 
+def _unwrap_env_state_for_render(state: Any) -> Any:
+    cur = state
+    for _ in range(16):
+        if hasattr(cur, "env_state"):
+            cur = getattr(cur, "env_state")
+        else:
+            break
+    return cur
+
+
+def _index_first_axis(tree: Any, index: int) -> Any:
+    def _index_leaf(x):
+        if hasattr(x, "ndim") and int(x.ndim) > 0:
+            return x[index]
+        return x
+
+    return jax.tree.map(_index_leaf, tree)
+
+
+def _tile_frames(frames: list[np.ndarray]) -> np.ndarray:
+    if not frames:
+        raise ValueError("Expected at least one frame to tile.")
+    num_frames = len(frames)
+    cols = int(np.ceil(np.sqrt(num_frames)))
+    rows = int(np.ceil(num_frames / cols))
+    h, w, c = frames[0].shape
+    canvas = np.zeros((rows * h, cols * w, c), dtype=frames[0].dtype)
+    for idx, frame in enumerate(frames):
+        row = idx // cols
+        col = idx % cols
+        canvas[row * h : (row + 1) * h, col * w : (col + 1) * w] = frame
+    return canvas
+
+
+def _resolve_mjx_camera_selector(
+    mj_model,
+    requested_camera: str | None,
+    *,
+    default_first: bool,
+) -> tuple[Any, int | None, str | None]:
+    import mujoco
+
+    ncam = int(getattr(mj_model, "ncam", 0))
+    token = str(requested_camera).strip() if requested_camera is not None else ""
+    token = token or None
+
+    if token is None:
+        if not default_first or ncam <= 0:
+            return None, None, None
+        cam_id = 0
+    else:
+        cam_id = None
+        try:
+            cam_idx = int(token)
+        except ValueError:
+            cam_idx = None
+        if cam_idx is not None:
+            if 0 <= cam_idx < ncam:
+                cam_id = int(cam_idx)
+            else:
+                raise ValueError(
+                    f"Requested camera index {cam_idx} is out of range [0, {max(ncam - 1, 0)}]."
+                )
+        else:
+            cam_id = int(
+                mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, str(token))
+            )
+            if cam_id < 0:
+                known = []
+                for idx in range(ncam):
+                    name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, idx)
+                    known.append(name if name else str(idx))
+                known_text = ", ".join(known) if known else "(none)"
+                raise ValueError(
+                    f"Unknown camera '{token}'. Available cameras: {known_text}"
+                )
+
+    cam_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, int(cam_id))
+    selector: Any = cam_name if cam_name else int(cam_id)
+    label = str(cam_name) if cam_name else str(cam_id)
+    return selector, int(cam_id), label
+
+
+def _resolve_mjx_follow_body(mj_model, requested_body: str | None) -> tuple[int, str]:
+    import mujoco
+
+    nbody = int(getattr(mj_model, "nbody", 0))
+    token = str(requested_body).strip() if requested_body is not None else ""
+    token = token or None
+
+    if token is not None:
+        body_id = None
+        try:
+            body_idx = int(token)
+        except ValueError:
+            body_idx = None
+        if body_idx is not None:
+            if 0 <= body_idx < nbody:
+                body_id = int(body_idx)
+            else:
+                raise ValueError(
+                    f"Requested body index {body_idx} is out of range [0, {max(nbody - 1, 0)}]."
+                )
+        else:
+            body_id = int(
+                mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, str(token))
+            )
+            if body_id < 0:
+                known = []
+                for idx in range(min(nbody, 24)):
+                    name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_BODY, idx)
+                    known.append(name if name else str(idx))
+                known_text = ", ".join(known) if known else "(none)"
+                raise ValueError(
+                    f"Unknown follow body '{token}'. Available bodies (first 24): {known_text}"
+                )
+    else:
+        body_id = -1
+        for candidate in ("torso", "pelvis", "trunk", "root", "base", "body"):
+            cand_id = int(
+                mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, candidate)
+            )
+            if cand_id >= 0:
+                body_id = cand_id
+                break
+        if body_id < 0:
+            body_id = 1 if nbody > 1 else 0
+
+    body_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_BODY, int(body_id))
+    label = str(body_name) if body_name else str(body_id)
+    return int(body_id), label
+
+
+def _setup_mjx_render_camera(
+    env,
+    *,
+    camera: str | None,
+    follow_agent: bool,
+    follow_body: str | None,
+) -> tuple[Any, dict[str, Any] | None]:
+    camera_token = str(camera).strip() if camera is not None else ""
+    camera_token = camera_token or None
+    base_env = _unwrap_env(env)
+    mj_model = getattr(base_env, "mj_model", None)
+    if not bool(follow_agent):
+        if mj_model is None or camera_token is None:
+            return camera_token, None
+        camera_selector, _camera_id, _camera_label = _resolve_mjx_camera_selector(
+            mj_model,
+            camera_token,
+            default_first=False,
+        )
+        return camera_selector, None
+
+    if mj_model is None:
+        logging.warning(
+            "--render-follow-agent requested but MJX base env has no mj_model; "
+            "falling back to regular rendering."
+        )
+        return camera_token, None
+
+    camera_selector, camera_id, camera_label = _resolve_mjx_camera_selector(
+        mj_model,
+        camera_token,
+        default_first=True,
+    )
+    if camera_id is None:
+        logging.warning(
+            "--render-follow-agent requested but env has no cameras; "
+            "falling back to regular rendering."
+        )
+        return camera_token, None
+
+    body_id, body_label = _resolve_mjx_follow_body(mj_model, follow_body)
+
+    follow_ctx = {
+        "mj_model": mj_model,
+        "camera_label": str(camera_label or ""),
+        "body_id": int(body_id),
+        "body_label": str(body_label),
+    }
+    _progress(
+        "Follow-camera enabled: "
+        f"camera={follow_ctx['camera_label']}, body={follow_ctx['body_label']}"
+    )
+    return camera_selector, follow_ctx
+
+
+def _build_follow_scene_modifiers(
+    trajectory,
+    *,
+    mj_model,
+    body_id: int,
+):
+    import mujoco
+
+    if not isinstance(trajectory, list) or len(trajectory) == 0:
+        return None
+
+    data = mujoco.MjData(mj_model)
+    body_positions: list[np.ndarray] = []
+    for state in trajectory:
+        data.qpos = np.asarray(state.data.qpos)
+        data.qvel = np.asarray(state.data.qvel)
+        data.mocap_pos = np.asarray(state.data.mocap_pos)
+        data.mocap_quat = np.asarray(state.data.mocap_quat)
+        data.xfrc_applied = np.asarray(state.data.xfrc_applied)
+        mujoco.mj_forward(mj_model, data)
+        body_positions.append(np.asarray(data.xpos[int(body_id)], dtype=np.float64).copy())
+
+    start_pos = body_positions[0]
+    modifiers = []
+
+    def _make_modifier(delta_xyz: np.ndarray):
+        dx, dy, dz = (float(delta_xyz[0]), float(delta_xyz[1]), float(delta_xyz[2]))
+
+        def _modify(scene):
+            ncam = int(getattr(scene, "ncam", 0))
+            for cam_idx in range(ncam):
+                scene.camera[cam_idx].pos[0] += dx
+                scene.camera[cam_idx].pos[1] += dy
+                scene.camera[cam_idx].pos[2] += dz
+
+        return _modify
+
+    for pos in body_positions:
+        modifiers.append(_make_modifier(pos - start_pos))
+    return modifiers
+
+
+def _render_mjx_trajectory(
+    env,
+    trajectory,
+    *,
+    height: int,
+    width: int,
+    camera_selector: Any,
+    follow_ctx: dict[str, Any] | None,
+):
+    if follow_ctx is None:
+        return env.render(
+            trajectory,
+            height=int(height),
+            width=int(width),
+            camera=camera_selector,
+        )
+
+    mj_model = follow_ctx["mj_model"]
+    body_id = int(follow_ctx["body_id"])
+    modify_scene_fns = _build_follow_scene_modifiers(
+        trajectory,
+        mj_model=mj_model,
+        body_id=body_id,
+    )
+    return env.render(
+        trajectory,
+        height=int(height),
+        width=int(width),
+        camera=camera_selector,
+        modify_scene_fns=modify_scene_fns,
+    )
+
+
+def _resolve_mjx_grid_render_out(
+    *,
+    method_name: str,
+    train_mode: str | None,
+    checkpoint_path: str,
+    env_name: str,
+    out_path: str | None,
+    diffusion_sampler: str | None = None,
+) -> str:
+    method_tag = _method_display_name(method_name, train_mode=train_mode)
+    ckpt_base = os.path.splitext(os.path.basename(checkpoint_path))[0]
+    env_tag = _sanitize_name(env_name)
+    sampler = str(diffusion_sampler or "").lower()
+    sampler_tag = sampler if sampler in ("sde", "ode") else None
+
+    if out_path is None:
+        if sampler_tag is None:
+            filename = f"{method_tag}__{ckpt_base}__{env_tag}__rollout_grid.gif"
+        else:
+            filename = (
+                f"{method_tag}__{ckpt_base}__{env_tag}__{sampler_tag}__rollout_grid.gif"
+            )
+    else:
+        base = os.path.basename(str(out_path))
+        if not base:
+            base = f"{method_tag}__{ckpt_base}__{env_tag}__rollout_grid.gif"
+        if os.path.splitext(base)[1] == "":
+            base = base + ".gif"
+        if not base.lower().startswith(method_tag.lower() + "__"):
+            base = f"{method_tag}__{base}"
+        if sampler_tag is not None:
+            prefix = method_tag.lower() + "__"
+            rest = base[len(method_tag) + 2 :] if base.lower().startswith(prefix) else base
+            if not rest.lower().startswith(sampler_tag + "__"):
+                base = f"{method_tag}__{sampler_tag}__{rest}"
+        filename = base
+
+    run_dir = _artifact_run_dir(os.path.splitext(filename)[0])
+    os.makedirs(run_dir, exist_ok=True)
+    return os.path.join(run_dir, filename)
+
+
+def _normalize_render_format(render_format: str | None) -> str:
+    fmt = str(render_format or "gif").strip().lower()
+    if fmt not in ("gif", "mp4", "both"):
+        raise ValueError(f"Unknown render format: {render_format}")
+    return fmt
+
+
+def _write_video_autoplay_html(video_path: str) -> str:
+    html_path = os.path.splitext(video_path)[0] + ".html"
+    video_name = os.path.basename(video_path)
+    html_text = (
+        "<!doctype html>\n"
+        "<html>\n"
+        "<head><meta charset=\"utf-8\"><title>Render Preview</title></head>\n"
+        "<body style=\"margin:0;background:#111;display:flex;justify-content:center;align-items:center;min-height:100vh;\">\n"
+        "<video src=\""
+        + video_name
+        + "\" autoplay loop muted controls playsinline style=\"max-width:100%;height:auto;\"></video>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html_text)
+    return html_path
+
+
+def _save_animation_outputs(
+    *,
+    out_hint: str,
+    frames: list[np.ndarray],
+    fps: int,
+    render_format: str,
+    save_last_frame_png: bool = True,
+) -> dict[str, str]:
+    import imageio.v2 as imageio
+
+    fmt = _normalize_render_format(render_format)
+    stem = os.path.splitext(out_hint)[0]
+    gif_path = stem + ".gif"
+    mp4_path = stem + ".mp4"
+    png_path = os.path.join(os.path.dirname(out_hint), "last_frame.png")
+    npz_path = os.path.join(os.path.dirname(out_hint), "frames.npz")
+
+    result: dict[str, str] = {}
+    write_gif = fmt in ("gif", "both")
+    write_mp4 = fmt in ("mp4", "both")
+
+    if write_mp4:
+        try:
+            with imageio.get_writer(
+                mp4_path,
+                fps=int(fps),
+                codec="libx264",
+                format="FFMPEG",
+                macro_block_size=1,
+            ) as writer:
+                for frame in frames:
+                    writer.append_data(np.asarray(frame))
+            result["mp4"] = os.path.abspath(mp4_path)
+            try:
+                html_path = _write_video_autoplay_html(mp4_path)
+                result["autoplay_html"] = os.path.abspath(html_path)
+            except Exception as e:
+                logging.warning("Failed to write autoplay HTML (%s)", e)
+        except Exception as e:
+            logging.warning("Failed to write MP4 (%s)", e)
+            # If MP4 was requested alone, fall back to GIF rather than failing hard.
+            if fmt == "mp4":
+                write_gif = True
+
+    if write_gif:
+        try:
+            imageio.mimsave(gif_path, frames, fps=int(fps))
+            result["gif"] = os.path.abspath(gif_path)
+        except Exception as e:
+            logging.warning("Failed to write GIF (%s)", e)
+
+    if save_last_frame_png:
+        try:
+            imageio.imwrite(png_path, np.asarray(frames[-1]))
+            result["last_frame_png"] = os.path.abspath(png_path)
+        except Exception as e:
+            logging.warning("Failed to write last-frame PNG (%s)", e)
+
+    if not any(k in result for k in ("gif", "mp4")):
+        np.savez_compressed(npz_path, frames=np.asarray(frames))
+        result["npz"] = os.path.abspath(npz_path)
+
+    if "mp4" in result:
+        result["primary"] = result["mp4"]
+    elif "gif" in result:
+        result["primary"] = result["gif"]
+    else:
+        result["primary"] = result["npz"]
+    return result
+
+
+def _render_mjx_rollout_grid_dmerl(
+    *,
+    method_name: str,
+    train_mode: str | None,
+    diffusion_sampler: str,
+    cfg,
+    train_state,
+    checkpoint_path: str,
+    norm_state: Any,
+    horizon: int,
+    num_envs: int,
+    out_path: str | None,
+    cell_width: int,
+    cell_height: int,
+    fps: int,
+    seed: int,
+    frame_stride: int,
+    max_frames: int,
+    camera: str | None,
+    follow_agent: bool,
+    follow_body: str | None,
+    render_format: str,
+) -> None:
+    from src.jaxrl.reppo_helpers.learning_DiffReppo import maybe_add_q_grad
+
+    cfg_render = cfg
+    if int(num_envs) != int(cfg.hyperparameters.num_envs):
+        cfg_render = _cfg_with_num_envs(cfg, int(num_envs))
+
+    hp = cfg_render.hyperparameters
+    diff_cfg = hp.diffusion
+    normalize_env = bool(hp.normalize_env)
+    env_action_clip_value = float(hp.env_action_clip_value)
+
+    base_env = _build_base_env(cfg_render, horizon=int(horizon))
+    env = MjxDiffEnvWrapper(
+        base_env,
+        num_diff_steps=int(diff_cfg.diff_steps),
+        diffusion_config=diff_cfg,
+        low=-env_action_clip_value,
+        high=env_action_clip_value,
+    )
+    env = LogWrapper(env, int(num_envs))
+    if normalize_env:
+        env = DiffNormalizeVec(
+            env,
+            normalize_reward=bool(hp.normalize_reward),
+            num_diff_steps=int(diff_cfg.diff_steps),
+        )
+
+    actor_model = nnx.merge(train_state.actor.graphdef, train_state.actor.params)
+    critic_model = nnx.merge(train_state.critic.graphdef, train_state.critic.params)
+    use_langevin = bool(
+        OmegaConf.select(cfg_render, "hyperparameters.diffusion.score_model.langevin_param")
+        or False
+    )
+
+    sampler = str(diffusion_sampler or "auto").lower()
+    if sampler not in ("auto", "sde", "ode"):
+        raise ValueError(f"Unknown --diffusion-sampler: {sampler}")
+    if sampler == "auto":
+        sampler = "sde" if str(train_mode or "").upper() == "WPO" else "ode"
+
+    out_gif = _resolve_mjx_grid_render_out(
+        method_name=method_name,
+        train_mode=train_mode,
+        checkpoint_path=checkpoint_path,
+        env_name=str(cfg_render.env.name),
+        out_path=out_path,
+        diffusion_sampler=sampler,
+    )
+    out_dir = os.path.dirname(out_gif)
+    os.makedirs(out_dir, exist_ok=True)
+    _progress(
+        f"Render output directory: {out_dir} (MUJOCO_GL={os.environ.get('MUJOCO_GL', '')})"
+    )
+
+    frame_stride = max(1, int(frame_stride))
+    max_frames = max(2, int(max_frames))
+    diff_steps = int(diff_cfg.diff_steps)
+    total_steps = int(horizon) * diff_steps
+    camera_selector, follow_ctx = _setup_mjx_render_camera(
+        env,
+        camera=camera,
+        follow_agent=bool(follow_agent),
+        follow_body=follow_body,
+    )
+    if camera_selector is None:
+        camera_label = ""
+    else:
+        camera_label = str(camera_selector)
+    follow_body_label = ""
+    if follow_ctx is not None:
+        camera_label = str(follow_ctx.get("camera_label", camera_label))
+        follow_body_label = str(follow_ctx.get("body_label", ""))
+
+    key = jax.random.PRNGKey(int(seed))
+    key, init_key = jax.random.split(key)
+    init_keys = jax.random.split(init_key, int(num_envs))
+    if normalize_env and norm_state is not None:
+        obs, critic_obs, env_state = env.reset(init_keys, norm_state)
+    else:
+        obs, critic_obs, env_state = env.reset(init_keys)
+
+    _progress("Collecting rollout states for rendering")
+    saved_states: list[Any] = [jax.device_get(_unwrap_env_state_for_render(env_state))]
+    env_advances = 0
+    target_advances = min(int(horizon), frame_stride * (max_frames - 1))
+    if target_advances > 0:
+        _progress_bar("collect states", 0, target_advances)
+    for step_idx in range(total_steps):
+        key, act_key, env_key = jax.random.split(key, 3)
+        obs_for_actor = maybe_add_q_grad(
+            obs, critic_obs, actor_model, critic_model, use_langevin
+        )
+        if sampler == "sde":
+            action, *_ = actor_model.vmap_sample_next_step(obs_for_actor, act_key)
+        else:
+            action, _ = actor_model.vmap_ode_sample_next_step(obs_for_actor, act_key)
+        step_keys = jax.random.split(env_key, int(num_envs))
+        obs, critic_obs, env_state, _reward, _done, _info = env.step(
+            step_keys, env_state, action
+        )
+        if (step_idx + 1) % diff_steps == 0:
+            env_advances += 1
+            if target_advances > 0:
+                _progress_bar(
+                    "collect states",
+                    min(env_advances, target_advances),
+                    target_advances,
+                )
+            if env_advances % frame_stride == 0:
+                saved_states.append(jax.device_get(_unwrap_env_state_for_render(env_state)))
+                if len(saved_states) >= max_frames:
+                    break
+    if target_advances > 0 and env_advances < target_advances:
+        _progress_bar("collect states", min(env_advances, target_advances), target_advances)
+
+    per_env_trajectories: list[list[Any]] = [[] for _ in range(int(num_envs))]
+    for state in saved_states:
+        for env_idx in range(int(num_envs)):
+            per_env_trajectories[env_idx].append(_index_first_axis(state, env_idx))
+
+    _progress(
+        f"Rendering tiled rollout grid: envs={int(num_envs)}, "
+        f"frames={len(saved_states)}, cell={int(cell_width)}x{int(cell_height)}"
+    )
+    rendered_env_frames: list[list[np.ndarray]] = []
+    for env_idx, traj in enumerate(per_env_trajectories, start=1):
+        _progress_bar("render envs", env_idx - 1, int(num_envs))
+        try:
+            frames = _render_mjx_trajectory(
+                env,
+                traj,
+                height=int(cell_height),
+                width=int(cell_width),
+                camera_selector=camera_selector,
+                follow_ctx=follow_ctx,
+            )
+        except Exception as e:
+            msg = str(e)
+            if "gladLoadGL" in msg or "GLFW" in msg or "MjrContext" in msg:
+                raise RuntimeError(
+                    "Failed to create MuJoCo GL context while rendering. "
+                    f"MUJOCO_GL={os.environ.get('MUJOCO_GL', '')!r}, "
+                    f"DISPLAY={os.environ.get('DISPLAY', '')!r}. "
+                    "Use a headless backend (EGL/OSMesa). "
+                    "Example: `MUJOCO_GL=egl python eval_models/eval_saved_model.py ...`"
+                ) from e
+            raise
+        rendered_env_frames.append([np.asarray(frame) for frame in frames])
+    _progress_bar("render envs", int(num_envs), int(num_envs))
+
+    if not rendered_env_frames:
+        logging.warning("No rendered frames produced; skipping grid video save.")
+        return
+    num_common_frames = min(len(frames) for frames in rendered_env_frames)
+    if num_common_frames <= 0:
+        logging.warning("Rendered frame lists are empty; skipping grid video save.")
+        return
+
+    tiled_frames: list[np.ndarray] = []
+    for frame_idx in range(num_common_frames):
+        frame_tiles = [frames[frame_idx] for frames in rendered_env_frames]
+        tiled_frames.append(_tile_frames(frame_tiles))
+
+    meta_path = os.path.join(out_dir, "metadata.json")
+    outputs = _save_animation_outputs(
+        out_hint=out_gif,
+        frames=tiled_frames,
+        fps=int(fps),
+        render_format=render_format,
+        save_last_frame_png=True,
+    )
+
+    metadata = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "checkpoint_path": os.path.abspath(checkpoint_path),
+        "method_name": str(method_name),
+        "train_mode": str(train_mode or ""),
+        "env_name": str(cfg_render.env.name),
+        "diffusion_sampler": str(sampler),
+        "num_envs": int(num_envs),
+        "horizon": int(horizon),
+        "frame_stride": int(frame_stride),
+        "max_frames": int(max_frames),
+        "cell_width": int(cell_width),
+        "cell_height": int(cell_height),
+        "fps": int(fps),
+        "camera": str(camera_label),
+        "follow_agent": bool(follow_ctx is not None),
+        "follow_body": str(follow_body_label),
+        "render_format": _normalize_render_format(render_format),
+        "output_file": str(outputs.get("primary", "")),
+        "last_frame_file": str(outputs.get("last_frame_png", "")),
+        "gif_file": str(outputs.get("gif", "")),
+        "mp4_file": str(outputs.get("mp4", "")),
+        "autoplay_html_file": str(outputs.get("autoplay_html", "")),
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+
+    logging.info("Saved tiled rollout render to %s", out_dir)
+
+
+def _render_mjx_rollout_grid_reppo(
+    *,
+    method_name: str,
+    train_mode: str | None,
+    cfg,
+    actor_graphdef,
+    actor_params,
+    checkpoint_path: str,
+    norm_state: Any,
+    horizon: int,
+    num_envs: int,
+    out_path: str | None,
+    cell_width: int,
+    cell_height: int,
+    fps: int,
+    seed: int,
+    frame_stride: int,
+    max_frames: int,
+    camera: str | None,
+    follow_agent: bool,
+    follow_body: str | None,
+    render_format: str,
+) -> None:
+    cfg_render = cfg
+    if int(num_envs) != int(cfg.hyperparameters.num_envs):
+        cfg_render = _cfg_with_num_envs(cfg, int(num_envs))
+
+    hp = cfg_render.hyperparameters
+    normalize_env = bool(hp.normalize_env)
+
+    env = _build_base_env(cfg_render, horizon=int(horizon))
+    if normalize_env:
+        env = LogWrapper(env, int(num_envs))
+    env = ClipAction(
+        env,
+        low=-float(hp.env_action_clip_value),
+        high=float(hp.env_action_clip_value),
+    )
+    if normalize_env:
+        env = NormalizeVec(env, normalize_reward=bool(hp.normalize_reward))
+
+    actor_model = nnx.merge(actor_graphdef, actor_params)
+
+    out_gif = _resolve_mjx_grid_render_out(
+        method_name=method_name,
+        train_mode=train_mode,
+        checkpoint_path=checkpoint_path,
+        env_name=str(cfg_render.env.name),
+        out_path=out_path,
+        diffusion_sampler=None,
+    )
+    out_dir = os.path.dirname(out_gif)
+    os.makedirs(out_dir, exist_ok=True)
+    _progress(
+        f"Render output directory: {out_dir} (MUJOCO_GL={os.environ.get('MUJOCO_GL', '')})"
+    )
+
+    frame_stride = max(1, int(frame_stride))
+    max_frames = max(2, int(max_frames))
+    camera_selector, follow_ctx = _setup_mjx_render_camera(
+        env,
+        camera=camera,
+        follow_agent=bool(follow_agent),
+        follow_body=follow_body,
+    )
+    if camera_selector is None:
+        camera_label = ""
+    else:
+        camera_label = str(camera_selector)
+    follow_body_label = ""
+    if follow_ctx is not None:
+        camera_label = str(follow_ctx.get("camera_label", camera_label))
+        follow_body_label = str(follow_ctx.get("body_label", ""))
+
+    key = jax.random.PRNGKey(int(seed))
+    key, init_key = jax.random.split(key)
+    init_keys = jax.random.split(init_key, int(num_envs))
+    if normalize_env and norm_state is not None:
+        obs, _critic_obs, env_state = env.reset(init_keys, norm_state)
+    else:
+        obs, _critic_obs, env_state = env.reset(init_keys)
+
+    _progress("Collecting rollout states for rendering")
+    saved_states: list[Any] = [jax.device_get(_unwrap_env_state_for_render(env_state))]
+    target_advances = min(int(horizon), frame_stride * (max_frames - 1))
+    if target_advances > 0:
+        _progress_bar("collect states", 0, target_advances)
+
+    for step_idx in range(int(horizon)):
+        key, act_key, env_key = jax.random.split(key, 3)
+        if str(train_mode or "").upper() == "WPO":
+            act_keys = jax.random.split(act_key, int(num_envs))
+            action = jax.vmap(lambda k, o: actor_model.actor(o).sample(seed=k))(act_keys, obs)
+        else:
+            action = actor_model.det_action(obs)
+
+        step_keys = jax.random.split(env_key, int(num_envs))
+        obs, _critic_obs, env_state, _reward, _done, _info = env.step(
+            step_keys, env_state, action
+        )
+        env_advances = step_idx + 1
+        _progress_bar("collect states", min(env_advances, target_advances), target_advances)
+        if env_advances % frame_stride == 0:
+            saved_states.append(jax.device_get(_unwrap_env_state_for_render(env_state)))
+            if len(saved_states) >= max_frames:
+                break
+
+    per_env_trajectories: list[list[Any]] = [[] for _ in range(int(num_envs))]
+    for state in saved_states:
+        for env_idx in range(int(num_envs)):
+            per_env_trajectories[env_idx].append(_index_first_axis(state, env_idx))
+
+    _progress(
+        f"Rendering tiled rollout grid: envs={int(num_envs)}, "
+        f"frames={len(saved_states)}, cell={int(cell_width)}x{int(cell_height)}"
+    )
+    rendered_env_frames: list[list[np.ndarray]] = []
+    for env_idx, traj in enumerate(per_env_trajectories, start=1):
+        _progress_bar("render envs", env_idx - 1, int(num_envs))
+        try:
+            frames = _render_mjx_trajectory(
+                env,
+                traj,
+                height=int(cell_height),
+                width=int(cell_width),
+                camera_selector=camera_selector,
+                follow_ctx=follow_ctx,
+            )
+        except Exception as e:
+            msg = str(e)
+            if "gladLoadGL" in msg or "GLFW" in msg or "MjrContext" in msg:
+                raise RuntimeError(
+                    "Failed to create MuJoCo GL context while rendering. "
+                    f"MUJOCO_GL={os.environ.get('MUJOCO_GL', '')!r}, "
+                    f"DISPLAY={os.environ.get('DISPLAY', '')!r}. "
+                    "Use a headless backend (EGL/OSMesa). "
+                    "Example: `MUJOCO_GL=egl python eval_models/eval_saved_model.py ...`"
+                ) from e
+            raise
+        rendered_env_frames.append([np.asarray(frame) for frame in frames])
+    _progress_bar("render envs", int(num_envs), int(num_envs))
+
+    if not rendered_env_frames:
+        logging.warning("No rendered frames produced; skipping grid video save.")
+        return
+    num_common_frames = min(len(frames) for frames in rendered_env_frames)
+    if num_common_frames <= 0:
+        logging.warning("Rendered frame lists are empty; skipping grid video save.")
+        return
+
+    tiled_frames: list[np.ndarray] = []
+    for frame_idx in range(num_common_frames):
+        frame_tiles = [frames[frame_idx] for frames in rendered_env_frames]
+        tiled_frames.append(_tile_frames(frame_tiles))
+
+    meta_path = os.path.join(out_dir, "metadata.json")
+    outputs = _save_animation_outputs(
+        out_hint=out_gif,
+        frames=tiled_frames,
+        fps=int(fps),
+        render_format=render_format,
+        save_last_frame_png=True,
+    )
+
+    metadata = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "checkpoint_path": os.path.abspath(checkpoint_path),
+        "method_name": str(method_name),
+        "train_mode": str(train_mode or ""),
+        "env_name": str(cfg_render.env.name),
+        "num_envs": int(num_envs),
+        "horizon": int(horizon),
+        "frame_stride": int(frame_stride),
+        "max_frames": int(max_frames),
+        "cell_width": int(cell_width),
+        "cell_height": int(cell_height),
+        "fps": int(fps),
+        "camera": str(camera_label),
+        "follow_agent": bool(follow_ctx is not None),
+        "follow_body": str(follow_body_label),
+        "render_format": _normalize_render_format(render_format),
+        "output_file": str(outputs.get("primary", "")),
+        "last_frame_file": str(outputs.get("last_frame_png", "")),
+        "gif_file": str(outputs.get("gif", "")),
+        "mp4_file": str(outputs.get("mp4", "")),
+        "autoplay_html_file": str(outputs.get("autoplay_html", "")),
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+
+    logging.info("Saved tiled rollout render to %s", out_dir)
+
+
+def _render_mjx_rollout_grid_dime(
+    *,
+    method_name: str,
+    train_mode: str | None,
+    diffusion_sampler: str,
+    cfg,
+    actor_graphdef,
+    actor_params,
+    checkpoint_path: str,
+    norm_state: Any,
+    horizon: int,
+    num_envs: int,
+    out_path: str | None,
+    cell_width: int,
+    cell_height: int,
+    fps: int,
+    seed: int,
+    frame_stride: int,
+    max_frames: int,
+    camera: str | None,
+    follow_agent: bool,
+    follow_body: str | None,
+    render_format: str,
+) -> None:
+    cfg_render = cfg
+    if int(num_envs) != int(cfg.hyperparameters.num_envs):
+        cfg_render = _cfg_with_num_envs(cfg, int(num_envs))
+
+    hp = cfg_render.hyperparameters
+    normalize_env = bool(hp.normalize_env)
+    sampler = str(diffusion_sampler or "auto").lower()
+    if sampler not in ("auto", "sde", "ode"):
+        raise ValueError(f"Unknown --diffusion-sampler: {sampler}")
+    if sampler == "auto":
+        sampler = "sde"
+
+    env = _build_base_env(cfg_render, horizon=int(horizon))
+    env = LogWrapper(env, int(num_envs))
+    env = ClipAction(
+        env,
+        low=-float(hp.env_action_clip_value),
+        high=float(hp.env_action_clip_value),
+    )
+    if normalize_env:
+        if bool(getattr(hp, "normalize_reward", False)):
+            logging.warning(
+                "reppo_dime rendering uses NormalizeVec(normalize_reward=False); "
+                "ignoring normalize_reward=true for rendering."
+            )
+        env = NormalizeVec(env)
+
+    actor_model = nnx.merge(actor_graphdef, actor_params)
+
+    out_gif = _resolve_mjx_grid_render_out(
+        method_name=method_name,
+        train_mode=train_mode,
+        checkpoint_path=checkpoint_path,
+        env_name=str(cfg_render.env.name),
+        out_path=out_path,
+        diffusion_sampler=sampler,
+    )
+    out_dir = os.path.dirname(out_gif)
+    os.makedirs(out_dir, exist_ok=True)
+    _progress(
+        f"Render output directory: {out_dir} (MUJOCO_GL={os.environ.get('MUJOCO_GL', '')})"
+    )
+
+    frame_stride = max(1, int(frame_stride))
+    max_frames = max(2, int(max_frames))
+    camera_selector, follow_ctx = _setup_mjx_render_camera(
+        env,
+        camera=camera,
+        follow_agent=bool(follow_agent),
+        follow_body=follow_body,
+    )
+    if camera_selector is None:
+        camera_label = ""
+    else:
+        camera_label = str(camera_selector)
+    follow_body_label = ""
+    if follow_ctx is not None:
+        camera_label = str(follow_ctx.get("camera_label", camera_label))
+        follow_body_label = str(follow_ctx.get("body_label", ""))
+
+    key = jax.random.PRNGKey(int(seed))
+    key, init_key = jax.random.split(key)
+    init_keys = jax.random.split(init_key, int(num_envs))
+    if normalize_env and norm_state is not None:
+        obs, _critic_obs, env_state = env.reset(init_keys, norm_state)
+    else:
+        obs, _critic_obs, env_state = env.reset(init_keys)
+
+    _progress("Collecting rollout states for rendering")
+    saved_states: list[Any] = [jax.device_get(_unwrap_env_state_for_render(env_state))]
+    target_advances = min(int(horizon), frame_stride * (max_frames - 1))
+    if target_advances > 0:
+        _progress_bar("collect states", 0, target_advances)
+
+    use_ode = sampler == "ode"
+    for step_idx in range(int(horizon)):
+        key, act_key, env_key = jax.random.split(key, 3)
+        if use_ode:
+            action, *_ = actor_model.det_action(act_key, obs, ode=True, ode_coef=1.0)
+        else:
+            action, *_ = actor_model.sample(act_key, obs)
+        step_keys = jax.random.split(env_key, int(num_envs))
+        obs, _critic_obs, env_state, _reward, _done, _info = env.step(
+            step_keys, env_state, action
+        )
+        env_advances = step_idx + 1
+        _progress_bar("collect states", min(env_advances, target_advances), target_advances)
+        if env_advances % frame_stride == 0:
+            saved_states.append(jax.device_get(_unwrap_env_state_for_render(env_state)))
+            if len(saved_states) >= max_frames:
+                break
+
+    per_env_trajectories: list[list[Any]] = [[] for _ in range(int(num_envs))]
+    for state in saved_states:
+        for env_idx in range(int(num_envs)):
+            per_env_trajectories[env_idx].append(_index_first_axis(state, env_idx))
+
+    _progress(
+        f"Rendering tiled rollout grid: envs={int(num_envs)}, "
+        f"frames={len(saved_states)}, cell={int(cell_width)}x{int(cell_height)}"
+    )
+    rendered_env_frames: list[list[np.ndarray]] = []
+    for env_idx, traj in enumerate(per_env_trajectories, start=1):
+        _progress_bar("render envs", env_idx - 1, int(num_envs))
+        try:
+            frames = _render_mjx_trajectory(
+                env,
+                traj,
+                height=int(cell_height),
+                width=int(cell_width),
+                camera_selector=camera_selector,
+                follow_ctx=follow_ctx,
+            )
+        except Exception as e:
+            msg = str(e)
+            if "gladLoadGL" in msg or "GLFW" in msg or "MjrContext" in msg:
+                raise RuntimeError(
+                    "Failed to create MuJoCo GL context while rendering. "
+                    f"MUJOCO_GL={os.environ.get('MUJOCO_GL', '')!r}, "
+                    f"DISPLAY={os.environ.get('DISPLAY', '')!r}. "
+                    "Use a headless backend (EGL/OSMesa). "
+                    "Example: `MUJOCO_GL=egl python eval_models/eval_saved_model.py ...`"
+                ) from e
+            raise
+        rendered_env_frames.append([np.asarray(frame) for frame in frames])
+    _progress_bar("render envs", int(num_envs), int(num_envs))
+
+    if not rendered_env_frames:
+        logging.warning("No rendered frames produced; skipping grid video save.")
+        return
+    num_common_frames = min(len(frames) for frames in rendered_env_frames)
+    if num_common_frames <= 0:
+        logging.warning("Rendered frame lists are empty; skipping grid video save.")
+        return
+
+    tiled_frames: list[np.ndarray] = []
+    for frame_idx in range(num_common_frames):
+        frame_tiles = [frames[frame_idx] for frames in rendered_env_frames]
+        tiled_frames.append(_tile_frames(frame_tiles))
+
+    meta_path = os.path.join(out_dir, "metadata.json")
+    outputs = _save_animation_outputs(
+        out_hint=out_gif,
+        frames=tiled_frames,
+        fps=int(fps),
+        render_format=render_format,
+        save_last_frame_png=True,
+    )
+
+    metadata = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "checkpoint_path": os.path.abspath(checkpoint_path),
+        "method_name": str(method_name),
+        "train_mode": str(train_mode or ""),
+        "env_name": str(cfg_render.env.name),
+        "diffusion_sampler": str(sampler),
+        "num_envs": int(num_envs),
+        "horizon": int(horizon),
+        "frame_stride": int(frame_stride),
+        "max_frames": int(max_frames),
+        "cell_width": int(cell_width),
+        "cell_height": int(cell_height),
+        "fps": int(fps),
+        "camera": str(camera_label),
+        "follow_agent": bool(follow_ctx is not None),
+        "follow_body": str(follow_body_label),
+        "render_format": _normalize_render_format(render_format),
+        "output_file": str(outputs.get("primary", "")),
+        "last_frame_file": str(outputs.get("last_frame_png", "")),
+        "gif_file": str(outputs.get("gif", "")),
+        "mp4_file": str(outputs.get("mp4", "")),
+        "autoplay_html_file": str(outputs.get("autoplay_html", "")),
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+
+    logging.info("Saved tiled rollout render to %s", out_dir)
+
+
+def _render_mjx_rollout_grid_diffppo(
+    *,
+    method_name: str,
+    train_mode: str | None,
+    diffusion_sampler: str,
+    cfg,
+    train_state,
+    checkpoint_path: str,
+    horizon: int,
+    num_envs: int,
+    out_path: str | None,
+    cell_width: int,
+    cell_height: int,
+    fps: int,
+    seed: int,
+    frame_stride: int,
+    max_frames: int,
+    camera: str | None,
+    follow_agent: bool,
+    follow_body: str | None,
+    render_format: str,
+) -> None:
+    cfg_render = cfg
+    if int(num_envs) != int(cfg.hyperparameters.num_envs):
+        cfg_render = _cfg_with_num_envs(cfg, int(num_envs))
+
+    hp = cfg_render.hyperparameters
+    diff_cfg = hp.diffusion
+    env_action_clip_value = float(hp.env_action_clip_value)
+    normalizer = DictNormalizer()
+    model = nnx.merge(train_state.graphdef, train_state.params)
+
+    sampler = str(diffusion_sampler or "auto").lower()
+    if sampler not in ("auto", "sde", "ode"):
+        raise ValueError(f"Unknown --diffusion-sampler: {sampler}")
+    if sampler == "auto":
+        sampler = "sde"
+
+    base_env = _build_base_env(cfg_render, horizon=int(horizon))
+    env = MjxDiffEnvWrapper(
+        base_env,
+        num_diff_steps=int(diff_cfg.diff_steps),
+        diffusion_config=diff_cfg,
+        low=-env_action_clip_value,
+        high=env_action_clip_value,
+    )
+    env = TanhClipAction(env)
+    env = LogWrapper(env, int(num_envs))
+
+    out_gif = _resolve_mjx_grid_render_out(
+        method_name=method_name,
+        train_mode=train_mode,
+        checkpoint_path=checkpoint_path,
+        env_name=str(cfg_render.env.name),
+        out_path=out_path,
+        diffusion_sampler=sampler,
+    )
+    out_dir = os.path.dirname(out_gif)
+    os.makedirs(out_dir, exist_ok=True)
+    _progress(
+        f"Render output directory: {out_dir} (MUJOCO_GL={os.environ.get('MUJOCO_GL', '')})"
+    )
+
+    frame_stride = max(1, int(frame_stride))
+    max_frames = max(2, int(max_frames))
+    diff_steps = int(diff_cfg.diff_steps)
+    total_steps = int(horizon) * diff_steps
+    camera_selector, follow_ctx = _setup_mjx_render_camera(
+        env,
+        camera=camera,
+        follow_agent=bool(follow_agent),
+        follow_body=follow_body,
+    )
+    if camera_selector is None:
+        camera_label = ""
+    else:
+        camera_label = str(camera_selector)
+    follow_body_label = ""
+    if follow_ctx is not None:
+        camera_label = str(follow_ctx.get("camera_label", camera_label))
+        follow_body_label = str(follow_ctx.get("body_label", ""))
+
+    key = jax.random.PRNGKey(int(seed))
+    key, init_key = jax.random.split(key)
+    init_keys = jax.random.split(init_key, int(num_envs))
+    obs, _critic_obs, env_state = env.reset(init_keys)
+
+    _progress("Collecting rollout states for rendering")
+    saved_states: list[Any] = [jax.device_get(_unwrap_env_state_for_render(env_state))]
+    target_advances = min(int(horizon), frame_stride * (max_frames - 1))
+    if target_advances > 0:
+        _progress_bar("collect states", 0, target_advances)
+
+    norm_state = train_state.normalization_state
+    env_advances = 0
+    for step_idx in range(total_steps):
+        key, act_key, env_key = jax.random.split(key, 3)
+        obs_for_actor = normalizer.normalize(norm_state, obs) if norm_state is not None else obs
+        if sampler == "ode":
+            action, _ = model.actor_ode_sample_step(obs_for_actor, act_key)
+        else:
+            action, *_ = model.actor_sample_step(obs_for_actor, act_key)
+        step_keys = jax.random.split(env_key, int(num_envs))
+        obs, _critic_obs, env_state, _reward, _done, _info = env.step(
+            step_keys, env_state, action
+        )
+        if (step_idx + 1) % diff_steps == 0:
+            env_advances += 1
+            _progress_bar("collect states", min(env_advances, target_advances), target_advances)
+            if env_advances % frame_stride == 0:
+                saved_states.append(jax.device_get(_unwrap_env_state_for_render(env_state)))
+                if len(saved_states) >= max_frames:
+                    break
+
+    per_env_trajectories: list[list[Any]] = [[] for _ in range(int(num_envs))]
+    for state in saved_states:
+        for env_idx in range(int(num_envs)):
+            per_env_trajectories[env_idx].append(_index_first_axis(state, env_idx))
+
+    _progress(
+        f"Rendering tiled rollout grid: envs={int(num_envs)}, "
+        f"frames={len(saved_states)}, cell={int(cell_width)}x{int(cell_height)}"
+    )
+    rendered_env_frames: list[list[np.ndarray]] = []
+    for env_idx, traj in enumerate(per_env_trajectories, start=1):
+        _progress_bar("render envs", env_idx - 1, int(num_envs))
+        try:
+            frames = _render_mjx_trajectory(
+                env,
+                traj,
+                height=int(cell_height),
+                width=int(cell_width),
+                camera_selector=camera_selector,
+                follow_ctx=follow_ctx,
+            )
+        except Exception as e:
+            msg = str(e)
+            if "gladLoadGL" in msg or "GLFW" in msg or "MjrContext" in msg:
+                raise RuntimeError(
+                    "Failed to create MuJoCo GL context while rendering. "
+                    f"MUJOCO_GL={os.environ.get('MUJOCO_GL', '')!r}, "
+                    f"DISPLAY={os.environ.get('DISPLAY', '')!r}. "
+                    "Use a headless backend (EGL/OSMesa). "
+                    "Example: `MUJOCO_GL=egl python eval_models/eval_saved_model.py ...`"
+                ) from e
+            raise
+        rendered_env_frames.append([np.asarray(frame) for frame in frames])
+    _progress_bar("render envs", int(num_envs), int(num_envs))
+
+    if not rendered_env_frames:
+        logging.warning("No rendered frames produced; skipping grid video save.")
+        return
+    num_common_frames = min(len(frames) for frames in rendered_env_frames)
+    if num_common_frames <= 0:
+        logging.warning("Rendered frame lists are empty; skipping grid video save.")
+        return
+
+    tiled_frames: list[np.ndarray] = []
+    for frame_idx in range(num_common_frames):
+        frame_tiles = [frames[frame_idx] for frames in rendered_env_frames]
+        tiled_frames.append(_tile_frames(frame_tiles))
+
+    meta_path = os.path.join(out_dir, "metadata.json")
+    outputs = _save_animation_outputs(
+        out_hint=out_gif,
+        frames=tiled_frames,
+        fps=int(fps),
+        render_format=render_format,
+        save_last_frame_png=True,
+    )
+
+    metadata = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "checkpoint_path": os.path.abspath(checkpoint_path),
+        "method_name": str(method_name),
+        "train_mode": str(train_mode or ""),
+        "env_name": str(cfg_render.env.name),
+        "diffusion_sampler": str(sampler),
+        "num_envs": int(num_envs),
+        "horizon": int(horizon),
+        "frame_stride": int(frame_stride),
+        "max_frames": int(max_frames),
+        "cell_width": int(cell_width),
+        "cell_height": int(cell_height),
+        "fps": int(fps),
+        "camera": str(camera_label),
+        "follow_agent": bool(follow_ctx is not None),
+        "follow_body": str(follow_body_label),
+        "render_format": _normalize_render_format(render_format),
+        "output_file": str(outputs.get("primary", "")),
+        "last_frame_file": str(outputs.get("last_frame_png", "")),
+        "gif_file": str(outputs.get("gif", "")),
+        "mp4_file": str(outputs.get("mp4", "")),
+        "autoplay_html_file": str(outputs.get("autoplay_html", "")),
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+
+    logging.info("Saved tiled rollout render to %s", out_dir)
+
+
 def _render_turning_double_well_reppo(
     *,
     method_name: str,
@@ -1369,6 +2615,7 @@ def _render_turning_double_well_reppo(
     height: int,
     fps: int,
     seed: int,
+    render_format: str,
 ) -> None:
     method_display = _method_display_name(
         method_name, train_mode=train_mode, entropy_coef=entropy_coef
@@ -1602,17 +2849,17 @@ def _render_turning_double_well_reppo(
     )
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    try:
-        import imageio.v2 as imageio
-
-        imageio.mimsave(out_path, frames, fps=int(fps))
-        png_path = os.path.splitext(out_path)[0] + ".png"
-        imageio.imwrite(png_path, frames[-1])
-        logging.info("Saved TurningDoubleWellEnv render to %s (and %s)", out_path, png_path)
-    except Exception as e:
-        npz_path = os.path.splitext(out_path)[0] + ".npz"
-        np.savez(npz_path, frames=np.asarray(frames))
-        logging.warning("Failed to write GIF/PNG (%s). Saved raw frames to %s", e, npz_path)
+    outputs = _save_animation_outputs(
+        out_hint=out_path,
+        frames=[np.asarray(frame) for frame in frames],
+        fps=int(fps),
+        render_format=render_format,
+        save_last_frame_png=True,
+    )
+    logging.info(
+        "Saved TurningDoubleWellEnv render: primary=%s",
+        outputs.get("primary", ""),
+    )
 
 
 def _collect_reppo_trajectories(
@@ -2095,26 +3342,58 @@ def _eval_reppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
             max_states=getattr(args, "tdw_action_analysis_max_states", None),
         )
 
-    if bool(getattr(args, "render", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
-        render_num_envs = max(1, int(getattr(args, "render_num_envs", 10)))
-        _render_turning_double_well_reppo(
-            method_name=method_name,
-            train_mode=train_mode,
-            diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
-            cfg=cfg,
-            actor_graphdef=actor_graphdef,
-            actor_params=actor_params,
-            checkpoint_path=str(args.checkpoint),
-            norm_state=norm_state,
-            horizon=horizon,
-            num_envs=render_num_envs,
-            out_path=getattr(args, "render_out", None),
-            overlay=not bool(getattr(args, "render_grid", False)),
-            width=int(getattr(args, "render_width", 960)),
-            height=int(getattr(args, "render_height", 720)),
-            fps=int(getattr(args, "render_fps", 20)),
-            seed=int(getattr(args, "render_seed", 0)),
-        )
+    if bool(getattr(args, "render", False)):
+        render_num_envs = max(1, int(getattr(args, "render_num_envs", 20)))
+        if str(cfg.env.name) == "TurningDoubleWellEnv":
+            _render_turning_double_well_reppo(
+                method_name=method_name,
+                train_mode=train_mode,
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                actor_graphdef=actor_graphdef,
+                actor_params=actor_params,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=norm_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                overlay=not bool(getattr(args, "render_grid", False)),
+                width=int(getattr(args, "render_width", 960)),
+                height=int(getattr(args, "render_height", 720)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        elif str(cfg.env.type) == "mjx":
+            _render_mjx_rollout_grid_reppo(
+                method_name=method_name,
+                train_mode=train_mode,
+                cfg=cfg,
+                actor_graphdef=actor_graphdef,
+                actor_params=actor_params,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=norm_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                cell_width=int(getattr(args, "render_cell_width", 180)),
+                cell_height=int(getattr(args, "render_cell_height", 180)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                frame_stride=int(getattr(args, "render_frame_stride", 1)),
+                max_frames=int(getattr(args, "render_max_frames", 300)),
+                camera=getattr(args, "render_camera", None),
+                follow_agent=bool(getattr(args, "render_follow_agent", False)),
+                follow_body=getattr(args, "render_follow_body", None),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        else:
+            logging.warning(
+                "Render requested but not supported for method=%s env_type=%s env_name=%s",
+                method_name,
+                str(cfg.env.type),
+                str(cfg.env.name),
+            )
 
     _progress("[reppo] Running evaluation rollout")
     @jax.jit
@@ -2270,25 +3549,57 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
             max_states=getattr(args, "tdw_action_analysis_max_states", None),
         )
 
-    if bool(getattr(args, "render", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
-        render_num_envs = max(1, int(getattr(args, "render_num_envs", 10)))
-        _render_turning_double_well_reppo(
-            method_name=method_name,
-            train_mode=train_mode,
-            diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
-            cfg=cfg,
-            train_state=train_state,
-            checkpoint_path=str(args.checkpoint),
-            norm_state=norm_state,
-            horizon=horizon,
-            num_envs=render_num_envs,
-            out_path=getattr(args, "render_out", None),
-            overlay=not bool(getattr(args, "render_grid", False)),
-            width=int(getattr(args, "render_width", 960)),
-            height=int(getattr(args, "render_height", 720)),
-            fps=int(getattr(args, "render_fps", 20)),
-            seed=int(getattr(args, "render_seed", 0)),
-        )
+    if bool(getattr(args, "render", False)):
+        render_num_envs = max(1, int(getattr(args, "render_num_envs", 20)))
+        if str(cfg.env.name) == "TurningDoubleWellEnv":
+            _render_turning_double_well_reppo(
+                method_name=method_name,
+                train_mode=train_mode,
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                train_state=train_state,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=norm_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                overlay=not bool(getattr(args, "render_grid", False)),
+                width=int(getattr(args, "render_width", 960)),
+                height=int(getattr(args, "render_height", 720)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        elif str(cfg.env.type) == "mjx":
+            _render_mjx_rollout_grid_dmerl(
+                method_name=method_name,
+                train_mode=train_mode,
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                train_state=train_state,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=norm_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                cell_width=int(getattr(args, "render_cell_width", 180)),
+                cell_height=int(getattr(args, "render_cell_height", 180)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                frame_stride=int(getattr(args, "render_frame_stride", 1)),
+                max_frames=int(getattr(args, "render_max_frames", 300)),
+                camera=getattr(args, "render_camera", None),
+                follow_agent=bool(getattr(args, "render_follow_agent", False)),
+                follow_body=getattr(args, "render_follow_body", None),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        else:
+            logging.warning(
+                "Render requested but not supported for method=%s env_type=%s env_name=%s",
+                method_name,
+                str(cfg.env.type),
+                str(cfg.env.name),
+            )
 
     _progress("[reppo_DMERL_new] Running evaluation metrics")
     eval_key = jax.random.PRNGKey(123)
@@ -2439,26 +3750,57 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
             diffusion_sampler=str(getattr(args, "diffusion_sampler", "auto")),
         )
 
-    if bool(getattr(args, "render", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
-        render_num_envs = max(1, int(getattr(args, "render_num_envs", 10)))
-        _render_turning_double_well_reppo(
-            method_name=method_name,
-            train_mode=train_mode,
-            entropy_coef=float(getattr(hp, "entropy_coef", 0.0)),
-            diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
-            cfg=cfg,
-            train_state=train_state,
-            checkpoint_path=str(args.checkpoint),
-            norm_state=train_state.normalization_state,
-            horizon=horizon,
-            num_envs=render_num_envs,
-            out_path=getattr(args, "render_out", None),
-            overlay=not bool(getattr(args, "render_grid", False)),
-            width=int(getattr(args, "render_width", 960)),
-            height=int(getattr(args, "render_height", 720)),
-            fps=int(getattr(args, "render_fps", 20)),
-            seed=int(getattr(args, "render_seed", 0)),
-        )
+    if bool(getattr(args, "render", False)):
+        render_num_envs = max(1, int(getattr(args, "render_num_envs", 20)))
+        if str(cfg.env.name) == "TurningDoubleWellEnv":
+            _render_turning_double_well_reppo(
+                method_name=method_name,
+                train_mode=train_mode,
+                entropy_coef=float(getattr(hp, "entropy_coef", 0.0)),
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                train_state=train_state,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=train_state.normalization_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                overlay=not bool(getattr(args, "render_grid", False)),
+                width=int(getattr(args, "render_width", 960)),
+                height=int(getattr(args, "render_height", 720)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        elif str(cfg.env.type) == "mjx":
+            _render_mjx_rollout_grid_diffppo(
+                method_name=method_name,
+                train_mode=train_mode,
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                train_state=train_state,
+                checkpoint_path=str(args.checkpoint),
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                cell_width=int(getattr(args, "render_cell_width", 180)),
+                cell_height=int(getattr(args, "render_cell_height", 180)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                frame_stride=int(getattr(args, "render_frame_stride", 1)),
+                max_frames=int(getattr(args, "render_max_frames", 300)),
+                camera=getattr(args, "render_camera", None),
+                follow_agent=bool(getattr(args, "render_follow_agent", False)),
+                follow_body=getattr(args, "render_follow_body", None),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        else:
+            logging.warning(
+                "Render requested but not supported for method=%s env_type=%s env_name=%s",
+                method_name,
+                str(cfg.env.type),
+                str(cfg.env.name),
+            )
 
     _progress("[reppo_DiffPPO] Running evaluation metrics")
     sampler = str(getattr(args, "diffusion_sampler", "auto")).lower()
@@ -2673,25 +4015,58 @@ def _eval_reppo_dime(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
     method_name = str(checkpoint.get("method_name", "reppo_dime"))
     train_mode = _resolve_train_mode(checkpoint, cfg)
 
-    if bool(getattr(args, "render", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
-        render_num_envs = max(1, int(getattr(args, "render_num_envs", 10)))
-        _render_turning_double_well_reppo(
-            method_name=method_name,
-            diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
-            cfg=cfg,
-            actor_graphdef=actor_graphdef,
-            actor_params=actor_params,
-            checkpoint_path=str(args.checkpoint),
-            norm_state=norm_state,
-            horizon=horizon,
-            num_envs=render_num_envs,
-            out_path=getattr(args, "render_out", None),
-            overlay=not bool(getattr(args, "render_grid", False)),
-            width=int(getattr(args, "render_width", 960)),
-            height=int(getattr(args, "render_height", 720)),
-            fps=int(getattr(args, "render_fps", 20)),
-            seed=int(getattr(args, "render_seed", 0)),
-        )
+    if bool(getattr(args, "render", False)):
+        render_num_envs = max(1, int(getattr(args, "render_num_envs", 20)))
+        if str(cfg.env.name) == "TurningDoubleWellEnv":
+            _render_turning_double_well_reppo(
+                method_name=method_name,
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                actor_graphdef=actor_graphdef,
+                actor_params=actor_params,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=norm_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                overlay=not bool(getattr(args, "render_grid", False)),
+                width=int(getattr(args, "render_width", 960)),
+                height=int(getattr(args, "render_height", 720)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        elif str(cfg.env.type) == "mjx":
+            _render_mjx_rollout_grid_dime(
+                method_name=method_name,
+                train_mode=train_mode,
+                diffusion_sampler=getattr(args, "diffusion_sampler", "auto"),
+                cfg=cfg,
+                actor_graphdef=actor_graphdef,
+                actor_params=actor_params,
+                checkpoint_path=str(args.checkpoint),
+                norm_state=norm_state,
+                horizon=horizon,
+                num_envs=render_num_envs,
+                out_path=getattr(args, "render_out", None),
+                cell_width=int(getattr(args, "render_cell_width", 180)),
+                cell_height=int(getattr(args, "render_cell_height", 180)),
+                fps=int(getattr(args, "render_fps", 20)),
+                seed=int(getattr(args, "render_seed", 0)),
+                frame_stride=int(getattr(args, "render_frame_stride", 1)),
+                max_frames=int(getattr(args, "render_max_frames", 300)),
+                camera=getattr(args, "render_camera", None),
+                follow_agent=bool(getattr(args, "render_follow_agent", False)),
+                follow_body=getattr(args, "render_follow_body", None),
+                render_format=str(getattr(args, "render_format", "gif")),
+            )
+        else:
+            logging.warning(
+                "Render requested but not supported for method=%s env_type=%s env_name=%s",
+                method_name,
+                str(cfg.env.type),
+                str(cfg.env.name),
+            )
 
     if bool(getattr(args, "tdw_action_analysis", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
         actor_model = nnx.merge(actor_graphdef, actor_params)
@@ -2958,18 +4333,30 @@ def main() -> None:
         help="Batch size used by pairwise-distance chunks in kNN entropy estimation.",
     )
 
-    # TurningDoubleWellEnv rendering (reppo + reppo_DMERL_new + reppo_DiffPPO + reppo_dime).
+    # Rendering.
     parser.add_argument(
         "--render",
         action="store_true",
-        help="If env.name=TurningDoubleWellEnv, render a batch trajectory GIF (and PNG) into artifacts/ (optionally set --render-out basename).",
+        help=(
+            "Render qualitative rollouts during evaluation. "
+            "TurningDoubleWellEnv renders a trajectory plot GIF; "
+            "DMERL on MJX envs renders a tiled rollout-grid GIF."
+        ),
     )
-    parser.add_argument("--render-num-envs", type=int, default=10, help="Number of agents to visualize in parallel (TurningDoubleWellEnv only).")
+    parser.add_argument(
+        "--render-num-envs",
+        type=int,
+        default=20,
+        help="Number of environments to visualize in parallel.",
+    )
     parser.add_argument(
         "--render-out",
         type=str,
         default=None,
-        help="Output GIF name (basename only). The file is always written to artifacts/. If you pass a custom name, it will be prefixed with `REPPO__`, `DME-REPPO__`/`DME-WPO__`, or `REPPO-DIME__` if missing.",
+        help=(
+            "Output basename for rendered artifacts. "
+            "Results are always written under artifacts/<run_folder>/."
+        ),
     )
     # Overlay is now the default; keep --render-overlay as a silent compatibility flag.
     parser.add_argument("--render-overlay", action="store_true", help=argparse.SUPPRESS)
@@ -2980,8 +4367,65 @@ def main() -> None:
     )
     parser.add_argument("--render-width", type=int, default=960, help="Render width in pixels (TurningDoubleWellEnv only).")
     parser.add_argument("--render-height", type=int, default=720, help="Render height in pixels (TurningDoubleWellEnv only).")
-    parser.add_argument("--render-fps", type=int, default=20, help="FPS for the rendered GIF (TurningDoubleWellEnv only).")
-    parser.add_argument("--render-seed", type=int, default=0, help="PRNG seed for the rendered rollout (TurningDoubleWellEnv only).")
+    parser.add_argument("--render-fps", type=int, default=20, help="FPS for rendered video/GIF output.")
+    parser.add_argument(
+        "--render-format",
+        type=str,
+        choices=["gif", "mp4", "both"],
+        default="gif",
+        help=(
+            "Render output format. "
+            "'mp4' also writes an autoplay-loop HTML preview next to the video."
+        ),
+    )
+    parser.add_argument("--render-seed", type=int, default=0, help="PRNG seed for the rendered rollout.")
+    parser.add_argument(
+        "--render-cell-width",
+        type=int,
+        default=180,
+        help="Per-environment tile width for MJX rollout-grid rendering.",
+    )
+    parser.add_argument(
+        "--render-cell-height",
+        type=int,
+        default=180,
+        help="Per-environment tile height for MJX rollout-grid rendering.",
+    )
+    parser.add_argument(
+        "--render-frame-stride",
+        type=int,
+        default=1,
+        help="Save every Nth environment-step frame for MJX rollout-grid rendering.",
+    )
+    parser.add_argument(
+        "--render-max-frames",
+        type=int,
+        default=300,
+        help="Maximum frames to render for MJX rollout-grid rendering.",
+    )
+    parser.add_argument(
+        "--render-camera",
+        type=str,
+        default="",
+        help="Optional MuJoCo camera name for MJX rollout-grid rendering.",
+    )
+    parser.add_argument(
+        "--render-follow-agent",
+        action="store_true",
+        help=(
+            "MJX only: turn the selected render camera into a MuJoCo tracking camera "
+            "so it follows the agent body during rollout rendering."
+        ),
+    )
+    parser.add_argument(
+        "--render-follow-body",
+        type=str,
+        default="",
+        help=(
+            "MJX only: body name or index to track when --render-follow-agent is set "
+            "(default: auto-select torso/root-like body)."
+        ),
+    )
 
     # TurningDoubleWellEnv action/Q analysis (histograms + reward/Q overlays).
     parser.add_argument(
@@ -3024,10 +4468,33 @@ def main() -> None:
         raise ValueError("--traj-knn-k must be >= 1.")
     if args.traj_knn_batch_size < 1:
         raise ValueError("--traj-knn-batch-size must be >= 1.")
+    if args.render_num_envs < 1:
+        raise ValueError("--render-num-envs must be >= 1.")
+    if args.render_cell_width < 1:
+        raise ValueError("--render-cell-width must be >= 1.")
+    if args.render_cell_height < 1:
+        raise ValueError("--render-cell-height must be >= 1.")
+    if args.render_frame_stride < 1:
+        raise ValueError("--render-frame-stride must be >= 1.")
+    if args.render_max_frames < 2:
+        raise ValueError("--render-max-frames must be >= 2.")
     if args.traj_knn_max_samples is not None and args.traj_knn_max_samples <= 0:
         args.traj_knn_max_samples = None
 
     ckpt_path = os.path.expanduser(args.checkpoint)
+    if bool(getattr(args, "render", False)):
+        _progress(
+            "Rendering enabled with "
+            f"MUJOCO_GL={os.environ.get('MUJOCO_GL', '')}, "
+            f"PYOPENGL_PLATFORM={os.environ.get('PYOPENGL_PLATFORM', '')}, "
+            f"DISPLAY={os.environ.get('DISPLAY', '')}"
+        )
+        _progress(f"Render format: {str(getattr(args, 'render_format', 'gif')).lower()}")
+        if bool(getattr(args, "render_follow_agent", False)):
+            _progress(
+                "MJX follow-camera requested with "
+                f"body={str(getattr(args, 'render_follow_body', '')).strip() or 'auto'}"
+            )
     _progress(f"Loading checkpoint from {ckpt_path}")
     checkpoint = _load_checkpoint(ckpt_path)
     _progress("Checkpoint loaded")

@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import optuna
-import mujoco
 from flax import nnx, struct
 from flax.struct import PyTreeNode
 from flax.traverse_util import flatten_dict, unflatten_dict
@@ -33,12 +32,6 @@ from src.env_utils.jax_wrappers import (
     MjxGymnaxWrapper,
     MjxDiffEnvWrapper,
     DiffNormalizeVec,
-)
-from src.env_utils.torso_com import (
-    build_torso_com_traj_figure,
-    get_torso_com_all,
-    resolve_mj_model,
-    save_torso_com_trajectory,
 )
 from src.jaxrl import utils
 from src.jaxrl.reppo_helpers.learning_DiffReppo import (
@@ -177,7 +170,6 @@ class ReppoConfig(struct.PyTreeNode):
     num_epochs: int
     max_grad_norm: float | None
     normalize_env: bool
-    polyak: float
     exploration_noise_min: float
     exploration_noise_max: float
     exploration_base_envs: int
@@ -232,9 +224,6 @@ class ReppoConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
-    log_torso_com: bool = False
-    log_torso_com_num_envs: int = 30
-    log_torso_com_stride: int = 1
     use_actor_norm: bool = True
     num_actor_layers: int = 2
     actor_min_std: float = 0.05
@@ -258,6 +247,8 @@ class ReppoConfig(struct.PyTreeNode):
     project_only_if_exceeds: bool = True
     use_current_critic_for_actor_samples: bool = True
     normalize_reward: bool = False
+    log_target_value_stats: bool = False
+    log_pnorms: bool = False
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -359,20 +350,6 @@ class ReppoDMERLTrainer:
         self.reward_scale = reward_scale
         self.env = self._prepare_env(env)
         self.eval_env = copy.deepcopy(self.env)
-        if cfg.log_torso_com:
-            mj_model = resolve_mj_model(self.eval_env)
-            if mj_model is None:
-                self.torso_id = None
-                logging.warning("MJX model not found; skipping torso COM logging.")
-            else:
-                torso_id = mujoco.mj_name2id(
-                    mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso"
-                )
-                self.torso_id = torso_id if torso_id >= 0 else None
-                if self.torso_id is None:
-                    logging.warning("Torso body not found; skipping torso COM logging.")
-        else:
-            self.torso_id = None
         self.eval_env_steps = cfg.max_episode_steps*self.cfg.diffusion.diff_steps
         self.num_collection_steps = int(
             cfg.num_steps * self.cfg.diffusion.diff_steps * cfg.num_collection_step_factor
@@ -427,12 +404,6 @@ class ReppoDMERLTrainer:
         env = self.eval_env
         max_episode_steps = self.eval_env_steps
         reward_scale = self.reward_scale
-        torso_id = self.torso_id
-        num_torso_envs = min(
-            int(getattr(self.cfg, "log_torso_com_num_envs", 30)),
-            env.num_envs,
-        )
-        torso_stride = max(1, int(getattr(self.cfg, "log_torso_com_stride", 1)))
 
         def sde_evaluation_fn(
             key: jax.random.PRNGKey,
@@ -472,42 +443,13 @@ class ReppoDMERLTrainer:
             key, init_key = jax.random.split(key)
             init_key = jax.random.split(init_key, env.num_envs)
             obs, critic_obs, env_state = env.reset(init_key, norm_state)
-            key, env_key = jax.random.split(key)
-            com_traj = None
-            torso_env_indices = None
-            if eval_policy and (torso_id is not None and num_torso_envs > 0):
-                key, sample_key = jax.random.split(key)
-                torso_env_indices = jax.random.choice(
-                    sample_key, env.num_envs, (num_torso_envs,), replace=False
-                )
-
-                def step_env_with_com(carry, _):
-                    key, env_state, obs, critic_obs = carry
-                    key, act_key, env_key = jax.random.split(key, 3)
-                    action, _ = sde_policy(act_key, obs, critic_obs)
-                    step_key = jax.random.split(env_key, env.num_envs)
-                    obs, critic_obs, env_state, reward, done, info = env.step(
-                        step_key, env_state, action
-                    )
-                    com = get_torso_com_all(env_state, torso_id)
-                    sampled_com = com[torso_env_indices]
-                    return (key, env_state, obs, critic_obs), (info, sampled_com)
-
-                final_carry, (infos, com_traj) = jax.lax.scan(
-                    f=step_env_with_com,
-                    init=(key, env_state, obs, critic_obs),
-                    xs=None,
-                    length=max_episode_steps,
-                )
-                if torso_stride > 1:
-                    com_traj = com_traj[::torso_stride]
-            else:
-                final_carry, infos = jax.lax.scan(
-                    f=step_env,
-                    init=(key, env_state, obs, critic_obs),
-                    xs=None,
-                    length=max_episode_steps,
-                )
+            key, _ = jax.random.split(key)
+            _, infos = jax.lax.scan(
+                f=step_env,
+                init=(key, env_state, obs, critic_obs),
+                xs=None,
+                length=max_episode_steps,
+            )
             metrics = {
                 "episode_return": infos["returned_episode_returns"].mean(
                     where=infos["returned_episode"]
@@ -524,9 +466,6 @@ class ReppoDMERLTrainer:
                 ),
                 "num_episodes": infos["returned_episode"].sum(),
             }
-            if com_traj is not None:
-                metrics["torso_com_traj"] = com_traj
-                metrics["torso_com_env_indices"] = torso_env_indices
             return metrics
 
         return sde_evaluation_fn
@@ -535,12 +474,6 @@ class ReppoDMERLTrainer:
         env = self.eval_env
         max_episode_steps = self.eval_env_steps
         reward_scale = self.reward_scale
-        torso_id = self.torso_id
-        num_torso_envs = min(
-            int(getattr(self.cfg, "log_torso_com_num_envs", 30)),
-            env.num_envs,
-        )
-        torso_stride = max(1, int(getattr(self.cfg, "log_torso_com_stride", 1)))
 
         def ode_evaluation_fn(
             key: jax.random.PRNGKey,
@@ -579,42 +512,13 @@ class ReppoDMERLTrainer:
             key, init_key = jax.random.split(key)
             init_key = jax.random.split(init_key, env.num_envs)
             obs, critic_obs, env_state = env.reset(init_key, norm_state)
-            key, env_key = jax.random.split(key)
-            com_traj = None
-            torso_env_indices = None
-            if torso_id is not None and num_torso_envs > 0:
-                key, sample_key = jax.random.split(key)
-                torso_env_indices = jax.random.choice(
-                    sample_key, env.num_envs, (num_torso_envs,), replace=False
-                )
-
-                def step_env_with_com(carry, _):
-                    key, env_state, obs, critic_obs = carry
-                    key, act_key, env_key = jax.random.split(key, 3)
-                    action, _ = ode_policy(act_key, obs, critic_obs)
-                    step_key = jax.random.split(env_key, env.num_envs)
-                    obs, critic_obs, env_state, reward, done, info = env.step(
-                        step_key, env_state, action
-                    )
-                    com = get_torso_com_all(env_state, torso_id)
-                    sampled_com = com[torso_env_indices]
-                    return (key, env_state, obs, critic_obs), (info, sampled_com)
-
-                final_carry, (infos, com_traj) = jax.lax.scan(
-                    f=step_env_with_com,
-                    init=(key, env_state, obs, critic_obs),
-                    xs=None,
-                    length=max_episode_steps,
-                )
-                if torso_stride > 1:
-                    com_traj = com_traj[::torso_stride]
-            else:
-                final_carry, infos = jax.lax.scan(
-                    f=step_env,
-                    init=(key, env_state, obs, critic_obs),
-                    xs=None,
-                    length=max_episode_steps,
-                )
+            key, _ = jax.random.split(key)
+            _, infos = jax.lax.scan(
+                f=step_env,
+                init=(key, env_state, obs, critic_obs),
+                xs=None,
+                length=max_episode_steps,
+            )
             metrics = {
                 "episode_return": infos["returned_episode_returns"].mean(
                     where=infos["returned_episode"]
@@ -631,9 +535,6 @@ class ReppoDMERLTrainer:
                 ),
                 "num_episodes": infos["returned_episode"].sum(),
             }
-            if com_traj is not None:
-                metrics["torso_com_traj"] = com_traj
-                metrics["torso_com_env_indices"] = torso_env_indices
             return metrics
 
         return ode_evaluation_fn
@@ -743,6 +644,7 @@ class ReppoDMERLTrainer:
                 ent_start=cfg.ent_start,
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
+                action_clip_value=cfg.action_clip_value,
                 tanh_transform=cfg.tanh_transform,
                 use_temp_lagrangian_mlp=cfg.use_temp_lagrangian_mlp,
                 temp_lagrangian_hidden=cfg.temp_lagrangian_hidden,
@@ -1151,20 +1053,21 @@ class ReppoDMERLTrainer:
         #                 min=jnp.min(target_values),
         #                 max=jnp.max(target_values),
         #                 mean=jnp.mean(target_values))
-        target_vals_flat = target_values.reshape(-1)
-        target_vals_finite = jnp.nan_to_num(
-            target_vals_flat,
-            nan=0.0,
-            posinf=cfg.vmax,
-            neginf=cfg.vmin,
-        )
-        target_val_mean = jnp.mean(target_vals_finite)
-        target_val_min = jnp.min(target_vals_finite)
-        target_val_max = jnp.max(target_vals_finite)
-        target_val_hist_counts, target_val_hist_edges = jnp.histogram(
-            target_vals_finite,
-            bins=cfg.num_bins,
-        )
+        if cfg.log_target_value_stats:
+            target_vals_flat = target_values.reshape(-1)
+            target_vals_finite = jnp.nan_to_num(
+                target_vals_flat,
+                nan=0.0,
+                posinf=cfg.vmax,
+                neginf=cfg.vmin,
+            )
+            target_val_mean = jnp.mean(target_vals_finite)
+            target_val_min = jnp.min(target_vals_finite)
+            target_val_max = jnp.max(target_vals_finite)
+            target_val_hist_counts, target_val_hist_edges = jnp.histogram(
+                target_vals_finite,
+                bins=cfg.num_bins,
+            )
         shift_steps = self.cfg.diffusion.diff_steps
         time_idx = jnp.arange(self.num_collection_steps)
         shifted_idx = jnp.minimum(time_idx + shift_steps, self.num_collection_steps - 1)
@@ -1204,16 +1107,15 @@ class ReppoDMERLTrainer:
             xs=jax.random.split(train_key, cfg.num_epochs)
         )
         update_metrics = jax.tree.map(lambda x: x[-1], update_metrics)
-        update_metrics["target_value_nonfinite"] = jnp.sum(
-            ~jnp.isfinite(target_vals_flat)
-        )
-        update_metrics["target_value_hist_counts"] = target_val_hist_counts
-        update_metrics["target_value_hist_edges"] = target_val_hist_edges
-        update_metrics["target_value_mean"] = target_val_mean
-        update_metrics["target_value_min"] = target_val_min
-        update_metrics["target_value_max"] = target_val_max
-        temperature = update_metrics["temp"]
-        lagrangian = update_metrics["lagrangian"]
+        if cfg.log_target_value_stats:
+            update_metrics["target_value_nonfinite"] = jnp.sum(
+                ~jnp.isfinite(target_vals_flat)
+            )
+            update_metrics["target_value_hist_counts"] = target_val_hist_counts
+            update_metrics["target_value_hist_edges"] = target_val_hist_edges
+            update_metrics["target_value_mean"] = target_val_mean
+            update_metrics["target_value_min"] = target_val_min
+            update_metrics["target_value_max"] = target_val_max
         # jax.debug.print("Temperature: {temperature}, Lagrangian: {lagrangian}",
         #                 temperature=temperature, lagrangian=lagrangian)
         return train_state, update_metrics
@@ -1322,7 +1224,10 @@ class ReppoDMERLTrainer:
             actor_train_state.params
         )
 
-        metrics = {**critic_metrics, **actor_metrics}
+        metrics = jax.tree.map(
+            lambda x: jnp.mean(jnp.asarray(x)),
+            {**critic_metrics, **actor_metrics},
+        )
         return updated_state, metrics
 
     def _train_eval_step(
@@ -1464,6 +1369,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
     metric_history = []
     save_dir = None
+    prev_callback_overhead = 0.0
 
     def _move_metrics_to_norm(log_data: dict[str, Any], keys: list[str]) -> None:
         """Move selected metrics into the norm/ namespace to avoid duplicate logging."""
@@ -1474,14 +1380,26 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 log_data[f"norm/{suffix}"] = value
 
     def log_callback(state, metrics):
-        nonlocal save_dir
-        metrics["sys_time"] = time.perf_counter()
+        nonlocal save_dir, prev_callback_overhead
+        callback_start = time.perf_counter()
+        metrics["sys_time"] = callback_start
         if len(metric_history) > 0:
-            num_env_steps = state.time_steps[0] - metric_history[-1]["time_step"][0]
-            seconds = metrics["sys_time"] - metric_history[-1]["sys_time"]
-            sps = num_env_steps / seconds
+            num_env_steps = float(
+                np.asarray(state.time_steps[0])
+                - np.asarray(metric_history[-1]["time_step"][0])
+            )
+            seconds_raw = metrics["sys_time"] - metric_history[-1]["sys_time"]
+            seconds_adjusted = max(seconds_raw - prev_callback_overhead, 1e-9)
+            sps_raw = num_env_steps / max(seconds_raw, 1e-9)
+            sps_adjusted = num_env_steps / seconds_adjusted
+            sps_train_only = sps_adjusted
         else:
-            sps = 0
+            seconds_raw = 0.0
+            seconds_adjusted = 0.0
+            sps_raw = 0.0
+            sps_adjusted = 0.0
+            sps_train_only = 0.0
+        sps = sps_adjusted
 
         if save_dir is None:
             repo_root = os.path.abspath(
@@ -1490,7 +1408,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             save_dir = os.path.join(repo_root, "saved_models")
             os.makedirs(save_dir, exist_ok=True)
 
-        metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         eval_length = metrics["eval/episode_length"].mean()
 
@@ -1519,20 +1436,27 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 ode_coef = float(ode_coef_str) / 100.0
                 ode_return = metrics[key_name].mean()
                 log_msg += f", ode_{ode_coef}_return={ode_return:.3f}"
-        log_msg += f" sps={sps:.2f}"
+        log_msg += (
+            f" sps={sps:.2f} sps_raw={sps_raw:.2f}"
+            f" sps_train_only={sps_train_only:.2f}"
+        )
         logging.info(log_msg)
 
         train_metrics = utils.filter_prefix("train", metrics)
         target_hist_counts = train_metrics.pop("train/target_value_hist_counts", None)
         target_hist_edges = train_metrics.pop("train/target_value_hist_edges", None)
-        torso_com_traj = metrics.pop("eval/torso_com_traj", None)
-        torso_com_env_indices = metrics.pop("eval/torso_com_env_indices", None)
 
         log_data = {
             "eval/episode_return": episode_return,
             "eval/episode_length": eval_length,
             "train/lr": current_lr,
             "sps": sps,
+            "sps_raw": sps_raw,
+            "sps_adjusted": sps_adjusted,
+            "sps_train_only": sps_train_only,
+            "timing/sps_interval_raw_sec": seconds_raw,
+            "timing/sps_interval_train_only_sec": seconds_adjusted,
+            "timing/prev_callback_overhead_sec": prev_callback_overhead,
             **jax.tree.map(jnp.mean, train_metrics),
         }
         for key_name, value in metrics.items():
@@ -1565,20 +1489,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             path = os.path.join(os.getcwd(), "target_value_histogram.png")
             fig.savefig(path)
             plt.close(fig)
-        fig = build_torso_com_traj_figure(
-            torso_com_traj, torso_com_env_indices, title="Torso COM trajectory (XY)"
-        )
-        if fig is not None:
-            log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
-            plt.close(fig)
-        if torso_com_traj is not None:
-            step_id = int(np.asarray(state.time_steps[0]))
-            save_torso_com_trajectory(
-                f"DMERL_traj_step_{step_id}.pkl",
-                torso_com_traj,
-                torso_com_env_indices,
-            )
-
         actor_params = jax.tree.map(lambda x: x[0], state.actor.params)
         actor_model = nnx.merge(state.actor.graphdef, actor_params)
         diff_model = actor_model.diffusion_model
@@ -1635,23 +1545,24 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         plt.close(fig)
 
         # compute the effective learning rate of the actor and the critic
-        actor_gnorm = log_data.get("train/actor_gnorm", 0.0)
-        actor_pnorm = log_data.get("train/actor_pnorm", 0.0)
-        critic_gnorm = log_data.get("train/critic_gnorm", 0.0)
-        critic_pnorm = log_data.get("train/critic_pnorm", 0.0)
+        if bool(getattr(cfg.hyperparameters, "log_pnorms", False)):
+            actor_gnorm = log_data.get("train/actor_gnorm", 0.0)
+            actor_pnorm = log_data.get("train/actor_pnorm", 0.0)
+            critic_gnorm = log_data.get("train/critic_gnorm", 0.0)
+            critic_pnorm = log_data.get("train/critic_pnorm", 0.0)
 
-        actor_effective_lr = (
-            current_lr * (actor_gnorm / (actor_pnorm + 1e-10))
-            if actor_pnorm > 0
-            else 0.0
-        )
-        critic_effective_lr = (
-            current_lr * (critic_gnorm / (critic_pnorm + 1e-10))
-            if critic_pnorm > 0
-            else 0.0
-        )
-        log_data["norm/actor_effective_lr"] = actor_effective_lr
-        log_data["norm/critic_effective_lr"] = critic_effective_lr
+            actor_effective_lr = (
+                current_lr * (actor_gnorm / (actor_pnorm + 1e-10))
+                if actor_pnorm > 0
+                else 0.0
+            )
+            critic_effective_lr = (
+                current_lr * (critic_gnorm / (critic_pnorm + 1e-10))
+                if critic_pnorm > 0
+                else 0.0
+            )
+            log_data["norm/actor_effective_lr"] = actor_effective_lr
+            log_data["norm/critic_effective_lr"] = critic_effective_lr
         _move_metrics_to_norm(
             log_data,
             [
@@ -1666,6 +1577,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
         wandb.log(_sectioned_wandb_log(log_data), step=int(state.time_steps[0]))
 
+        checkpoint_start = time.perf_counter()
         step = int(np.asarray(state.time_steps[0]))
         checkpoint = {
             "actor_params": _to_numpy_tree(state.actor.params),
@@ -1688,6 +1600,12 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         save_path = os.path.join(save_dir, "checkpoint.pkl")
         with open(save_path, "wb") as f:
             pickle.dump(checkpoint, f)
+        checkpoint_overhead = time.perf_counter() - checkpoint_start
+        callback_overhead = time.perf_counter() - callback_start
+        prev_callback_overhead = callback_overhead
+        metrics["checkpoint_overhead_sec"] = checkpoint_overhead
+        metrics["callback_overhead_sec"] = callback_overhead
+        metric_history.append(metrics)
 
     if cfg.env.type == "brax":
         raise ValueError("Wrappers are not implemented yet")

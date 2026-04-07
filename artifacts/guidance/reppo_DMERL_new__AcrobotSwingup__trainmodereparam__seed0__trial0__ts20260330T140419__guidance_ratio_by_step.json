@@ -1,0 +1,194 @@
+{
+  "checkpoint": "/home/it4i-sanokows/code/DIMEReppo/saved_models/reppo_DMERL_new__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl",
+  "normalizer_stats_mode": "fixed",
+  "plot_path": "/home/it4i-sanokows/code/DIMEReppo/artifacts/guidance/reppo_DMERL_new__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419__guidance_ratio_by_step.png",
+  "q_grad_clip": 100.0,
+  "q_grad_clip_mode": "l2",
+  "results_by_sampler": {
+    "ode": [
+      {
+        "diff_step": 0,
+        "guidance_norm_mean": 0.13228702545166016,
+        "num_samples": 8000000.0,
+        "ratio_mean": 66.38197326660156,
+        "ratio_sem": 5.604830265045166,
+        "ratio_std": 15852.8544921875,
+        "sampler": "ode",
+        "score_norm_mean": 0.9394758343696594
+      },
+      {
+        "diff_step": 1,
+        "guidance_norm_mean": 0.13234619796276093,
+        "num_samples": 8000000.0,
+        "ratio_mean": 51.05708694458008,
+        "ratio_sem": 11.62677001953125,
+        "ratio_std": 32885.47265625,
+        "sampler": "ode",
+        "score_norm_mean": 0.808801531791687
+      },
+      {
+        "diff_step": 2,
+        "guidance_norm_mean": 0.14274637401103973,
+        "num_samples": 8000000.0,
+        "ratio_mean": 37.34998321533203,
+        "ratio_sem": 13.098997116088867,
+        "ratio_std": 37049.55859375,
+        "sampler": "ode",
+        "score_norm_mean": 0.8134298920631409
+      },
+      {
+        "diff_step": 3,
+        "guidance_norm_mean": 0.1560075581073761,
+        "num_samples": 8000000.0,
+        "ratio_mean": 19.337844848632812,
+        "ratio_sem": 1.095892310142517,
+        "ratio_std": 3099.651611328125,
+        "sampler": "ode",
+        "score_norm_mean": 0.850469708442688
+      },
+      {
+        "diff_step": 4,
+        "guidance_norm_mean": 0.1690027117729187,
+        "num_samples": 8000000.0,
+        "ratio_mean": 21.303565979003906,
+        "ratio_sem": 3.139394998550415,
+        "ratio_std": 8879.5498046875,
+        "sampler": "ode",
+        "score_norm_mean": 0.8998376131057739
+      },
+      {
+        "diff_step": 5,
+        "guidance_norm_mean": 0.1811945140361786,
+        "num_samples": 8000000.0,
+        "ratio_mean": 19.802003860473633,
+        "ratio_sem": 2.477386236190796,
+        "ratio_std": 7007.1064453125,
+        "sampler": "ode",
+        "score_norm_mean": 0.9682519435882568
+      },
+      {
+        "diff_step": 6,
+        "guidance_norm_mean": 0.19326037168502808,
+        "num_samples": 8000000.0,
+        "ratio_mean": 18.53255844116211,
+        "ratio_sem": 0.6509341597557068,
+        "ratio_std": 1841.119873046875,
+        "sampler": "ode",
+        "score_norm_mean": 1.0589779615402222
+      },
+      {
+        "diff_step": 7,
+        "guidance_norm_mean": 0.2053537368774414,
+        "num_samples": 8000000.0,
+        "ratio_mean": 35.853668212890625,
+        "ratio_sem": 5.3881754875183105,
+        "ratio_std": 15240.0615234375,
+        "sampler": "ode",
+        "score_norm_mean": 1.170804738998413
+      }
+    ],
+    "sde": [
+      {
+        "diff_step": 0,
+        "guidance_norm_mean": 0.13224156200885773,
+        "num_samples": 8000000.0,
+        "ratio_mean": 92.35980224609375,
+        "ratio_sem": 21.966413497924805,
+        "ratio_std": 62130.40234375,
+        "sampler": "sde",
+        "score_norm_mean": 0.9889299869537354
+      },
+      {
+        "diff_step": 1,
+        "guidance_norm_mean": 0.18393802642822266,
+        "num_samples": 8000000.0,
+        "ratio_mean": 23.231632232666016,
+        "ratio_sem": 1.0002599954605103,
+        "ratio_std": 2829.162353515625,
+        "sampler": "sde",
+        "score_norm_mean": 0.9604281783103943
+      },
+      {
+        "diff_step": 2,
+        "guidance_norm_mean": 0.2679245173931122,
+        "num_samples": 8000000.0,
+        "ratio_mean": 15.96064281463623,
+        "ratio_sem": 0.9671807885169983,
+        "ratio_std": 2735.600341796875,
+        "sampler": "sde",
+        "score_norm_mean": 1.1210167407989502
+      },
+      {
+        "diff_step": 3,
+        "guidance_norm_mean": 0.35765260457992554,
+        "num_samples": 8000000.0,
+        "ratio_mean": 17.295223236083984,
+        "ratio_sem": 4.662439823150635,
+        "ratio_std": 13187.37109375,
+        "sampler": "sde",
+        "score_norm_mean": 1.3524186611175537
+      },
+      {
+        "diff_step": 4,
+        "guidance_norm_mean": 0.45035088062286377,
+        "num_samples": 8000000.0,
+        "ratio_mean": 10.41425895690918,
+        "ratio_sem": 1.1954185962677002,
+        "ratio_std": 3381.154541015625,
+        "sampler": "sde",
+        "score_norm_mean": 1.637547492980957
+      },
+      {
+        "diff_step": 5,
+        "guidance_norm_mean": 0.5441105365753174,
+        "num_samples": 8000000.0,
+        "ratio_mean": 11.480766296386719,
+        "ratio_sem": 1.7011384963989258,
+        "ratio_std": 4811.54638671875,
+        "sampler": "sde",
+        "score_norm_mean": 1.9611514806747437
+      },
+      {
+        "diff_step": 6,
+        "guidance_norm_mean": 0.639684796333313,
+        "num_samples": 8000000.0,
+        "ratio_mean": 9.273624420166016,
+        "ratio_sem": 0.6187922954559326,
+        "ratio_std": 1750.208984375,
+        "sampler": "sde",
+        "score_norm_mean": 2.3051583766937256
+      },
+      {
+        "diff_step": 7,
+        "guidance_norm_mean": 0.7445558309555054,
+        "num_samples": 8000000.0,
+        "ratio_mean": 13.131750106811523,
+        "ratio_sem": 1.5682125091552734,
+        "ratio_std": 4435.57470703125,
+        "sampler": "sde",
+        "score_norm_mean": 2.7842090129852295
+      }
+    ]
+  },
+  "sampler_summary": {
+    "ode": {
+      "episode_return": 495.2601623535156,
+      "num_episodes": 8000.0,
+      "total_samples": 64000000.0,
+      "weighted_ratio_mean": 33.702335596084595
+    },
+    "sde": {
+      "episode_return": 484.5445861816406,
+      "num_episodes": 8000.0,
+      "total_samples": 64000000.0,
+      "weighted_ratio_mean": 24.143462538719177
+    }
+  },
+  "samplers": [
+    "ode",
+    "sde"
+  ],
+  "seed": 0,
+  "seed_idx": 0,
+  "train_mode": "reparam"
+}

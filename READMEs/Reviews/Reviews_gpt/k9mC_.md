@@ -1,30 +1,28 @@
 We thank the reviewer for the careful reading and constructive feedback. Below we address the main concerns and clarify the relation to prior work. At [this link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/Table/DIMEvsDMERL.pdf), we provide a one-to-one comparison between the equations of REPPO-DIME and DME-REPPO; we refer to these as (T-Eq. X).
 
-**W1 Length of Sec. 2.**  
+**A1: W1 - Length of Sec. 2.**  
 We agree that Secs. 2 and 2.1 can be condensed. Our goal was to make the paper self-contained and establish notation, also this section is not purely background: unlike the standard derivation used in max-ent RL, we rely on the data processing inequality (DPI), which is convenient for deriving the MaxEnt diffusion-MDP formulation.
 
-**W2, Q1, Q2 Difference to DIME / REPPO-DIME.**  
+**A2: W2, Q1, Q2 - Difference to DIME / REPPO-DIME.**  
 We agree that the distinction to DIME should be stated clearly in the main text rather than mainly in the appendix.
-The key difference is that DIME / REPPO-DIME optimize objectives over the **full reverse diffusion trajectory**. This is visible in the policy loss and KL regularizer, which are defined over $a_t^{0:K}$ in (T-Eqs. 1, 5). Both losses therefore require simulating the full reverse chain, leading to $\mathcal{O}(K)$ time and memory. In contrast, our method defines both losses at a **single sampled reverse step** conditioned on the augmented state $\tilde s_{\tilde t}=(s_t,a_t^k,k)$; see (T-Eqs. 3, 7). This enables diffusion-step subsampling and yields $\mathcal{O}(1)$ cost per sampled step and $\mathcal{O}(\kappa)$ memory for a minibatch of $\kappa$ sampled steps. If we train on all rollout data, we perform roughly $K/\kappa$ more updates, so the runtime advantage can disappear, while the memory advantage remains.
+The key difference is that DIME / REPPO-DIME optimizes objectives over the **full reverse diffusion trajectory**. This is visible in the policy loss and KL regularizer, which are defined over $a_t^{0:K}$ in (T-Eqs. 1, 5). Both losses, therefore, require simulating the full reverse diffusion chain, leading to $\mathcal{O}(K)$ time and memory costs. In contrast, our method defines both losses at a **single reverse diffusion step** conditioned on the augmented state $\tilde s_{\tilde t}=(s_t,a_t^k,k)$; see (T-Eqs. 3, 7). This enables diffusion-step subsampling and yields $\mathcal{O}(1)$ cost per sampled step and $\mathcal{O}(\kappa)$ memory for a minibatch of $\kappa$ sampled steps. However, if we train on all rollout data, we perform roughly $K/\kappa$ more updates, allowing our methods to trade off runtime compute and memory costs. The step-wise formulation becomes increasingly beneficial for larger policies, longer diffusion horizons, or settings such as fine-tuning large diffusion policies, where full-chain backpropagation is costly.
 
-Thus, the main algorithmic advantage is flexibility and scalability. The step-wise formulation becomes increasingly beneficial for larger policies, longer diffusion horizons, or settings such as fine-tuning large diffusion/VLA-style policies, where full-chain backpropagation is costly.
-
-**Q3 Comparison to other on-policy diffusion/flow RL methods.**  
+**A3: Q3 - Comparison to other on-policy diffusion/flow RL methods.**  
 We agree that a broader comparison would strengthen the paper. At the same time, we already compare against the diffusion-policy baseline REPPO-DIME in Figs. 1 and 2. Moreover, as explained in L.076ff, DME-PPO reduces to DPPO at temperature 0, so DPPO is a special case of our formulation, while our method generalizes it to the max-ent RL setting. We also refer to our discussion with Reviewer E8RG on W2, where we added a toy experiment showing that our method can cover multimodal action distributions, whereas DPPO fails.
 
-**Q4 Why does the Q-function depend on latent actions?**  
-We justify this in Sec. 3. Starting from Eq. 8, we apply the DPI to obtain a tractable upper bound for diffusion policies. From Eq. 10 to Eq. 11, we then apply the policy gradient theorem (derived in App. G), which yields the surrogate loss in Eq. 11 together with the value- and Q-function definitions in Eq. 12. Intuitively, under a diffusion policy, the joint reverse process decomposes into a product of reverse steps. Each reverse step can therefore be interpreted as a noisy intermediate policy, so the resulting Q-function must depend on latent actions.
+**A4: Q4 - Why does the Q-function depend on latent actions?**  
+We justify this in Sec. 3. Starting from Eq. 8, we apply the DPI to obtain a tractable upper bound for diffusion policies. From Eq. 10 to Eq. 11, we then apply the policy gradient theorem (derived in App. G), which yields the surrogate loss in Eq. 11 together with the value- and Q-function definitions in Eq. 12. Intuitively, under a diffusion policy, the joint reverse process decomposes into a product of reverse diffusion steps. Each reverse step can therefore be interpreted as a noisy intermediate policy, so the resulting Q-function must depend on latent actions.
 
-**Q3 Why is the diffusion MDP necessary?**  
+**A5: Q3 - Why is the diffusion MDP necessary?**  
 The diffusion MDP is a direct consequence of applying the policy gradient theorem to Eq. 10. While the reward reduces to the environment reward at the last diffusion step, the value function additionally contains the log-ratios between forward and reverse diffusion transitions (see Eq. 12 and L.280ff). Since $Q = R + \mathbb{E}[V]$, one could equivalently absorb this log-ratio term into the reward, as in App. G, Eq. 39. We chose the present formulation because in max-ent RL the entropy term is usually incorporated into the value function, and we mirror that convention here. The augmented diffusion-MDP also enables step-wise optimization and diffusion-step subsampling.
 
-**Q5 How is the Q-function learned?**  
-We agree this should be explained more clearly. In the table at the link above, we provide the corresponding equations. In our formulation, the critic is trained on augmented tuples $(\tilde s_{\tilde t}, a_t^{k-1})$ via the loss in (T-Eq. 14), with TD-$\lambda$-style targets in (T-Eqs. 17, 18). This is the DME analogue of the DIME critic loss in (T-Eq. 13) with targets in (T-Eqs. 15, 16). We will make this clearer in the revision and add pseudocode.
+**A6: Q5 - How is the Q-function learned?**  
+We agree this should be explained more clearly. In the linked table above, we provide the corresponding equations. In our formulation, the critic is trained on augmented tuples $(\tilde s_{\tilde t}, a_t^{k-1})$ via the loss in (T-Eq. 14), with TD-$\lambda$-style targets in (T-Eqs. 17, 18). This is the DME-REPPO analogue of the REPPO-DIME critic loss in (T-Eq. 13) with targets in (T-Eqs. 15, 16). We will make this clearer in the revision and add pseudocode.
 
-**Q5 How is the intractable entropy term handled?**  
+**A7: Q5 - How is the intractable entropy term handled?**  
 As explained around L.231ff, applying the DPI to the intractable KL yields an upper bound in which all terms are tractable; in particular, the marginal distribution is no longer required.
 
-**W4 Statistical reporting.**  
-At [this link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/IQM/all_envs_methods_iqm_eval_return.png), the reviewer can find updated figures with IQM results. The conclusions are unchanged.
+**A8: W4 - Statistical reporting.**  
+At [this link](https://github.com/dmerlicml/DMERL_Rebuttal/blob/main/IQM/all_envs_methods_iqm_eval_return.png), the reviewer can find updated figures with IQM results.
 
 We thank the reviewer again for the helpful comments. We will incorporate these clarifications in the revised manuscript.

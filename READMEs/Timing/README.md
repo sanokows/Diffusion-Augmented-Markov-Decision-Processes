@@ -30,19 +30,79 @@ python READMEs/Timing/run_timing_benchmark.py \
 
 ```bash
 exec python READMEs/Timing/run_timing_benchmark.py \
-  --env-names WalkerRun,HopperHop,FishSwim \
-  --methods reppo,ppo,dime,diffppo,dmerl \
-  --method-env reppo:mjx_dmc \
+  --env-names HopperHop,FishSwim \
+  --methods dime,dmerl \
   --method-env dime:mjx_dmc \
   --method-env dmerl:mjx_dmc \
-  --method-experiment-overrides reppo:mjx_dmc_large_data \
   --method-experiment-overrides dime:mjx_dmc_large_data \
   --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
   --method-diff-steps dime:8 \
-  --method-diff-steps diffppo:8 \
+  --method-diff-steps dmerl:8 \
+  --total-time-steps 100000000  \
+  --extra-override hyperparameters.num_eval=50
+```
+
+```bash
+exec python READMEs/Timing/run_timing_benchmark.py \
+  --env-names HopperHop,FishSwim \
+  --methods dmerl \
+  --method-env dmerl:mjx_dmc \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-diff-steps dime:8 \
+  --method-diff-steps dmerl:8 \
+  --total-time-steps 100000000  \
+  --extra-override hyperparameters.num_eval=50
+```
+
+```bash
+exec python READMEs/Timing/run_timing_benchmark.py \
+  --env-names HopperHop,FishSwim \
+  --methods dmerl \
+  --method-env dmerl:mjx_dmc \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_time \
+  --method-diff-steps dime:8 \
+  --method-diff-steps dmerl:8 \
+  --total-time-steps 100000000  \
+  --extra-override hyperparameters.num_eval=50
+```
+
+
+```bash
+exec python READMEs/Timing/run_timing_benchmark.py \
+  --env-names CheetahRun,WalkerRun \
+  --methods dime,dmerl \
+  --method-env dime:mjx_dmc \
+  --method-env dmerl:mjx_dmc \
+  --method-experiment-overrides dime:mjx_dmc_large_data \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 10000000  \
-  --extra-override hyperparameters.num_eval=10
+  --extra-override hyperparameters.num_eval=50
+```
+
+```bash
+exec python READMEs/Timing/run_timing_benchmark.py \
+  --env-names CheetahRun,WalkerRun \
+  --methods dmerl \
+  --method-env dmerl:mjx_dmc \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-diff-steps dime:8 \
+  --method-diff-steps dmerl:8 \
+  --total-time-steps 10000000  \
+  --extra-override hyperparameters.num_eval=50
+```
+
+```bash
+exec python READMEs/Timing/run_timing_benchmark.py \
+  --env-names CheetahRun,WalkerRun \
+  --methods dmerl \
+  --method-env dmerl:mjx_dmc \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_time \
+  --method-diff-steps dime:8 \
+  --method-diff-steps dmerl:8 \
+  --total-time-steps 10000000  \
+  --extra-override hyperparameters.num_eval=50
 ```
 
 Tips:

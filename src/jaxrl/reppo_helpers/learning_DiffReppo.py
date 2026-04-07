@@ -113,6 +113,10 @@ def compute_nstep_lambda_step(
     ), lambda_return
 
 
+def _metric_scalar(x: jax.Array) -> jax.Array:
+    return jnp.mean(jnp.asarray(x))
+
+
 def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         critic_model = nnx.merge(train_state.critic.graphdef, params)
         critic_pred = critic_model.critic_cat(minibatch.critic_obs, minibatch.action).squeeze()
@@ -130,7 +134,14 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         _, pred, pred_rew, pred_next_diff_state, value = critic_model.forward(
             minibatch.critic_obs, minibatch.action
         )
-        aux_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(pred, minibatch.next_state_emb)
+        # `next_state_emb` is shifted by `diff_steps` in the trainer; tail elements are
+        # invalid and must be masked out to avoid supervising with clamped indices.
+        next_state_mask = minibatch.next_emb_mask.reshape(-1, 1).astype(pred.dtype)
+        aux_loss = (
+            (1.0 - minibatch.truncated.reshape(-1, 1))
+            * next_state_mask
+            * optax.squared_error(pred, minibatch.next_state_emb)
+        )
         aux_next_diff_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
             pred_next_diff_state, minibatch.next_emb
         )
@@ -167,18 +178,21 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             (1.0 - minibatch.truncated)
             * (critic_update_loss ) + cfg.aux_loss_mult * aux_loss
         )
-        critic_pnorm = utils.tree_norm(params)
-        return loss, dict(
+        metrics = dict(
             value_loss=critic_loss,
-            critic_update_loss=critic_update_loss,
+            critic_update_loss=_metric_scalar(critic_update_loss),
             loss=loss,
             aux_loss=aux_loss,
-            rew_aux_loss=aux_rew_loss * aux_weight.astype(aux_rew_loss.dtype),
+            rew_aux_loss=_metric_scalar(
+                aux_rew_loss * aux_weight.astype(aux_rew_loss.dtype)
+            ),
             q=value.mean(),
             reward_mean=minibatch.reward.mean(),
             target_values=target_vals.mean(),
-            critic_pnorm=critic_pnorm,
         )
+        if bool(getattr(cfg, "log_pnorms", False)):
+            metrics["critic_pnorm"] = utils.tree_norm(params)
+        return loss, metrics
 
 
 
@@ -232,63 +246,35 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
 
         target_entropy = action_size_target + entropy
         kl_constraint = kl - cfg.kl_bound
-        if cfg.use_augmented_lagrangian_dual:
-            raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
-            if cfg.actor_kl_clip_mode == "full":
-                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
-            elif cfg.actor_kl_clip_mode == "clipped":
-                actor_loss_val = jnp.where(
-                    kl < cfg.kl_bound,
-                    log_prob_ratio * jax.lax.stop_gradient(temperature) - value + 0.5* cfg.augmented_lagrangian_entropy_coef* jnp.square(target_entropy),
-                    kl * jax.lax.stop_gradient(lagrangian) * + 0.5 * cfg.augmented_lagrangian_kl_coef * jnp.square(kl_constraint),
-                )
-            elif cfg.actor_kl_clip_mode == "value":
-                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
-            else:
-                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
-            target_entropy_loss = (
-                temperature * 0.5
-                * cfg.augmented_lagrangian_entropy_coef
-                * jax.lax.stop_gradient(target_entropy)
-            ).mean()
-            lagrangian_loss = (
-                -lagrangian*0.5
-                * cfg.augmented_lagrangian_kl_coef
-                * jax.lax.stop_gradient(kl_constraint)
-                + 0.5
-                * cfg.augmented_lagrangian_kl_coef
-                * jnp.square(kl_constraint)
-            ).mean()
+        if cfg.actor_kl_clip_mode == "full":
+            actor_loss_val = (
+                log_prob_ratio * jax.lax.stop_gradient(temperature)
+                - value
+                + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
+            )
+        elif cfg.actor_kl_clip_mode == "clipped":
+            actor_loss_val = jnp.where(
+                kl < cfg.kl_bound,
+                log_prob_ratio * jax.lax.stop_gradient(temperature) - value,
+                kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
+            )
+        elif cfg.actor_kl_clip_mode == "value":
+            actor_loss_val = (
+                log_prob_ratio * jax.lax.stop_gradient(temperature)
+                - value
+            )
         else:
-            if cfg.actor_kl_clip_mode == "full":
-                actor_loss_val = (
-                    log_prob_ratio * jax.lax.stop_gradient(temperature)
-                    - value
-                    + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
-                )
-            elif cfg.actor_kl_clip_mode == "clipped":
-                actor_loss_val = jnp.where(
-                    kl < cfg.kl_bound,
-                    log_prob_ratio * jax.lax.stop_gradient(temperature) - value,
-                    kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
-                )
-            elif cfg.actor_kl_clip_mode == "value":
-                actor_loss_val = (
-                    log_prob_ratio * jax.lax.stop_gradient(temperature)
-                    - value
-                )
-            else:
-                raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
+            raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
-            target_entropy_loss = (
-                temperature
-                * jax.lax.stop_gradient(target_entropy) ### should ther ebe a stop grad for WPO?
-            ).mean()
-            lagrangian_loss = (
-                -lagrangian
-                * jax.lax.stop_gradient(kl_constraint)
-            ).mean()
+        target_entropy_loss = (
+            temperature
+            * jax.lax.stop_gradient(target_entropy) ### should ther ebe a stop grad for WPO?
+        ).mean()
+        lagrangian_loss = (
+            -lagrangian
+            * jax.lax.stop_gradient(kl_constraint)
+        ).mean()
 
         loss = jnp.mean(actor_loss_val)
         if cfg.update_entropy_lagrangian:
@@ -296,32 +282,33 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
 
-        actor_pnorm = utils.tree_norm(params)
         friction = actor_model.diffusion_model.friction.value
         friction_detached = jax.lax.stop_gradient(friction)
-        return loss, dict(
-            actor_loss=actor_loss_val,
+        metrics = dict(
+            actor_loss=_metric_scalar(actor_loss_val),
             loss=loss,
-            temp=temperature,
+            temp=_metric_scalar(temperature),
             abs_batch_action=jnp.abs(minibatch.action).mean(),
             abs_pred_action=jnp.abs(pred_action).mean(),
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
             energy_mean = -minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
             kl=kl.mean(),
-            lagrangian=lagrangian,
+            lagrangian=_metric_scalar(lagrangian),
             lagrangian_loss=lagrangian_loss,
             run_cost=0.0,
             sto_cost=0.0,
             terminal_cost=0.0,
-            entropy=entropy,
+            entropy=_metric_scalar(entropy),
             entropy_target=-action_size_target,
             entropy_loss=target_entropy_loss,
             kl_clip_ratio=clip_ratio,
             target_values=target_vals.mean(),
-            actor_pnorm=actor_pnorm,
             friction=friction_detached.mean(),
-            entropy_prior=entropy_prior,
+            entropy_prior=_metric_scalar(entropy_prior),
         )
+        if bool(getattr(cfg, "log_pnorms", False)):
+            metrics["actor_pnorm"] = utils.tree_norm(params)
+        return loss, metrics
 
 
 def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, minibatch, target_vals, action_size_target, cfg, actor_target_model):
@@ -525,37 +512,39 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
 
-        actor_pnorm = utils.tree_norm(params)
         friction = actor_model.diffusion_model.friction.value
         friction_detached = jax.lax.stop_gradient(friction)
         metrics = dict(
-            actor_loss=actor_loss_val,
-            actor_WPO_loss=actor_WPO_loss,
-            Kl_reg_loss = kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
+            actor_loss=_metric_scalar(actor_loss_val),
+            actor_WPO_loss=_metric_scalar(actor_WPO_loss),
+            Kl_reg_loss=_metric_scalar(
+                kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
+            ),
             loss=loss,
-            temp=temperature,
+            temp=_metric_scalar(temperature),
             abs_batch_action=jnp.abs(minibatch.action).mean(),
             abs_pred_action=jnp.abs(pred_action).mean(),
             reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
             energy_mean=-minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
             kl=kl_clip_value.mean(),
             kl_clip_value=kl.mean(),
-            lagrangian=lagrangian,
+            lagrangian=_metric_scalar(lagrangian),
             lagrangian_loss=lagrangian_loss,
             run_cost=0.0,
             sto_cost=0.0,
             terminal_cost=0.0,
             entropy_target=-action_size_target,
-            entropy=entropy,
+            entropy=_metric_scalar(entropy),
             entropy_loss=target_entropy_loss,
             entropy_penalty=entropy_penalty,
             kl_penalty=kl_penalty,
             kl_clip_ratio=clip_ratio,
             target_values=target_vals.mean(),
-            actor_pnorm=actor_pnorm,
             friction=friction_detached.mean(),
-            entropy_prior=entropy_prior,
+            entropy_prior=_metric_scalar(entropy_prior),
         )
+        if bool(getattr(cfg, "log_pnorms", False)):
+            metrics["actor_pnorm"] = utils.tree_norm(params)
         return loss, metrics
 
 def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):

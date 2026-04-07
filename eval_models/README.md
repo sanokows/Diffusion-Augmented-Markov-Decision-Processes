@@ -10,6 +10,125 @@ The main entry point is:
 python eval_models/eval_saved_model.py --checkpoint saved_models/<checkpoint>.pkl
 ```
 
+## DMERL Alpha Sweep Evaluation
+
+For checkpoints trained with `src/jaxrl/reppo_DMERL_new.py`, use:
+
+```bash
+exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
+  --checkpoint saved_models/reppo_DMERL_new__FishSwim__trainmodereparam__seed0__trial0__ts20260329T150527.pkl \
+  --alpha-start 0.0 \
+  --alpha-end 1. \
+  --alpha-steps 20 \
+  --guidance-temperature 0.03 \
+  --guidance-dts 0.1 0.25 0.5 0.75 0.01 0.05   \
+  --guidance-temperature 0.0007 \
+   --num-envs 8000 \
+   --diffusion-sampler ode \
+      --q-grad-clip 100\
+     --q-guidance-last-percent 75
+```
+
+```bash
+exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
+  --checkpoint saved_models/reppo_DMERL_new__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl \
+  --alpha-start 0.0 \
+  --alpha-end 1. \
+  --alpha-steps 20 \
+  --guidance-temperature 0.03 \
+  --guidance-dts 1. 1.5 2. 4 3.   \
+  --guidance-temperature 0.04 \
+   --num-envs 8000 \
+   --diffusion-sampler ode \
+      --q-grad-clip 100\
+     --q-guidance-last-percent 75
+```
+
+```bash
+exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
+  --checkpoint saved_models/reppo_DMERL_new__HopperHop__trainmodereparam__seed0__trial0__ts20260330T145700.pkl \
+  --alpha-start 0.0 \
+  --alpha-end 1. \
+  --alpha-steps 20 \
+  --guidance-temperature 0.03 \
+  --guidance-dts 0.25 0.5 1. 0.75   \
+  --guidance-temperature 0.003 \
+   --num-envs 16000 \
+   --diffusion-sampler ode \
+      --q-grad-clip 100\
+     --q-guidance-last-percent 75
+```
+
+This evaluates using a guided score:
+
+- `guided_score = (1 - alpha) * score + alpha * dt * (grad_log_p + (1 / T) * grad_a Q(s, a))`
+
+where `grad_log_p` is the gradient of forward-process log probability w.r.t. action.
+`T` is set with `--guidance-temperature` (default `1.0`).
+If `--guidance-dts` is not provided, `dt=1.0` is used.
+
+and reports rollout metrics (including episode return) for every alpha.
+By default it evaluates both samplers (`ode` and `sde`) in one run.
+If you pass multiple `dt` values, it runs one alpha-sweep per `dt` and adds one line per `(sampler, dt)` to the final plot.
+It also writes a final `episode_return` vs `alpha` plot (PNG) unless you pass `--plot-out`.
+Default outputs are saved to `artifacts/guidance/`:
+
+- `<checkpoint>__alpha_sweep_episode_return.png`
+- `<checkpoint>__alpha_sweep_results.json`
+
+Notes:
+
+- `--diffusion-sampler both` (default) evaluates both `ode` and `sde`.
+- `--diffusion-sampler auto` matches training mode:
+  - `WPO -> sde`
+  - otherwise `ode`
+- Plot uncertainty bands are **standard error** (`SEM = std / sqrt(num_episodes)`), not standard deviation.
+- You can pass an explicit alpha list instead of a range:
+  - `--alphas 0.0 0.1 0.25 0.5 0.75 1.0`
+- You can sweep guidance dt values:
+  - `--guidance-dts 0.25 0.5 1.0`
+- You can set the Q-gradient temperature scale with:
+  - `--guidance-temperature 0.03`
+- Use `--num-envs <int>` to override the number of parallel evaluation envs.
+- `--normalizer-stats-mode` controls normalization behavior during eval:
+  - `fixed` (default): use checkpoint normalization stats and keep them fixed.
+  - `online`: update stats online during rollout.
+  - `off`: disable normalization.
+- Use `--seed-idx` for multi-seed checkpoints.
+- Use `--output-json <path>` to override the default JSON path in `artifacts/guidance`.
+- Use `--plot-out <path>` to control where the return-vs-alpha PNG is written.
+- Use `--q-guidance-last-percent <float>` to apply Q guidance only in the last X% of diffusion steps.
+  Example: `--q-guidance-last-percent 25` applies Q-guidance only in the final quarter of steps.
+  `0` disables Q-guidance, `100` applies it at all steps.
+- By default, no clipping is applied to `(grad_log_p + grad_a Q)`.
+  Use `--q-grad-clip <float>` to enable clipping.
+  Choose mode with `--q-grad-clip-mode {l2,elementwise}`.
+
+## DMERL Guidance Ratio-By-Step Plot
+
+To inspect how strong the base score is relative to the guidance vector across diffusion steps, run:
+
+```bash
+python eval_models/eval_reppo_DMERL_guidance_ratio_by_step.py \
+  --checkpoint saved_models/reppo_DMERL_new__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl \
+  --diffusion-sampler both \
+  --num-envs 8000 \
+  --normalizer-stats-mode fixed \
+  --q-grad-clip 100 \
+  --q-grad-clip-mode l2
+```
+
+This computes, for each diffusion step:
+
+- `ratio = ||score||_2 / ||(grad_log_p + grad_a Q)||_2`
+
+and reports mean and SEM over all valid rollout samples that hit each diffusion step.
+
+Default outputs are saved to `artifacts/guidance/`:
+
+- `<checkpoint>__guidance_ratio_by_step.png`
+- `<checkpoint>__guidance_ratio_by_step.json`
+
 Common options:
 
 - `--horizon <int>`: override `env.max_episode_steps` (and `hyperparameters.max_episode_steps` when present).
@@ -214,6 +333,65 @@ python eval_models/eval_saved_model.py \
 
 The script auto-detects whether the checkpoint is for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, or `reppo_dime` via `checkpoint["method_name"]` (with a config-based fallback for older checkpoints).
 
+## MJX Rollout-Grid Rendering (Eval-Only)
+
+For MJX checkpoints (for example `FishSwim`) across `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime`, `--render` records tiled rollout grids (e.g., 20 envs in one frame) during evaluation only:
+
+
+
+```bash
+exec python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_DMERL_new__HopperHop__trainmodereparam__seed0__trial0__ts20260326T152835.pkl \
+  --render \
+  --render-format mp4 \
+  --render-num-envs 16 \
+  --render-cell-width 180 \
+  --render-cell-height 180 \
+  --render-frame-stride 1 \
+  --render-max-frames 1000 \
+  --render-camera cam0 \
+  --render-follow-agent \
+  --render-follow-body torso
+  ```
+
+
+exec python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo_DMERL_new__HopperHop__trainmodereparam__seed0__trial0__ts20260326T152835.pkl \
+  --render \
+  --render-format mp4 \
+  --render-num-envs 16 \
+  --render-cell-width 180 \
+  --render-cell-height 180 \
+  --render-frame-stride 3 \
+  --render-max-frames 1000 \
+  --render-camera cam0
+
+
+```bash
+exec python eval_models/eval_saved_model.py \
+  --checkpoint saved_models/reppo__FishSwim__trainmodereparam__seed0__trial0__ts20260329T131447.pkl \
+  --render \
+  --render-num-envs 16 \
+  --render-cell-width 180 \
+  --render-cell-height 180 \
+  --render-frame-stride 1 \
+  --render-max-frames 1000
+```
+
+Outputs are stored in a dedicated run folder under `artifacts/`, e.g. `artifacts/<run_folder>/` with:
+
+- `*.gif` and/or `*.mp4` tiled rollout animation
+- `*.html` autoplay-loop video preview (written when MP4 is enabled)
+- `last_frame.png`
+- `metadata.json`
+
+Useful MJX render options:
+
+- `--render-camera <name-or-index>`: choose a specific MuJoCo camera.
+- `--render-follow-agent`: turn the selected camera into tracking mode (agent-following).
+- `--render-follow-body <name-or-index>`: body to track when follow mode is on (default auto body, usually torso/root).
+- `--render-format {gif,mp4,both}`: choose GIF, MP4, or both (default: `gif`).
+
 ## TurningDoubleWellEnv Trajectory Rendering
 
 If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/test_turning_double_well_env.py` (works for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime` checkpoints):
@@ -226,14 +404,15 @@ python eval_models/eval_saved_model.py \
   --render-num-envs 10
 ```
 
-This produces a GIF (and also a PNG snapshot of the last frame) in the repo's `artifacts/` folder. By default, the GIF name is prefixed with `REPPO__...`, `DME-REPPO__...`, `DME-WPO__...` (for WPO mode), or `REPPO-DIME__...` depending on the checkpoint/method.
+This produces a GIF (and also a PNG snapshot of the last frame) in a dedicated run folder under `artifacts/`. By default, the GIF name is prefixed with `REPPO__...`, `DME-REPPO__...`, `DME-WPO__...` (for WPO mode), or `REPPO-DIME__...` depending on the checkpoint/method.
 
 Rendering options:
 
-- `--render-out <name>`: GIF basename (still written into `artifacts/`).
+- `--render-out <name>`: output basename (still written into `artifacts/<run_folder>/`).
 - By default all agents are overlaid into a single plot; use `--render-grid` to render one subplot per agent.
 - `--render-width <int>` / `--render-height <int>`: output resolution in pixels (defaults: 960x720).
 - `--render-fps <int>`: GIF FPS (default: 20).
+- `--render-format {gif,mp4,both}`: output format (default: `gif`). MP4 also writes a looping autoplay HTML preview file.
 - `--render-seed <int>`: PRNG seed used for the rendered rollout.
 
 Tip: if you want to *compare* ODE vs SDE visually, run twice with `--diffusion-sampler ode` and `--diffusion-sampler sde`. The renderer writes to `artifacts/` and now includes `__ode__` / `__sde__` in the filename when you set `--diffusion-sampler`, so the outputs won't overwrite each other.

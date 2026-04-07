@@ -28,6 +28,20 @@ ENV_NAMES = [
     "WalkerRun",
     "WalkerWalk",
 ]
+ENV_HEADER_SHORT = {
+    "FingerSpin": "Finger",
+    "AcrobotSwingup": "AcroSwg",
+    "PendulumSwingup": "PendSwg",
+    "CartpoleSwingupSparse": "CartSwgSp",
+    "AcrobotSwingupSparse": "AcroSwgSp",
+    "CheetahRun": "Cheetah",
+    "FishSwim": "Fish",
+    "HopperHop": "HopHop",
+    "HopperStand": "HopStand",
+    "WalkerStand": "WalkStand",
+    "WalkerRun": "WalkRun",
+    "WalkerWalk": "WalkWalk",
+}
 RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     "_FR_16_01": {
         "reppo-dime-debug-1-<env_name>": {"alias": "REPPO-DiME", "color": "#ff0000"},
@@ -306,6 +320,15 @@ def summarize_group(df: pd.DataFrame, time_unit: str, baseline_method: str) -> p
             return float("nan")
         return float(series.std())
 
+    def sem_or_nan(series: pd.Series) -> float:
+        series = series.dropna()
+        n = len(series)
+        if n == 0:
+            return float("nan")
+        if n == 1:
+            return 0.0
+        return float(series.std(ddof=1) / math.sqrt(n))
+
     def min_or_nan(series: pd.Series) -> float:
         series = series.dropna()
         if series.empty:
@@ -322,6 +345,7 @@ def summarize_group(df: pd.DataFrame, time_unit: str, baseline_method: str) -> p
         run_count=("run_id", "count"),
         runtime_mean_s=("runtime_s", mean_or_nan),
         runtime_std_s=("runtime_s", std_or_nan),
+        runtime_sem_s=("runtime_s", sem_or_nan),
         runtime_min_s=("runtime_s", min_or_nan),
         runtime_max_s=("runtime_s", max_or_nan),
         runtime_count=("runtime_s", "count"),
@@ -333,6 +357,7 @@ def summarize_group(df: pd.DataFrame, time_unit: str, baseline_method: str) -> p
     agg = agg.reset_index()
     agg["runtime_mean"] = agg["runtime_mean_s"].apply(lambda v: seconds_to_unit(v, time_unit))
     agg["runtime_std"] = agg["runtime_std_s"].apply(lambda v: seconds_to_unit(v, time_unit))
+    agg["runtime_sem"] = agg["runtime_sem_s"].apply(lambda v: seconds_to_unit(v, time_unit))
     agg["runtime_min"] = agg["runtime_min_s"].apply(lambda v: seconds_to_unit(v, time_unit))
     agg["runtime_max"] = agg["runtime_max_s"].apply(lambda v: seconds_to_unit(v, time_unit))
     baseline_map = (
@@ -393,6 +418,83 @@ def format_latex_runtime_table(
         lambda v: f"{v:.2f}" if pd.notna(v) else "--"
     )
     return table.to_latex(index=False, escape=False)
+
+
+def format_duration_hms(seconds: float | None) -> str:
+    if seconds is None or pd.isna(seconds):
+        return "--"
+    total_minutes = int(round(float(seconds) / 60.0))
+    sign = "-" if total_minutes < 0 else ""
+    total_minutes = abs(total_minutes)
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{sign}{hours}h{minutes:02d}M"
+
+
+def format_mean_sem_hms(mean_seconds: float | None, sem_seconds: float | None) -> str:
+    mean_text = format_duration_hms(mean_seconds)
+    if mean_text == "--":
+        return "--"
+    sem_text = format_duration_hms(sem_seconds)
+    if sem_text == "--":
+        return f"{mean_text} $\\pm$ --"
+    return f"{mean_text} $\\pm$ {sem_text}"
+
+
+def format_mean_with_tiny_sem(mean_seconds: float | None, sem_seconds: float | None) -> str:
+    mean_text = format_duration_hms(mean_seconds)
+    if mean_text == "--":
+        return "--"
+    sem_text = format_duration_hms(sem_seconds)
+    if sem_text == "--":
+        return mean_text
+    return f"{mean_text} \\text{{\\tiny{{$\\pm {sem_text}$}}}}"
+
+
+def ordered_envs_present(env_summary: pd.DataFrame) -> list[str]:
+    env_present = env_summary["env"].dropna().unique().tolist()
+    env_order = [env for env in ENV_NAMES if env in env_present]
+    env_order.extend(sorted(env for env in env_present if env not in env_order))
+    return env_order
+
+
+def split_envs_into_two(env_summary: pd.DataFrame) -> tuple[list[str], list[str]]:
+    env_order = ordered_envs_present(env_summary)
+    mid = (len(env_order) + 1) // 2
+    return env_order[:mid], env_order[mid:]
+
+
+def format_latex_env_runtime_table(
+    env_summary: pd.DataFrame, env_subset: list[str] | None = None
+) -> str:
+    table = env_summary.copy()
+    env_order = ordered_envs_present(table)
+    if env_subset is not None:
+        env_subset_set = set(env_subset)
+        env_order = [env for env in env_order if env in env_subset_set]
+    if not env_order:
+        return pd.DataFrame(columns=["Method"]).to_latex(index=False, escape=False)
+    env_headers = [ENV_HEADER_SHORT.get(env, env) for env in env_order]
+
+    method_order = (
+        table.groupby("method")["runtime_mean_s"].mean().sort_values(na_position="last").index.tolist()
+    )
+    columns = ["Method"] + env_headers
+    rows: list[dict[str, str]] = []
+    for method in method_order:
+        row: dict[str, str] = {"Method": method}
+        method_rows = table.loc[table["method"] == method].set_index("env")
+        for env, env_header in zip(env_order, env_headers, strict=True):
+            if env not in method_rows.index:
+                row[env_header] = "--"
+                continue
+            mean_seconds = method_rows.at[env, "runtime_mean_s"]
+            sem_seconds = method_rows.at[env, "runtime_sem_s"]
+            row[env_header] = format_mean_with_tiny_sem(mean_seconds, sem_seconds)
+        rows.append(row)
+
+    latex_table = pd.DataFrame(rows, columns=columns)
+    return latex_table.to_latex(index=False, escape=False)
 
 
 def print_env_runtime_breakdown(env_summary: pd.DataFrame, time_unit: str) -> None:
@@ -555,6 +657,16 @@ def main() -> int:
         print(overall_summary.sort_values(["method"]).to_string(index=False))
         print("\nLaTeX table (runtime comparison across envs)")
         print(format_latex_runtime_table(overall_summary, args.time_unit))
+        envs_first, envs_second = split_envs_into_two(env_summary)
+        print(
+            "\nLaTeX table (runtime by env and method, part 1; mean in hm, tiny SEM in hm)"
+        )
+        print(format_latex_env_runtime_table(env_summary, envs_first))
+        if envs_second:
+            print(
+                "\nLaTeX table (runtime by env and method, part 2; mean in hm, tiny SEM in hm)"
+            )
+            print(format_latex_env_runtime_table(env_summary, envs_second))
 
     if args.out:
         out_path = Path(args.out)
