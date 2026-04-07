@@ -1405,6 +1405,7 @@ class DMERLActor(nnx.Module):
         logratio: callable,
         kl_start: float = 0.1,
         ent_start: float = 0.1,
+        entropy_lagrangian_start: float | None = None,
         action_clip_value: float = 1.0,
         tanh_transform: bool = False,
         use_temp_lagrangian_mlp: bool = False,
@@ -1421,6 +1422,8 @@ class DMERLActor(nnx.Module):
         self.ode_integrator = ode_integrator
         self.logratio = logratio
         self.diff_steps = diffusion_model.diff_steps
+        if entropy_lagrangian_start is None:
+            entropy_lagrangian_start = ent_start
 
         self.use_temp_lagrangian_mlp = use_temp_lagrangian_mlp
         if self.use_temp_lagrangian_mlp:
@@ -1431,8 +1434,12 @@ class DMERLActor(nnx.Module):
             seed_dim = 4
             self.temperature_seed = nnx.Param(jnp.zeros((1, seed_dim)))
             self.lagrangian_seed = nnx.Param(jnp.zeros((1, seed_dim)))
+            self.entropy_lagrangian_seed = nnx.Param(jnp.zeros((1, seed_dim)))
             self.temperature_bias = nnx.Param(jnp.ones(1) * math.log(ent_start))
             self.lagrangian_bias = nnx.Param(jnp.ones(1) * math.log(kl_start))
+            self.entropy_lagrangian_bias = nnx.Param(
+                jnp.ones(1) * math.log(entropy_lagrangian_start)
+            )
             self.temperature_mlp = FCNN(
                 in_features=seed_dim,
                 out_features=1,
@@ -1455,9 +1462,23 @@ class DMERLActor(nnx.Module):
                 output_bias_init=zeros_initializer,
                 rngs=rngs,
             )
+            self.entropy_lagrangian_mlp = FCNN(
+                in_features=seed_dim,
+                out_features=1,
+                hidden_dim=temp_lagrangian_hidden,
+                use_norm=False,
+                output_activation=None,
+                layers=2,
+                output_kernel_init=zeros_initializer,
+                output_bias_init=zeros_initializer,
+                rngs=rngs,
+            )
         else:
             self.log_lagrangian = nnx.Param(jnp.ones(1) * math.log(kl_start))
             self.log_temperature = nnx.Param(jnp.ones(1) * math.log(ent_start))
+            self.log_entropy_lagrangian = nnx.Param(
+                jnp.ones(1) * math.log(entropy_lagrangian_start)
+            )
 
     def _sample_prior(self, key, n_samples = 1):
         key, key_gen = jax.random.split(key)
@@ -1857,3 +1878,15 @@ class DMERLActor(nnx.Module):
         else:
             log_lagrangian = self.log_lagrangian.value
         return jnp.exp(log_lagrangian)
+
+    def entropy_lagrangian(self) -> jax.Array:
+        if self.use_temp_lagrangian_mlp:
+            log_entropy_lagrangian = self.entropy_lagrangian_mlp(
+                self.entropy_lagrangian_seed.value
+            ).squeeze()
+            log_entropy_lagrangian = (
+                log_entropy_lagrangian + self.entropy_lagrangian_bias.value
+            )
+        else:
+            log_entropy_lagrangian = self.log_entropy_lagrangian.value
+        return jnp.exp(log_entropy_lagrangian)

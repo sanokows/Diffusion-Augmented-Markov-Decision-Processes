@@ -20,12 +20,12 @@ hyperparameters:
   env_action_clip_value: 1.
   action_clip_value: 1.
   use_W2_kl: false
-  remove_fisher_precond: true
+  #remove_fisher_precond: true
   
   lr: 1e-3
   temperature_lr: 3e-4
   lagrangian_lr: 3e-4
-  ent_target_mult: 3.5
+  #ent_target_mult: 3.5
   tanh_transform: false
   gamma: 0.999
   lmbda: 0.98

@@ -521,6 +521,7 @@ class SACActorNetworks(nnx.Module):
         action_dim: int,
         hidden_dim: int = 512,
         ent_start: float = 0.1,
+        entropy_lagrangian_start: float | None = None,
         kl_start: float = 0.1,
         use_norm: bool = True,
         layers: int = 2,
@@ -547,12 +548,17 @@ class SACActorNetworks(nnx.Module):
         )
         self.disable_temperature = disable_temperature
         kl_start_value = math.log(kl_start)
+        if entropy_lagrangian_start is None:
+            entropy_lagrangian_start = ent_start
         if self.disable_temperature:
             self.temperature_log_param = None
         else:
             start_value = math.log(ent_start)
             self.temperature_log_param = nnx.Param(jnp.ones(1) * start_value)
         self.lagrangian_log_param = nnx.Param(jnp.ones(1) * kl_start_value)
+        self.entropy_lagrangian_log_param = nnx.Param(
+            jnp.ones(1) * math.log(entropy_lagrangian_start)
+        )
         self.min_std = min_std
         if train_mode not in ("reparam", "WPO"):
             raise ValueError(f"Unknown train_mode: {train_mode}")
@@ -602,6 +608,9 @@ class SACActorNetworks(nnx.Module):
 
     def lagrangian(self) -> jax.Array:
         return jnp.exp(self.lagrangian_log_param.value)
+
+    def entropy_lagrangian(self) -> jax.Array:
+        return jnp.exp(self.entropy_lagrangian_log_param.value)
 
     def __call__(self, obs: jax.Array) -> jax.Array:
         loc, std = self._compute_mean_std(obs, 1.0)

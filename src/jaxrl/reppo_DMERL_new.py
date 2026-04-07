@@ -177,6 +177,7 @@ class ReppoConfig(struct.PyTreeNode):
     ent_start: float
     ent_target_mult: float
     kl_start: float
+    entropy_lagrangian_start: float | None = None
     weight_decay: float = 0.0
     num_collection_step_factor: float = 1.0
     temperature_lr: float | None = None
@@ -215,6 +216,7 @@ class ReppoConfig(struct.PyTreeNode):
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
     stop_grad_entropy: bool = True
+    new_temp_mode: bool = False
     use_augmented_lagrangian_dual: bool = False
     augmented_lagrangian_entropy_coef: float = 1.0
     augmented_lagrangian_kl_coef: float = 1.0
@@ -342,6 +344,10 @@ class ReppoDMERLTrainer:
             # cfg = cfg.replace(total_time_steps=adjusted_total_time_steps)
 
             pass
+
+        if cfg.train_mode == "WPO" and bool(getattr(cfg, "new_temp_mode", False)):
+            cfg = cfg.replace(stop_grad_entropy=False)
+
         self.cfg = cfg
         self.use_langevin_param = bool(cfg.diffusion.score_model.langevin_param)
         self.env_params = env_params
@@ -627,6 +633,7 @@ class ReppoDMERLTrainer:
                 logratio=logratio,
                 kl_start=cfg.kl_start,
                 ent_start=cfg.ent_start,
+                entropy_lagrangian_start=cfg.entropy_lagrangian_start,
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
                 action_clip_value=cfg.action_clip_value,
@@ -642,6 +649,7 @@ class ReppoDMERLTrainer:
                 logratio=logratio,
                 kl_start=cfg.kl_start,
                 ent_start=cfg.ent_start,
+                entropy_lagrangian_start=cfg.entropy_lagrangian_start,
                 sde_integrator=sde_integrator,
                 ode_integrator=ode_integrator,
                 action_clip_value=cfg.action_clip_value,
@@ -1360,6 +1368,12 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 cfg.hyperparameters[name] = sampled_value
             else:
                 raise ValueError(f"Hyperparameter {name} not found in config.")
+
+    if (
+        cfg.hyperparameters.train_mode == "WPO"
+        and bool(getattr(cfg.hyperparameters, "new_temp_mode", False))
+    ):
+        cfg.hyperparameters.stop_grad_entropy = False
 
     try:
         with open("completed_trials.txt", "r") as f:

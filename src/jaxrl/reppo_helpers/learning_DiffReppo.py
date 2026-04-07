@@ -15,6 +15,8 @@ from src.jaxrl import utils
 
 def _resolve_temperature(actor_model, cfg, train_state=None) -> jax.Array:
     """Return either learned temperature or an exponential decay schedule."""
+    if bool(getattr(cfg, "new_temp_mode", False)) and getattr(cfg, "train_mode", None) == "WPO":
+        return jnp.asarray(getattr(cfg, "ent_start", 1.0), dtype=jnp.float32)
     if not bool(getattr(cfg, "use_temperature_decay", False)):
         return actor_model.temperature()
     start = getattr(cfg, "temperature_decay_start", None)
@@ -312,6 +314,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
 
 
 def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, minibatch, target_vals, action_size_target, cfg, actor_target_model):
+        use_new_temp_mode = bool(getattr(cfg, "new_temp_mode", False))
         use_langevin = bool(cfg.diffusion.score_model.langevin_param)
         use_current_critic_for_actions = bool(
             getattr(cfg, "use_current_critic_for_actor_samples", False)
@@ -346,7 +349,6 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             fisher_actor_model = nnx.merge(updated_state.actor.graphdef, params)
             actor_model = fisher_actor_model
         else:
-            raise ValueError("Fisher preconditioning is currently required for WPO loss.")
             per_sample_grads = jax.vmap(
                 jax.grad(_single_gen_log_prob), in_axes=(None, 0, 0)
             )(params, obs_for_actions, fisher_keys)
@@ -397,7 +399,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}, {key_shape}", shape=log_prob_ratio.shape, key_shape=step_key.shape)
         entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
-        entropy = _maybe_stop_grad_entropy(entropy, cfg)
+        entropy_stop_grad = _maybe_stop_grad_entropy(entropy, cfg)
 
         stop_pred_action = jax.lax.stop_gradient(pred_action)
 
@@ -494,11 +496,14 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         else:
             raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
-        target_entropy = action_size_target + entropy
+        target_entropy = action_size_target + entropy_stop_grad
         kl_constraint = kl_clip_value - cfg.kl_bound
 
+        entropy_lagrangian = (
+            actor_model.entropy_lagrangian() if use_new_temp_mode else temperature
+        )
         target_entropy_loss = (
-            temperature * target_entropy # + _maybe_stop_grad_entropy(actor_WPO_loss, cfg) todo intoruce new lagrange multiplier for this instead!
+            entropy_lagrangian * target_entropy
         ).mean()
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
@@ -535,6 +540,8 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             terminal_cost=0.0,
             entropy_target=-action_size_target,
             entropy=_metric_scalar(entropy),
+            entropy_lagrangian=_metric_scalar(entropy_lagrangian),
+            temp_entropy_lagrangian=_metric_scalar(entropy_lagrangian),
             entropy_loss=target_entropy_loss,
             entropy_penalty=entropy_penalty,
             kl_penalty=kl_penalty,

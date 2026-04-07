@@ -75,8 +75,11 @@ hyperparameters:
   actor_kl_clip_mode: "clipped" # "full", "clipped", "kl_relu_clipped", "kl_bound_clipped", "value"
   ## entropy settings
   ent_start: 0.01
+  entropy_lagrangian_start: ${hyperparameters.ent_start}
   ent_target_mult: 0.5
   update_entropy_lagrangian: true
+  stop_grad_entropy: true
+  new_temp_mode: false
   ## auxiliary loss settings
   aux_loss_mult: 1.0
   # torso COM logging (MJX only)
