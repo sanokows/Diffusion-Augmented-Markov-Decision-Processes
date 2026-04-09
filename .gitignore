@@ -1,4 +1,5 @@
 outputs/
+saved_models/
 wandb/
 logs/
 uv.lock
