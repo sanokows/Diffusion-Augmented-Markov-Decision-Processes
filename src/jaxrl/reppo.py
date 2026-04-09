@@ -8,14 +8,10 @@ from typing import Callable
 
 import hydra
 import jax
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import optuna
 import plotly.graph_objs as go
-import mujoco
 from flax import nnx, struct
 from flax.struct import PyTreeNode
 from flax.traverse_util import flatten_dict, unflatten_dict
@@ -32,12 +28,6 @@ from src.env_utils.jax_wrappers import (
     LogWrapper,
     MjxGymnaxWrapper,
     NormalizeVec,
-)
-from src.env_utils.torso_com import (
-    build_torso_com_traj_figure,
-    get_torso_com_all,
-    resolve_mj_model,
-    save_torso_com_trajectory,
 )
 from src.jaxrl import utils
 from src.networks.jax_models import (
@@ -157,9 +147,6 @@ class ReppoConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
-    log_torso_com: bool = False
-    log_torso_com_num_envs: int = 30
-    log_torso_com_stride: int = 1
     use_actor_norm: bool = True
     num_actor_layers: int = 2
     actor_min_std: float = 0.05
@@ -223,14 +210,7 @@ def make_eval_fn(
     env: Environment,
     max_episode_steps: int,
     reward_scale: float = 1.0,
-    torso_id: int | None = None,
-    log_torso_com: bool = False,
-    log_torso_com_num_envs: int = 30,
-    log_torso_com_stride: int = 1,
 ) -> Callable[[jax.random.PRNGKey, Policy, PyTreeNode | None], dict[str, float]]:
-    num_torso_envs = min(int(log_torso_com_num_envs), env.num_envs)
-    torso_stride = max(1, int(log_torso_com_stride))
-
     def evaluation_fn(
         key: jax.random.PRNGKey, policy: Policy, norm_state: PyTreeNode | None
     ):
@@ -250,41 +230,12 @@ def make_eval_fn(
         obs, _, env_state = env.reset(init_key, norm_state)
         # randomize initial steps
         key, env_key = jax.random.split(key)
-        com_traj = None
-        torso_env_indices = None
-        if log_torso_com and (torso_id is not None and num_torso_envs > 0):
-            key, sample_key = jax.random.split(key)
-            torso_env_indices = jax.random.choice(
-                sample_key, env.num_envs, (num_torso_envs,), replace=False
-            )
-
-            def step_env_with_com(carry, _):
-                key, env_state, obs = carry
-                key, act_key, env_key = jax.random.split(key, 3)
-                action, _ = policy(act_key, obs)
-                step_key = jax.random.split(env_key, env.num_envs)
-                obs, _, env_state, reward, done, info = env.step(
-                    step_key, env_state, action
-                )
-                com = get_torso_com_all(env_state, torso_id)
-                sampled_com = com[torso_env_indices]
-                return (key, env_state, obs), (info, sampled_com)
-
-            _, (infos, com_traj) = jax.lax.scan(
-                f=step_env_with_com,
-                init=(key, env_state, obs),
-                xs=None,
-                length=max_episode_steps,
-            )
-            if torso_stride > 1:
-                com_traj = com_traj[::torso_stride]
-        else:
-            _, infos = jax.lax.scan(
-                f=step_env,
-                init=(key, env_state, obs),
-                xs=None,
-                length=max_episode_steps,
-            )
+        _, infos = jax.lax.scan(
+            f=step_env,
+            init=(key, env_state, obs),
+            xs=None,
+            length=max_episode_steps,
+        )
 
         metrics = {
             "episode_return": infos["returned_episode_returns"].mean(
@@ -302,9 +253,6 @@ def make_eval_fn(
             ),
             "num_episodes": infos["returned_episode"].sum(),
         }
-        if com_traj is not None:
-            metrics["torso_com_traj"] = com_traj
-            metrics["torso_com_env_indices"] = torso_env_indices
         return metrics
 
     return evaluation_fn
@@ -512,26 +460,10 @@ def make_train_fn(
     # env = VecEnv(env, cfg.num_envs)
     if cfg.normalize_env:
         env = NormalizeVec(env, normalize_reward=cfg.normalize_reward)
-    torso_id = None
-    if getattr(cfg, "log_torso_com", False):
-        mj_model = resolve_mj_model(env)
-        if mj_model is None:
-            logging.warning("MJX model not found; skipping torso COM logging.")
-        else:
-            torso_id = mujoco.mj_name2id(
-                mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso"
-            )
-            if torso_id < 0:
-                torso_id = None
-                logging.warning("Torso body not found; skipping torso COM logging.")
     eval_fn = make_eval_fn(
         env,
         cfg.max_episode_steps,
         reward_scale=reward_scale,
-        torso_id=torso_id,
-        log_torso_com=getattr(cfg, "log_torso_com", False),
-        log_torso_com_num_envs=getattr(cfg, "log_torso_com_num_envs", 30),
-        log_torso_com_stride=getattr(cfg, "log_torso_com_stride", 1),
     )
     action_size_target = (
         jnp.prod(jnp.array(env.action_space(env_params).shape)) * cfg.ent_target_mult
@@ -1251,8 +1183,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         eval_length = metrics["eval/episode_length"].mean()
-        torso_com_traj = metrics.pop("eval/torso_com_traj", None)
-        torso_com_env_indices = metrics.pop("eval/torso_com_env_indices", None)
         logging.info(
             f"step={state.time_steps[0]} episode_return={episode_return:.3f}, episode_length={eval_length:.3f} sps={sps:.2f}"
         )
@@ -1263,19 +1193,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
-        fig = build_torso_com_traj_figure(
-            torso_com_traj, torso_com_env_indices, title="Torso COM trajectory (XY)"
-        )
-        if fig is not None:
-            log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
-            plt.close(fig)
-        if torso_com_traj is not None:
-            step_id = int(np.asarray(state.time_steps[0]))
-            save_torso_com_trajectory(
-                f"reppo_traj_step_{step_id}.pkl",
-                torso_com_traj,
-                torso_com_env_indices,
-            )
         wandb.log(log_data, step=state.time_steps[0])
 
     # Set up the experiment

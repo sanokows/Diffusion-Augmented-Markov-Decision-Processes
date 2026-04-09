@@ -8,9 +8,6 @@ from typing import Callable, Any
 
 import hydra
 import jax
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import optuna
@@ -29,12 +26,6 @@ from src.env_utils.jax_wrappers import (
     LogWrapper,
     MjxGymnaxWrapper,
     NormalizeVec,
-)
-from src.env_utils.torso_com import (
-    build_torso_com_traj_figure,
-    get_torso_com_all,
-    resolve_torso_id,
-    save_torso_com_trajectory,
 )
 from src.jaxrl import utils
 from src.networks.diffusion.models import ControlNetwork
@@ -180,9 +171,6 @@ class ReppoConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
-    log_torso_com: bool = False
-    log_torso_com_num_envs: int = 30
-    log_torso_com_stride: int = 1
     use_actor_norm: bool = True
     num_actor_layers: int = 2
     actor_min_std: float = 0.05
@@ -211,10 +199,6 @@ def make_sde_eval_fn(
     env: Environment,
     max_episode_steps: int,
     reward_scale: float = 1.0,
-    torso_id: int | None = None,
-    log_torso_com: bool = False,
-    log_torso_com_num_envs: int = 30,
-    log_torso_com_stride: int = 1,
 ) -> Callable[
     [jax.random.PRNGKey, SACTrainState, PyTreeNode | None], dict[str, float]
 ]:
@@ -222,9 +206,6 @@ def make_sde_eval_fn(
     Creates a static evaluation function for SDE (stochastic) policy.
     This will be JIT-compiled "lean" with only the sde_integrator path.
     """
-    num_torso_envs = min(int(log_torso_com_num_envs), env.num_envs)
-    torso_stride = max(1, int(log_torso_com_stride))
-
     def sde_evaluation_fn(
         key: jax.random.PRNGKey,
         train_state: SACTrainState,
@@ -258,41 +239,12 @@ def make_sde_eval_fn(
         obs, _, env_state = env.reset(init_key, norm_state)
         
         key, env_key = jax.random.split(key)
-        com_traj = None
-        torso_env_indices = None
-        if log_torso_com and (torso_id is not None and num_torso_envs > 0):
-            key, sample_key = jax.random.split(key)
-            torso_env_indices = jax.random.choice(
-                sample_key, env.num_envs, (num_torso_envs,), replace=False
-            )
-
-            def step_env_with_com(carry, _):
-                key, env_state, obs = carry
-                key, act_key, env_key = jax.random.split(key, 3)
-                action, _ = sde_policy(act_key, obs)
-                step_key = jax.random.split(env_key, env.num_envs)
-                obs, _, env_state, reward, done, info = env.step(
-                    step_key, env_state, action
-                )
-                com = get_torso_com_all(env_state, torso_id)
-                sampled_com = com[torso_env_indices]
-                return (key, env_state, obs), (info, sampled_com)
-
-            _, (infos, com_traj) = jax.lax.scan(
-                f=step_env_with_com,
-                init=(key, env_state, obs),
-                xs=None,
-                length=max_episode_steps,
-            )
-            if torso_stride > 1:
-                com_traj = com_traj[::torso_stride]
-        else:
-            _, infos = jax.lax.scan(
-                f=step_env,
-                init=(key, env_state, obs),
-                xs=None,
-                length=max_episode_steps,
-            )
+        _, infos = jax.lax.scan(
+            f=step_env,
+            init=(key, env_state, obs),
+            xs=None,
+            length=max_episode_steps,
+        )
 
         metrics = { # ... (return metrics dict as before)
             "episode_return": infos["returned_episode_returns"].mean(
@@ -310,9 +262,6 @@ def make_sde_eval_fn(
             ),
             "num_episodes": infos["returned_episode"].sum(),
         }
-        if com_traj is not None:
-            metrics["torso_com_traj"] = com_traj
-            metrics["torso_com_env_indices"] = torso_env_indices
         return metrics
 
     return sde_evaluation_fn
@@ -322,10 +271,6 @@ def make_ode_eval_fn(
     env: Environment,
     max_episode_steps: int,
     reward_scale: float = 1.0,
-    torso_id: int | None = None,
-    log_torso_com: bool = False,
-    log_torso_com_num_envs: int = 30,
-    log_torso_com_stride: int = 1,
 ) -> Callable[
     [jax.random.PRNGKey, SACTrainState, float, PyTreeNode | None], dict[str, float]
 ]:
@@ -333,9 +278,6 @@ def make_ode_eval_fn(
     Creates a static evaluation function for ODE (deterministic) policy.
     This will be JIT-compiled "lean" with only the ode_integrator path.
     """
-    num_torso_envs = min(int(log_torso_com_num_envs), env.num_envs)
-    torso_stride = max(1, int(log_torso_com_stride))
-
     def ode_evaluation_fn(
         key: jax.random.PRNGKey,
         train_state: SACTrainState,
@@ -369,41 +311,12 @@ def make_ode_eval_fn(
         obs, _, env_state = env.reset(init_key, norm_state)
         
         key, env_key = jax.random.split(key)
-        com_traj = None
-        torso_env_indices = None
-        if log_torso_com and (torso_id is not None and num_torso_envs > 0):
-            key, sample_key = jax.random.split(key)
-            torso_env_indices = jax.random.choice(
-                sample_key, env.num_envs, (num_torso_envs,), replace=False
-            )
-
-            def step_env_with_com(carry, _):
-                key, env_state, obs = carry
-                key, act_key, env_key = jax.random.split(key, 3)
-                action, _ = ode_policy(act_key, obs)
-                step_key = jax.random.split(env_key, env.num_envs)
-                obs, _, env_state, reward, done, info = env.step(
-                    step_key, env_state, action
-                )
-                com = get_torso_com_all(env_state, torso_id)
-                sampled_com = com[torso_env_indices]
-                return (key, env_state, obs), (info, sampled_com)
-
-            _, (infos, com_traj) = jax.lax.scan(
-                f=step_env_with_com,
-                init=(key, env_state, obs),
-                xs=None,
-                length=max_episode_steps,
-            )
-            if torso_stride > 1:
-                com_traj = com_traj[::torso_stride]
-        else:
-            _, infos = jax.lax.scan(
-                f=step_env,
-                init=(key, env_state, obs),
-                xs=None,
-                length=max_episode_steps,
-            )
+        _, infos = jax.lax.scan(
+            f=step_env,
+            init=(key, env_state, obs),
+            xs=None,
+            length=max_episode_steps,
+        )
 
         metrics = { # ... (return metrics dict as before)
             "episode_return": infos["returned_episode_returns"].mean(
@@ -421,9 +334,6 @@ def make_ode_eval_fn(
             ),
             "num_episodes": infos["returned_episode"].sum(),
         }
-        if com_traj is not None:
-            metrics["torso_com_traj"] = com_traj
-            metrics["torso_com_env_indices"] = torso_env_indices
         return metrics
 
     return ode_evaluation_fn
@@ -680,30 +590,16 @@ def make_train_fn(
     if cfg.normalize_env:
         env = NormalizeVec(env)
 
-    torso_id = None
-    if getattr(cfg, "log_torso_com", False):
-        torso_id = resolve_torso_id(env, "torso")
-        if torso_id is None:
-            logging.warning("Torso body not found; skipping torso COM logging.")
-
     # eval_fn = make_eval_fn(env, cfg.max_episode_steps, reward_scale=reward_scale)
     sde_eval_fn = make_sde_eval_fn(
         env,
         cfg.max_episode_steps,
         reward_scale=reward_scale,
-        torso_id=torso_id,
-        log_torso_com=getattr(cfg, "log_torso_com", False),
-        log_torso_com_num_envs=getattr(cfg, "log_torso_com_num_envs", 30),
-        log_torso_com_stride=getattr(cfg, "log_torso_com_stride", 1),
     )
     ode_eval_fn = make_ode_eval_fn(
         env,
         cfg.max_episode_steps,
         reward_scale=reward_scale,
-        torso_id=torso_id,
-        log_torso_com=getattr(cfg, "log_torso_com", False),
-        log_torso_com_num_envs=getattr(cfg, "log_torso_com_num_envs", 30),
-        log_torso_com_stride=getattr(cfg, "log_torso_com_stride", 1),
     )
     action_size_target = (
         jnp.prod(jnp.array(env.action_space(env_params).shape)) * cfg.ent_target_mult
@@ -1134,9 +1030,7 @@ def make_train_fn(
                     eval_metrics_ode = ode_eval_fn(
                         init_seed_key, train_state, ode_coef, norm_state
                     )
-                    eval_metrics_ode.pop("torso_com_traj", None)
-                    eval_metrics_ode.pop("torso_com_env_indices", None)
-                    
+
                     ode_suffix = f"ode_{int(ode_coef * 100):03d}"
                     eval_metrics.update({f"{k}_{ode_suffix}": v for k, v in eval_metrics_ode.items()})
             
@@ -1267,8 +1161,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         # print("metrics[\"eval/episode_return\"]", metrics["eval/episode_return"])
         episode_return = metrics["eval/episode_return"].mean()
         eval_length = metrics["eval/episode_length"].mean()
-        torso_com_traj = metrics.pop("eval/torso_com_traj", None)
-        torso_com_env_indices = metrics.pop("eval/torso_com_env_indices", None)
         
         log_msg = f"step={state.time_steps[0]} episode_return={episode_return:.3f}, episode_length={eval_length:.3f}"
         
@@ -1321,20 +1213,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         log_data["norm/critic_pnorm"] = critic_pnorm
         log_data["norm/actor_gnorm"] = actor_gnorm
         log_data["norm/critic_gnorm"] = critic_gnorm
-
-        fig = build_torso_com_traj_figure(
-            torso_com_traj, torso_com_env_indices, title="Torso COM trajectory (XY)"
-        )
-        if fig is not None:
-            log_data["figures/eval_torso_com_traj_xy"] = wandb.Image(fig)
-            plt.close(fig)
-        if torso_com_traj is not None:
-            step_id = int(np.asarray(state.time_steps[0]))
-            save_torso_com_trajectory(
-                f"DIME_traj_step_{step_id}.pkl",
-                torso_com_traj,
-                torso_com_env_indices,
-            )
 
         wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])
 

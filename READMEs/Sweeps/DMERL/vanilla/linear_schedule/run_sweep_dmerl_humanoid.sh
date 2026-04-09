@@ -47,7 +47,6 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.num_eval=100 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
-        hyperparameters.log_torso_com=true \
         env=mjx_humanoid \
         num_trials=1 \
         seed=0 \

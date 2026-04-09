@@ -25,12 +25,17 @@ Reward shape:
 - here `d = gmm_mean_a_margin_d` and `sigma = gmm_std`
 - shared standard deviation is `gmm_std` (default `0.01`)
 - reward is `log p_GMM(a)` (evaluated directly in A-space)
+- optional `point_symmetric_mode`:
+  - per-part means are symmetric around `a=0`
+  - odd `num_gmm_components`: one mean fixed at `0`
+  - opposite heading sectors (180 deg apart) share the same landscape
 
 Main configuration:
 - `num_action_state`: number of heading sectors over 360 degrees
 - `num_gmm_components`: number of Gaussian components per sector
 - `gmm_mean_a_margin_d`: margin factor `d` used in `[-1 + d*gmm_std, 1 - d*gmm_std]`
 - `gmm_std`: shared Gaussian standard deviation
+- `point_symmetric_mode`: enable mirrored means and 180-degree sector pairing
 - `action_turn_range_deg`: action-to-turn mapping range, e.g. `[-90, 90]`
 
 Hydra env config:

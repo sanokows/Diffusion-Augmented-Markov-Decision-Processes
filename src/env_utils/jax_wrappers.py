@@ -13,7 +13,6 @@ from gymnax.environments.environment import Environment
 from gymnax.environments.spaces import Box
 from ml_collections import ConfigDict
 from mujoco_playground import MjxEnv, registry
-from src.env_utils.planar_path_env import PlanarPathEnv
 from src.env_utils.turning_GMM_env import TurningGMMEnv
 from src.env_utils.turning_double_well_env import TurningDoubleWellEnv
 from src.env_utils.turning_multi_well_env import TurningMultiWellEnv

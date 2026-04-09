@@ -51,13 +51,11 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.vmin=-100 \
         hyperparameters.vmax=200 \
         hyperparameters.num_bins=301 \
-        hyperparameters.log_torso_com=true \
         hyperparameters.diffusion.learn_friction=true \
         hyperparameters.diffusion.learn_dt=true \
         hyperparameters.diffusion.per_step_dt=true \
         hyperparameters.lr=3e-4 \
         hyperparameters.temperature_lagragian_lr=1e-4 \
-        hyperparameters.log_torso_com=true \
         env=mjx_humanoid \
         seed=1 \
         num_trials=1 \

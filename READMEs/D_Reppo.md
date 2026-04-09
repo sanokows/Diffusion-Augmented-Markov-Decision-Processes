@@ -23,12 +23,14 @@ python -m src.jaxrl.reppo env.name=HopperHop env=mjx_humanoid experiment_overrid
 exec python -m src.jaxrl.reppo env.name=FishSwim env=mjx_dmc experiment_overrides=mjx_dmc_large_data
 
 ### HumanoidRun 
-python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50 hyperparameters.log_torso_com=true
+python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50
 
-python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50 hyperparameters.log_torso_com=true
+python -m src.jaxrl.reppo env.name=HumanoidWalk env=mjx_humanoid experiment_overrides=mjx_humanoid_large_data hyperparameters.num_eval=50
 
 exec  python -m src.jaxrl.reppo env.name=TurningDoubleWellEnv env=mjx_double_well experiment_overrides=mjx_double_well_large_data hyperparameters.num_eval=50
 
+
+exec  python -m src.jaxrl.reppo env.name=TurningGMMEnv env=mjx_gmm experiment_overrides=mjx_double_well_large_data hyperparameters.num_eval=50
 
 
 

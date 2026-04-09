@@ -6,6 +6,9 @@ Compared to the classic double-well env, this variant:
 - assigns one equal-weight Gaussian-mixture reward landscape per bin
 - computes reward as `log p_GMM(a)` directly in action space for `a in [-1, 1]`
 - samples Gaussian means directly in A-space
+- optionally supports a point-symmetric mode:
+  - each part's GMM is symmetric around `a = 0`
+  - opposite heading parts (180 deg apart) share the same landscape
 """
 
 from __future__ import annotations
@@ -49,6 +52,9 @@ class TurningGMMEnv:
     - each part has its own equal-weight Gaussian mixture in A-space
     - Gaussian means are sampled in `a in [-1 + d*sigma, 1 - d*sigma]`
     - reward is `log(p_GMM(a))`
+    - optional `point_symmetric_mode` enforces:
+      - per-part symmetry around `a = 0`
+      - shared landscapes between opposite heading parts
     """
 
     def __init__(
@@ -56,7 +62,7 @@ class TurningGMMEnv:
         *,
         horizon: int = 200,
         step_size: float = 1.0,
-        action_turn_range_deg: tuple[float, float] = (-120.0, 120.0),
+        action_turn_range_deg: tuple[float, float] = (-100.0, 100.0),
         initial_heading_deg: float = 0.0,
         randomize_initial_heading: bool = True,
         num_action_state: int = 8,
@@ -64,9 +70,10 @@ class TurningGMMEnv:
         gmm_mean_a_margin_d: float = 5,
         gmm_std: float = 0.05,
         gmm_seed: int | None = None,
+        point_symmetric_mode: bool = False,
         transition_noise_deg: float = 0.0,
         action_clip_eps: float = 1e-6,
-        min_density: float = 1e-12,
+        min_density: float = 1e-30,
         mask_state_in_observation: bool = False,
         use_distance_state: bool = False,
         jit: bool = False,
@@ -93,6 +100,7 @@ class TurningGMMEnv:
         self.gmm_mean_a_min = -1.0 + self.gmm_mean_a_margin
         self.gmm_mean_a_max = 1.0 - self.gmm_mean_a_margin
         self.gmm_seed = gmm_seed
+        self.point_symmetric_mode = bool(point_symmetric_mode)
         self.action_clip_eps = float(action_clip_eps)
         self.min_density = float(min_density)
 
@@ -121,6 +129,16 @@ class TurningGMMEnv:
             raise ValueError(
                 "gmm_mean_a_margin_d * gmm_std is too large; no valid A-space interval remains."
             )
+        if self.point_symmetric_mode and (self.num_action_state % 2 != 0):
+            raise ValueError(
+                "point_symmetric_mode requires an even num_action_state "
+                "for 180-degree action-part pairing."
+            )
+        if self.point_symmetric_mode and self.num_gmm_components > 1 and self.gmm_mean_a_margin > 0.5:
+            raise ValueError(
+                "point_symmetric_mode with num_gmm_components > 1 requires "
+                "gmm_mean_a_margin_d * gmm_std <= 0.5."
+            )
         if not (0.0 < self.action_clip_eps < 0.5):
             raise ValueError("action_clip_eps must be in (0, 0.5).")
         if self.min_density <= 0.0:
@@ -129,11 +147,7 @@ class TurningGMMEnv:
         self.action_part_width_deg = 360.0 / float(self.num_action_state)
 
         mean_rng = np.random.default_rng(self.gmm_seed)
-        means_a = mean_rng.uniform(
-            low=self.gmm_mean_a_min,
-            high=self.gmm_mean_a_max,
-            size=(self.num_action_state, self.num_gmm_components),
-        ).astype(np.float32)
+        means_a = self._sample_gmm_means_a(mean_rng)
         self._gmm_means_a = jnp.asarray(means_a, dtype=jnp.float32)
         # Backward-compatible alias; means are now defined directly in A-space.
         self._gmm_means_x = self._gmm_means_a
@@ -275,6 +289,53 @@ class TurningGMMEnv:
 
     def step(self, state: TurningGMMState, action: jax.Array) -> TurningGMMState:
         return self._step_fn(state, action)
+
+    def _sample_gmm_means_a(self, mean_rng: np.random.Generator) -> np.ndarray:
+        if not self.point_symmetric_mode:
+            return mean_rng.uniform(
+                low=self.gmm_mean_a_min,
+                high=self.gmm_mean_a_max,
+                size=(self.num_action_state, self.num_gmm_components),
+            ).astype(np.float32)
+
+        half_parts = self.num_action_state // 2
+        means_a = np.empty((self.num_action_state, self.num_gmm_components), dtype=np.float32)
+        for part_idx in range(half_parts):
+            part_means = self._sample_symmetric_part_means(mean_rng)
+            means_a[part_idx] = part_means
+            means_a[part_idx + half_parts] = part_means
+        return means_a
+
+    def _sample_symmetric_part_means(self, mean_rng: np.random.Generator) -> np.ndarray:
+        pair_count = self.num_gmm_components // 2
+        positive_means = self._sample_positive_symmetric_means(mean_rng, pair_count)
+
+        if self.num_gmm_components % 2 == 1:
+            means = np.concatenate(
+                [-positive_means, np.asarray([0.0], dtype=np.float32), positive_means],
+                axis=0,
+            )
+        else:
+            means = np.concatenate([-positive_means, positive_means], axis=0)
+
+        mean_rng.shuffle(means)
+        return means.astype(np.float32)
+
+    def _sample_positive_symmetric_means(
+        self,
+        mean_rng: np.random.Generator,
+        count: int,
+    ) -> np.ndarray:
+        if count <= 0:
+            return np.empty((0,), dtype=np.float32)
+
+        low = self.gmm_mean_a_margin
+        high = 1.0 - self.gmm_mean_a_margin
+        if low > high:
+            raise ValueError("No valid positive interval for symmetric mean sampling.")
+        if np.isclose(low, high):
+            return np.full((count,), low, dtype=np.float32)
+        return mean_rng.uniform(low=low, high=high, size=(count,)).astype(np.float32)
 
     def reward_from_action_and_part(self, action: jax.Array, action_part_idx: jax.Array) -> jax.Array:
         log_prob = self._gmm_log_prob_from_action_and_part(action, action_part_idx)
