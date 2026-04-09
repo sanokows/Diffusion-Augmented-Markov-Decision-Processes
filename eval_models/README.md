@@ -10,6 +10,149 @@ The main entry point is:
 python eval_models/eval_saved_model.py --checkpoint saved_models/<checkpoint>.pkl
 ```
 
+## Partition Sum / `log Z` Estimation (`reppo`, `reppo_dime`, `reppo_DMERL_new`)
+
+Use `compute_partition_sum.py` to estimate partition terms from saved `reppo`, `reppo_dime`, or `reppo_DMERL_new` checkpoints:
+
+```bash
+python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/reppo__FishSwim__trainmodereparam__seed0__trial0__ts20260329T131447.pkl
+```
+
+What it computes:
+
+- Roll out `X = num_envs` environments in parallel for `Y = horizon` steps.
+- For `reppo`:
+  - At each step, store reward `r_t` and policy log-probability `log q(a_t|s_t)`.
+  - For each trajectory:
+    - `R = sum_t r_t`
+    - `log q = sum_t log q(a_t|s_t)`
+    - `log w = (1 / T) * R - log q`
+- For `reppo_dime`:
+  - At each environment step, also compute diffusion-path terms:
+    - `sum(log p - log q)` over diffusion steps
+    - `log_prior` from the sampled diffusion prior variable
+  - For each trajectory:
+    - `R = sum_t r_t`
+    - `log w = (1 / T) * R + sum_t(sum_diffusion_steps(log p - log q)) - sum_t(log_prior)`
+- For `reppo_DMERL_new`:
+  - At each diffusion step, store:
+    - `gen_log_prob` (forward/generation step log-probability)
+    - `dest_log_prob` (destination/backward step log-probability)
+  - At diffusion-chain final steps, apply the tanh-Jacobian correction
+    `log|det d(tanh(x))/dx|` so weights are in the transformed action space.
+    (If `tanh_transform=true` in the actor, this is already inside `gen_log_prob` and is not double-counted.)
+  - `log_prior` is evaluated at diffusion-chain starts (`diff_time_step == 0`) and subtracted.
+  - For each trajectory:
+    - `R = sum_t r_t`
+    - `log w = (1 / T) * R + sum_t(gen_log_prob - dest_log_prob - final_step_tanh_log_det) - sum_t(log_prior)`
+- Partition estimates:
+  - `log_Z_sum = log(sum_i exp(log w_i))`
+  - `log_Z_mean = log((1/N) * sum_i exp(log w_i))`
+
+### More Data With Repeats (`K`)
+
+To collect more trajectories, repeat the rollout loop `K` times:
+
+```bash
+python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/<reppo_checkpoint>.pkl \
+  --rollout-repeats 8
+```
+
+Total sampled trajectories become:
+
+- `N = num_envs * rollout_repeats`
+
+### `log Z` vs Number of Samples
+
+The script also computes `log Z` over varying sample counts and writes a plot.
+
+Each plotted point uses an independent random subsample of trajectories (without replacement) for that sample count.
+
+Default curve points:
+
+- one point every `num_envs` trajectories
+- total number of points = `rollout_repeats`
+- sample counts are: `num_envs, 2*num_envs, ..., rollout_repeats*num_envs`
+
+Example:
+
+```bash
+python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/<reppo_checkpoint>.pkl \
+  --rollout-repeats 16
+```
+
+- Explicit sample counts:
+
+```bash
+python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/<reppo_checkpoint>.pkl \
+  --rollout-repeats 16 \
+  --sample-counts 64 128 256 512 1024 2048 4096
+```
+
+- Linear x-axis example:
+
+```bash
+python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/reppo__FishSwim__trainmodereparam__seed0__trial0__ts20260329T131447.pkl \
+  --num-envs 4024 \
+  --horizon 1000 \
+  --temperature 0.1 \
+  --rollout-repeats 100 \
+  --plot-xscale linear
+```
+
+- `reppo_dime` example:
+
+```bash
+python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/reppo_dime__FishSwim__seed0__trial0__ts20260329T143011.pkl \
+  --num-envs 2024 \
+  --horizon 1000 \
+  --temperature 0.1 \
+  --rollout-repeats 100 \
+  --plot-xscale linear
+```
+
+- `reppo_DMERL_new` example:
+
+```bash
+exec python eval_models/compute_partition_sum.py \
+  --checkpoint saved_models/reppo_DMERL_new__FishSwim__trainmodereparam__seed0__trial0__ts20260326T153220.pkl \
+  --num-envs 2024 \
+  --horizon 1000 \
+  --temperature 0.1 \
+  --rollout-repeats 100 \
+  --plot-xscale linear
+```
+
+By default, the x-axis mode is `--plot-xscale auto`, which switches to log-scale when the maximum sample count is greater than `50`.
+
+### Important Options
+
+- `--temperature <float>`: sets `T` in `exp((1/T) * R)`.
+- `--rollout-repeats <int>`: number of repeated rollouts (`K`).
+- `--no-progress`: disable the rollout progress bar.
+- `--horizon <int>`: rollout length override.
+- `--num-envs <int>`: parallel env override.
+- `--sample-counts ...`: explicit sample counts for the curve.
+- `--plot-xscale {auto,log,linear}`: x-axis scale of the output plot.
+- `--curve-seed <int>`: seed for independent trajectory subsampling at each curve point.
+
+### Outputs
+
+By default outputs are written under `artifacts/partition_sum/`:
+
+- `*.json`: summary metrics (`log_Z_sum`, `log_Z_mean`, ESS, curve arrays, etc.)
+- `*.npz`: stored arrays:
+  - per-step: `rewards`, `log_q_steps`, `log_p_minus_log_q_steps`, `log_prior_steps` with shape `[K, horizon, num_envs]`
+  - per-trajectory: `returns`, `log_q_traj`, `log_p_traj`, `log_w_traj`, `log_p_minus_log_q_traj`, `log_prior_traj` with shape `[K, num_envs]`
+  - flattened arrays and sample-count curve arrays
+- `*.png`: plot of `log Z_mean` estimate vs number of samples
+
 ## DMERL Alpha Sweep Evaluation
 
 For checkpoints trained with `src/jaxrl/reppo_DMERL_new.py`, use:

@@ -1,5 +1,6 @@
 ### TODO in Q function process states and actions separately.
 ### TODO entropy reg should also be fixed for WPO temp
+### log log Z
 
 # env names
 PendulumSwingup

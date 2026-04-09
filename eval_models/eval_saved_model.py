@@ -1821,6 +1821,7 @@ def _render_mjx_rollout_grid_dmerl(
             env,
             normalize_reward=bool(hp.normalize_reward),
             num_diff_steps=int(diff_cfg.diff_steps),
+            update_stats=False,
         )
 
     actor_model = nnx.merge(train_state.actor.graphdef, train_state.actor.params)
@@ -2037,7 +2038,11 @@ def _render_mjx_rollout_grid_reppo(
         high=float(hp.env_action_clip_value),
     )
     if normalize_env:
-        env = NormalizeVec(env, normalize_reward=bool(hp.normalize_reward))
+        env = NormalizeVec(
+            env,
+            normalize_reward=bool(hp.normalize_reward),
+            update_stats=False,
+        )
 
     actor_model = nnx.merge(actor_graphdef, actor_params)
 
@@ -2240,7 +2245,7 @@ def _render_mjx_rollout_grid_dime(
                 "reppo_dime rendering uses NormalizeVec(normalize_reward=False); "
                 "ignoring normalize_reward=true for rendering."
             )
-        env = NormalizeVec(env)
+        env = NormalizeVec(env, update_stats=False)
 
     actor_model = nnx.merge(actor_graphdef, actor_params)
 
@@ -2670,6 +2675,7 @@ def _render_turning_double_well_reppo(
                 env,
                 normalize_reward=bool(cfg_render.hyperparameters.normalize_reward),
                 num_diff_steps=int(diff_cfg.diff_steps),
+                update_stats=False,
             )
     else:
         env = _build_base_env(cfg_render, horizon=horizon)
@@ -2682,7 +2688,9 @@ def _render_turning_double_well_reppo(
         )
         if normalize_env:
             env = NormalizeVec(
-                env, normalize_reward=bool(cfg_render.hyperparameters.normalize_reward)
+                env,
+                normalize_reward=bool(cfg_render.hyperparameters.normalize_reward),
+                update_stats=False,
             )
 
     base_env = _unwrap_env(env)
@@ -2888,7 +2896,11 @@ def _collect_reppo_trajectories(
         high=float(hp.env_action_clip_value),
     )
     if bool(hp.normalize_env):
-        env = NormalizeVec(env, normalize_reward=bool(hp.normalize_reward))
+        env = NormalizeVec(
+            env,
+            normalize_reward=bool(hp.normalize_reward),
+            update_stats=False,
+        )
 
     actor_model = nnx.merge(actor_graphdef, actor_params)
     obs_runs: list[np.ndarray] = []
@@ -2951,7 +2963,7 @@ def _collect_dime_trajectories(
         high=float(hp.env_action_clip_value),
     )
     if bool(hp.normalize_env):
-        env = NormalizeVec(env)
+        env = NormalizeVec(env, update_stats=False)
     actor_model = nnx.merge(actor_graphdef, actor_params)
 
     sampler = str(diffusion_sampler or "auto").lower()
@@ -3030,6 +3042,7 @@ def _collect_dmerl_trajectories(
             env,
             normalize_reward=bool(hp.normalize_reward),
             num_diff_steps=int(diff_cfg.diff_steps),
+            update_stats=False,
         )
     actor_model = nnx.merge(train_state.actor.graphdef, train_state.actor.params)
     critic_model = nnx.merge(train_state.critic.graphdef, train_state.critic.params)
@@ -3245,7 +3258,11 @@ def _eval_reppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
         high=float(hp.env_action_clip_value),
     )
     if bool(hp.normalize_env):
-        env = NormalizeVec(env, normalize_reward=bool(hp.normalize_reward))
+        env = NormalizeVec(
+            env,
+            normalize_reward=bool(hp.normalize_reward),
+            update_stats=False,
+        )
 
     obs_dim = int(env.observation_space(None)[0].shape[0])
     action_dim = int(env.action_space(None).shape[0])
@@ -3603,11 +3620,37 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
 
     _progress("[reppo_DMERL_new] Running evaluation metrics")
     eval_key = jax.random.PRNGKey(123)
-    sampler = str(getattr(args, "diffusion_sampler", "auto")).lower()
-    if sampler == "auto":
-        eval_fn = trainer.eval_fn
-    elif sampler == "sde":
-        eval_fn = trainer._make_sde_eval_fn(eval_policy=(str(train_mode).upper() == "WPO"))
+    sampler_arg = str(getattr(args, "diffusion_sampler", "auto")).lower()
+    if sampler_arg not in ("auto", "sde", "ode"):
+        raise ValueError(f"Unknown --diffusion-sampler: {sampler_arg}")
+    if sampler_arg == "auto":
+        sampler = "sde" if str(train_mode).upper() == "WPO" else "ode"
+    else:
+        sampler = sampler_arg
+
+    # Rebuild eval env with frozen normalization stats (no online updates).
+    eval_base_env = _build_base_env(cfg, horizon=horizon)
+    eval_env = MjxDiffEnvWrapper(
+        eval_base_env,
+        num_diff_steps=int(diff_cfg.diff_steps),
+        diffusion_config=diff_cfg,
+        low=-env_action_clip_value,
+        high=env_action_clip_value,
+    )
+    eval_env = LogWrapper(eval_env, int(cfg.hyperparameters.num_envs))
+    if bool(cfg.hyperparameters.normalize_env):
+        eval_env = DiffNormalizeVec(
+            eval_env,
+            normalize_reward=bool(cfg.hyperparameters.normalize_reward),
+            num_diff_steps=int(diff_cfg.diff_steps),
+            update_stats=False,
+        )
+    trainer.eval_env = eval_env
+
+    if sampler == "sde":
+        eval_fn = trainer._make_sde_eval_fn(
+            eval_policy=(str(train_mode).upper() == "WPO")
+        )
     elif sampler == "ode":
         eval_fn = trainer._make_ode_eval_fn()
     else:
@@ -3889,7 +3932,7 @@ def _eval_reppo_dime(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
                 "reppo_dime training currently uses NormalizeVec(normalize_reward=False); "
                 "ignoring normalize_reward=true for evaluation."
             )
-        env = NormalizeVec(env)
+        env = NormalizeVec(env, update_stats=False)
 
     obs_dim = int(env.observation_space(None)[0].shape[0])
     action_dim = int(env.action_space(None).shape[0])

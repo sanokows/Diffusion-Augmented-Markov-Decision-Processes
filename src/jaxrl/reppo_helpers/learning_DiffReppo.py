@@ -398,8 +398,6 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         log_prob_ratio = gen_log_prob - dest_log_prob
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}, {key_shape}", shape=log_prob_ratio.shape, key_shape=step_key.shape)
-        entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
-        entropy_stop_grad = _maybe_stop_grad_entropy(entropy, cfg)
 
         stop_pred_action = jax.lax.stop_gradient(pred_action)
 
@@ -496,14 +494,27 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         else:
             raise ValueError(f"Unknown actor loss mode: {cfg.actor_kl_clip_mode}")
 
-        target_entropy = action_size_target + entropy_stop_grad
-        kl_constraint = kl_clip_value - cfg.kl_bound
-
         entropy_lagrangian = (
             actor_model.entropy_lagrangian() if use_new_temp_mode else temperature
         )
+
+        entropy_lagrangian_maybe_stop_grad = jnp.where(
+                kl_clip_value < cfg.kl_bound,
+                entropy_lagrangian*jnp.ones_like(kl_clip_value),
+                jax.lax.stop_gradient(entropy_lagrangian*jnp.ones_like(kl_clip_value)))
+
+        log_prob_ratio_maybe_stop_grad = jnp.where(
+                kl_clip_value < cfg.kl_bound,
+                log_prob_ratio,
+                jax.lax.stop_gradient(log_prob_ratio))
+        entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio_maybe_stop_grad, axis=0)
+        entropy_stop_grad = _maybe_stop_grad_entropy(entropy, cfg)
+
+        target_entropy = action_size_target + entropy_stop_grad
+        kl_constraint = kl_clip_value - cfg.kl_bound
+
         target_entropy_loss = (
-            entropy_lagrangian * target_entropy
+            entropy_lagrangian_maybe_stop_grad * target_entropy
         ).mean()
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)

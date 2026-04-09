@@ -356,6 +356,9 @@ class ReppoDMERLTrainer:
         self.reward_scale = reward_scale
         self.env = self._prepare_env(env)
         self.eval_env = copy.deepcopy(self.env)
+        if self.cfg.normalize_env and hasattr(self.eval_env, "update_stats"):
+            # Keep normalization statistics fixed during evaluation.
+            self.eval_env.update_stats = False
         self.eval_env_steps = cfg.max_episode_steps*self.cfg.diffusion.diff_steps
         self.num_collection_steps = int(
             cfg.num_steps * self.cfg.diffusion.diff_steps * cfg.num_collection_step_factor
@@ -403,6 +406,7 @@ class ReppoDMERLTrainer:
                 env,
                 normalize_reward=self.cfg.normalize_reward,
                 num_diff_steps=self.cfg.diffusion.diff_steps,
+                update_stats=True,
             )
         return env
 

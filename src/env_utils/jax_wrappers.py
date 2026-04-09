@@ -14,6 +14,7 @@ from gymnax.environments.spaces import Box
 from ml_collections import ConfigDict
 from mujoco_playground import MjxEnv, registry
 from src.env_utils.planar_path_env import PlanarPathEnv
+from src.env_utils.turning_GMM_env import TurningGMMEnv
 from src.env_utils.turning_double_well_env import TurningDoubleWellEnv
 from src.env_utils.turning_multi_well_env import TurningMultiWellEnv
 from mujoco_playground._src.wrapper import wrap_for_brax_training, Wrapper
@@ -70,6 +71,24 @@ class MjxGymnaxWrapper(Environment):
                 env_kwargs = dict(config) if config is not None else {}
                 env_kwargs.setdefault("horizon", episode_length or 200)
                 self.env = TurningMultiWellEnv(**env_kwargs)
+                self.sanitize_nans = False
+                self.reward_scale = reward_scale
+                self.episode_length = self.env.horizon
+                if isinstance(self.env.observation_size, int):
+                    self.dict_obs = False
+                else:
+                    self.dict_obs = True
+                if asymmetric_observation:
+                    self.dict_obs_key = "privileged_state"
+                else:
+                    self.dict_obs_key = "state"
+                print(self.dict_obs_key)
+                super().__init__()
+                return
+            if env_or_name == "TurningGMMEnv":
+                env_kwargs = dict(config) if config is not None else {}
+                env_kwargs.setdefault("horizon", episode_length or 200)
+                self.env = TurningGMMEnv(**env_kwargs)
                 self.sanitize_nans = False
                 self.reward_scale = reward_scale
                 self.episode_length = self.env.horizon
@@ -725,9 +744,15 @@ class NormalizeVecObsEnvState:
 
 
 class NormalizeVec(Wrapper):
-    def __init__(self, env, normalize_reward: bool = False):
+    def __init__(
+        self,
+        env,
+        normalize_reward: bool = False,
+        update_stats: bool = True,
+    ):
         super().__init__(env)
         self.normalize_reward = normalize_reward
+        self.update_stats = update_stats
 
     def _init_state(self, key):
         obs, critic_obs, env_state = self.env.reset(key)
@@ -801,6 +826,23 @@ class NormalizeVec(Wrapper):
             key, state.env_state, action
         )
 
+        if not self.update_stats:
+            frozen_state = state.replace(
+                env_state=env_state,
+                truncated=env_state.truncated,
+                info=env_state.info,
+            )
+            if self.normalize_reward:
+                reward = (reward - state.reward_mean) / jnp.sqrt(state.reward_var + 1e-2)
+            return (
+                (obs - state.mean) / jnp.sqrt(state.var + 1e-2),
+                (critic_obs - state.critic_mean) / jnp.sqrt(state.critic_var + 1e-2),
+                frozen_state,
+                reward,
+                done,
+                info,
+            )
+
         new_mean, new_var = self._compute_stats(state.mean, state.var, state.count, obs)
         new_critic_mean, new_critic_var = self._compute_stats(
             state.critic_mean, state.critic_var, state.count, critic_obs
@@ -862,12 +904,19 @@ class DiffNormalizeVecObsEnvState:
 class DiffNormalizeVec(Wrapper):
     """Normalize only the `orig_obs` entry within dict observations."""
 
-    def __init__(self, env, normalize_reward: bool = False, num_diff_steps: int | None = None):
+    def __init__(
+        self,
+        env,
+        normalize_reward: bool = False,
+        num_diff_steps: int | None = None,
+        update_stats: bool = True,
+    ):
         super().__init__(env)
         self.normalize_reward = normalize_reward
         if num_diff_steps is None:
             raise ValueError("num_diff_steps must be provided for DiffNormalizeVec.")
         self.num_diff_steps = num_diff_steps
+        self.update_stats = update_stats
 
     def _compute_stats(self, mean, var, count, obs):
         batch_mean = jnp.mean(obs, axis=0)
@@ -979,6 +1028,31 @@ class DiffNormalizeVec(Wrapper):
         critic_orig_obs = critic_obs["orig_obs"]
         actor_actions = obs.get("normed_actions", None)
         critic_actions = critic_obs.get("normed_actions", None)
+
+        if not self.update_stats:
+            frozen_state = state.replace(
+                env_state=env_state,
+                truncated=env_state.truncated,
+                info=env_state.info,
+            )
+            if self.normalize_reward:
+                reward = (reward - state.reward_mean) / jnp.sqrt(state.reward_var + 1e-2)
+            return (
+                self._normalize_obs_dict(
+                    obs, state.mean, state.var, state.action_mean, state.action_var
+                ),
+                self._normalize_obs_dict(
+                    critic_obs,
+                    state.critic_mean,
+                    state.critic_var,
+                    state.critic_action_mean,
+                    state.critic_action_var,
+                ),
+                frozen_state,
+                reward,
+                done,
+                info,
+            )
 
         new_mean, new_var = self._compute_stats(
             state.mean, state.var, state.count, orig_obs

@@ -1,13 +1,40 @@
 # Turning Envs Overview
 
-This file documents the two turning-style custom envs:
+This file documents the turning-style custom envs:
 - `TurningDoubleWellEnv` (`src/env_utils/turning_double_well_env.py`)
 - `TurningMultiWellEnv` (`src/env_utils/turning_multi_well_env.py`)
+- `TurningGMMEnv` (`src/env_utils/turning_GMM_env.py`)
 
-Both envs:
+These envs:
 - use a 1-D normalized action in `[-1, 1]` interpreted as a relative turn command
 - advance the agent in 2-D by `step_size` along the new heading
 - return reward based on the relative turn delta (not absolute heading)
+
+## TurningGMMEnv
+
+Purpose:
+- orientation-conditioned turning task with a different action reward landscape for each heading sector
+
+Action-part construction:
+- split the full 360-degree heading range into `num_action_state` equal sectors
+- each current heading maps to exactly one action-part index
+
+Reward shape:
+- each action part has its own equal-weight Gaussian mixture in A-space
+- means are sampled uniformly in `[-1 + d*sigma, 1 - d*sigma]`
+- here `d = gmm_mean_a_margin_d` and `sigma = gmm_std`
+- shared standard deviation is `gmm_std` (default `0.01`)
+- reward is `log p_GMM(a)` (evaluated directly in A-space)
+
+Main configuration:
+- `num_action_state`: number of heading sectors over 360 degrees
+- `num_gmm_components`: number of Gaussian components per sector
+- `gmm_mean_a_margin_d`: margin factor `d` used in `[-1 + d*gmm_std, 1 - d*gmm_std]`
+- `gmm_std`: shared Gaussian standard deviation
+- `action_turn_range_deg`: action-to-turn mapping range, e.g. `[-90, 90]`
+
+Hydra env config:
+- `config/env/mjx_gmm.yaml`
 
 ## TurningDoubleWellEnv
 
