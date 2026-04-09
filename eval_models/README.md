@@ -537,7 +537,7 @@ Useful MJX render options:
 
 ## TurningDoubleWellEnv Trajectory Rendering
 
-If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/test_turning_double_well_env.py` (works for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime` checkpoints):
+If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/visualization/test_turning_double_well_env.py` (works for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime` checkpoints):
 
 ```bash
 python eval_models/eval_saved_model.py \

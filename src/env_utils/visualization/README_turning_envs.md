@@ -101,11 +101,11 @@ Run from repository root:
 ### Plot script
 
 Command:
-`python src/env_utils/plot_turning_double_well_reward_configs.py`
+`python src/env_utils/visualization/plot_turning_double_well_reward_configs.py`
 
 Example:
 ```bash
-python src/env_utils/plot_turning_double_well_reward_configs.py \
+python src/env_utils/visualization/plot_turning_double_well_reward_configs.py \
   --output-dir artifacts/_tmp_turning_plots \
   --num-points 1001 \
   --double-well-angle-deg 45 \
@@ -133,11 +133,11 @@ Arguments:
 ### Simulation script
 
 Command:
-`python src/env_utils/test_turning_double_well_env.py`
+`python src/env_utils/visualization/test_turning_double_well_env.py`
 
 Example:
 ```bash
-python src/env_utils/test_turning_double_well_env.py \
+python src/env_utils/visualization/test_turning_double_well_env.py \
   --env both \
   --output-dir artifacts/_tmp_turning_tests \
   --horizon 80 \
@@ -170,4 +170,4 @@ Arguments:
 - `--multi-include-opposite-headings` / `--no-multi-include-opposite-headings`: include or exclude opposite reset headings.
 
 Detailed parameter tables are also available in:
-- `src/env_utils/README_turning_double_well.md`
+- `src/env_utils/visualization/README_turning_double_well.md`

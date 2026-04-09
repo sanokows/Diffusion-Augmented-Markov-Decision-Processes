@@ -1,6 +1,35 @@
 # Turning Envs Scripts Quick Guide
 
-This guide covers the two runnable scripts in `src/env_utils`:
+## Quick Start: Reward Landscape + Optimal Agent Motion
+
+Use this script when you want both:
+- a reward-landscape subplot for each possible heading state
+- a rollout visualization where the agent randomly chooses one of the two global reward maxima at each state
+
+Command:
+`python src/env_utils/visualization/visualize_turning_double_well_optimal.py`
+
+Example:
+```bash
+python src/env_utils/visualization/visualize_turning_double_well_optimal.py \
+  --output-dir artifacts/_tmp_turning_optimal \
+  --horizon 100 \
+  --num-trajectories 9 \
+  --subplot-cols 4 \
+  --save-gif
+```
+
+What it writes:
+- `reward_landscape_by_state_angle.png`
+- `optimal_policy_rollout_summary.png`
+- `optimal_policy_rollout.gif` (when `--save-gif`)
+
+Note:
+- Each subplot title shows the heading angle for that state.
+- For `TurningDoubleWellEnv`, the policy samples uniformly between the two global maxima (`+-well_angle_deg`) at every step.
+
+This guide covers the runnable scripts in `src/env_utils/visualization`:
+- `visualize_turning_double_well_optimal.py`
 - `plot_turning_double_well_reward_configs.py`
 - `test_turning_double_well_env.py`
 
@@ -10,11 +39,11 @@ Run commands from the repository root:
 ## 1) Plot per-start-heading reward landscapes
 
 Script:
-`python src/env_utils/plot_turning_double_well_reward_configs.py`
+`python src/env_utils/visualization/plot_turning_double_well_reward_configs.py`
 
 Example:
 ```bash
-python src/env_utils/plot_turning_double_well_reward_configs.py \
+python src/env_utils/visualization/plot_turning_double_well_reward_configs.py \
   --output-dir artifacts/_tmp_turning_plots \
   --num-points 1001 \
   --double-well-angle-deg 45 \
@@ -48,11 +77,11 @@ Important plotting behavior:
 ## 2) Simulate random-global-maxima agents
 
 Script:
-`python src/env_utils/test_turning_double_well_env.py`
+`python src/env_utils/visualization/test_turning_double_well_env.py`
 
 Example:
 ```bash
-python src/env_utils/test_turning_double_well_env.py \
+python src/env_utils/visualization/test_turning_double_well_env.py \
   --env both \
   --output-dir artifacts/_tmp_turning_tests \
   --horizon 80 \
