@@ -2,9 +2,9 @@ hyperparameters:
   num_eval: 50
   total_time_steps: 50_000_000
   num_mini_batches: 8
-  lr: 4e-4
+  lr: 3e-4
   temperature_lr: 1e-4
-  entropy_coef: 0.00004
+  entropy_coef: 0.00001 
   update_entropy_lagrangian: false
   num_envs: 2024
   use_categorical_value: true
