@@ -181,9 +181,10 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
                 jnp.asarray(cfg.diffusion.diff_steps, dtype=step_index.dtype), 1.0
             )
             step_progress = jnp.clip(step_index / max_step, 0.0, 1.0)
-            aux_weight = 2 * (
+            aux_weight = (
                 min_weight + (1.0 - min_weight) * step_progress
             ).reshape(-1, 1).astype(aux_loss.dtype)
+            aux_weight = cfg.diffusion.diff_steps/2 *aux_weight**2
 
         masked_aux_terms = jnp.concatenate([aux_loss, aux_rew_loss], axis=-1)
         masked_aux_loss = jnp.mean(
