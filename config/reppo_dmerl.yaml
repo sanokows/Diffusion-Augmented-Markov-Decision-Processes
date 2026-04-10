@@ -111,6 +111,7 @@ hyperparameters:
   ## auxiliary loss settings
   aux_loss_mult: 0.15
   aux_loss_alpha: 0.95
+  use_final_step_reward_target: false
 
   # DIME diffusion settings
   diffusion:

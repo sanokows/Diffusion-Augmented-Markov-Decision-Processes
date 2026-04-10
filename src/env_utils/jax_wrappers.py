@@ -20,6 +20,14 @@ from mujoco_playground._src.wrapper import wrap_for_brax_training, Wrapper
 import distrax
 
 
+def _config_to_dict(config):
+    if config is None:
+        return {}
+    if hasattr(config, "to_dict"):
+        return config.to_dict()
+    return dict(config)
+
+
 class MjxGymnaxWrapper(Environment):
     def __init__(
         self,
@@ -32,22 +40,6 @@ class MjxGymnaxWrapper(Environment):
         asymmetric_observation: bool = False,
     ):
         if isinstance(env_or_name, str):
-            if env_or_name == "PlanarPathEnv":
-                self.env = PlanarPathEnv()
-                self.sanitize_nans = False
-                self.reward_scale = reward_scale
-                self.episode_length = episode_length
-                if isinstance(self.env.observation_size, int):
-                    self.dict_obs = False
-                else:
-                    self.dict_obs = True
-                if asymmetric_observation:
-                    self.dict_obs_key = "privileged_state"
-                else:
-                    self.dict_obs_key = "state"
-                print(self.dict_obs_key)
-                super().__init__()
-                return
             if env_or_name == "TurningDoubleWellEnv":
                 env_kwargs = dict(config) if config is not None else {}
                 env_kwargs.setdefault("horizon", episode_length or 200)
@@ -102,25 +94,29 @@ class MjxGymnaxWrapper(Environment):
                 print(self.dict_obs_key)
                 super().__init__()
                 return
-            if config is None:
-                config = registry.get_default_config(env_or_name)
-                is_humanoid_task = env_or_name in [
-                    "G1JoystickRoughTerrain",
-                    "G1JoystickFlatTerrain",
-                    "T1JoystickRoughTerrain",
-                    "T1JoystickFlatTerrain",
-                ]
-                if is_humanoid_task:
-                    config.push_config.enable = push_distractions
-            else:
-                config = ConfigDict(config)
+            default_config = registry.get_default_config(env_or_name)
+            merged_config = _config_to_dict(default_config)
+            merged_config.update(_config_to_dict(config))
+            config = ConfigDict(merged_config)
+
+            is_humanoid_task = env_or_name in [
+                "G1JoystickRoughTerrain",
+                "G1JoystickFlatTerrain",
+                "T1JoystickRoughTerrain",
+                "T1JoystickFlatTerrain",
+            ]
+            if is_humanoid_task:
+                config.push_config.enable = push_distractions
+
+            # Force MJX JAX backend across environments for stability.
+            config.impl = "jax"
             env = registry.load(env_or_name, config=config)
             if episode_length is not None:
                 env = wrap_for_brax_training(
                     env, episode_length=episode_length, action_repeat=action_repeat
                 )
             self.env = env
-            self.sanitize_nans = "humanoid" in env_or_name.lower()
+            self.sanitize_nans = False#"humanoid" in env_or_name.lower()
         else:
             self.env = env_or_name
             self.sanitize_nans = False

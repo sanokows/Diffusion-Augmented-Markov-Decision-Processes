@@ -158,9 +158,22 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             * next_state_mask
             * optax.squared_error(pred, minibatch.next_state_emb)
         )
-        aux_rew_loss = cfg.diffusion.diff_steps * (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
-            pred_rew, minibatch.reward.reshape(-1, 1)
+        use_final_step_reward_target = bool(
+            getattr(cfg, "use_final_step_reward_target", False)
         )
+        if use_final_step_reward_target:
+            reward_target = getattr(minibatch, "reward_target", minibatch.reward).reshape(
+                -1, 1
+            )
+            reward_target_mask = getattr(
+                minibatch, "reward_target_mask", jnp.ones_like(minibatch.reward)
+            ).reshape(-1, 1).astype(pred_rew.dtype)
+        else:
+            reward_target = minibatch.reward.reshape(-1, 1)
+            reward_target_mask = jnp.ones_like(reward_target, dtype=pred_rew.dtype)
+        aux_rew_loss = (
+            1.0 - minibatch.truncated.reshape(-1, 1)
+        ) * reward_target_mask * optax.squared_error(pred_rew, reward_target)
 
         use_normed_actions = bool(getattr(cfg, "critic_use_normed_actions", True))
         if use_normed_actions:
@@ -184,7 +197,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             aux_weight = (
                 min_weight + (1.0 - min_weight) * step_progress
             ).reshape(-1, 1).astype(aux_loss.dtype)
-            aux_weight = cfg.diffusion.diff_steps/2 *aux_weight**2
+            aux_weight = cfg.diffusion.diff_steps *aux_weight**2
 
         masked_aux_terms = jnp.concatenate([aux_loss, aux_rew_loss], axis=-1)
         masked_aux_loss = jnp.mean(
@@ -668,6 +681,8 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         next_state_emb=next_emb,
         next_emb_mask=jnp.ones_like(reward),
         reward=reward,
+        reward_target=reward,
+        reward_target_mask=jnp.ones_like(reward),
         soft_reward=soft_reward,
         value=value,
         done=done,

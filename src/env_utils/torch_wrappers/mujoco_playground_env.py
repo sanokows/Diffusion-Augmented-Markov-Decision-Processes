@@ -87,6 +87,7 @@ def make_env(
 ):
     # Make training environment
     train_env_cfg = registry.get_default_config(env_name)
+    train_env_cfg.impl = "jax"
     is_humanoid_task = env_name in [
         "G1JoystickRoughTerrain",
         "G1JoystickFlatTerrain",
@@ -127,6 +128,7 @@ def make_env(
 
     # Make evaluation environment
     eval_env_cfg = registry.get_default_config(env_name)
+    eval_env_cfg.impl = "jax"
     if is_humanoid_task and not use_push_randomization:
         eval_env_cfg.push_config.enable = False
         eval_env_cfg.push_config.magnitude_range = [0.0, 0.0]

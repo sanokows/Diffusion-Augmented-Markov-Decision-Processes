@@ -15,7 +15,7 @@ hyperparameters:
   aux_loss_mult: 0.01 #0.02
   aux_loss_alpha: 0.98 #0.95
   train_mode: "WPO"
-  #actor_kl_clip_mode: "clipped"
+  actor_kl_clip_mode: "full"
   reverse_kl: false
   env_action_clip_value: 1.
   action_clip_value: 1.

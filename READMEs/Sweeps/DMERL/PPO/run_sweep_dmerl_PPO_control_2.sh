@@ -46,7 +46,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         env.name="$ENV_NAME" \
         DiffPPO_overrides=default \
         env=mjx_dmc \
-        wandb.project_suffix="_FR_test_PPO" \
+        wandb.project_suffix="_FR_10_04" \
         trials=5 \
         seed=0 &
     GPU_PIDS[$GPU_ID]=$!

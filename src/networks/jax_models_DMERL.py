@@ -53,13 +53,22 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     }
     return out_dict, key_gen
 
-def ODE_integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False):
+def ODE_integrate_one_step(
+    diffusion_model, curr_x, step, obs, key, stop_grad=False, ode_coeff=0.5
+):
     step = step.astype(jnp.float32)
     x = curr_x
     key_gen = key
 
-    # Compute SDE components
-    mu, scale, eta = diffusion_model.compute_diffusion_stuff(step, x, obs, model=diffusion_model.forward_model, ode_coeff= 0.5, train_mode = False)
+    # Deterministic one-step diffusion update used by ODE evaluation/policy rollout.
+    mu, scale, eta = diffusion_model.compute_diffusion_stuff(
+        step,
+        x,
+        obs,
+        model=diffusion_model.forward_model,
+        ode_coeff=ode_coeff,
+        train_mode=False,
+    )
     # Forward kernel
     x_new = x + eta * mu
 
@@ -1624,11 +1633,19 @@ class DMERLActor(nnx.Module):
         dest_log_prob = out_dict["dest_log_prob"]
         actions = x_new
         return actions, gen_log_prob, dest_log_prob
-    def _ode_sample_next_step(self, key, current_x, step, obs):
-        out_dict, key = ODE_integrate_one_step(self.diffusion_model, current_x, step, obs, key, stop_grad=False)
+    def _ode_sample_next_step(self, key, current_x, step, obs, ode_coef):
+        out_dict, key = ODE_integrate_one_step(
+            self.diffusion_model,
+            current_x,
+            step,
+            obs,
+            key,
+            stop_grad=False,
+            ode_coeff=ode_coef,
+        )
         return out_dict, key
     
-    def vmap_ode_sample_next_step(self, obs, keys):
+    def vmap_ode_sample_next_step(self, obs, keys, ode_coef: float = 0.5):
         """Vectorized ODE sampling of one diffusion step.
 
         Even in the ODE path, the integrator takes an RNG key (e.g. for dropout or other
@@ -1649,11 +1666,11 @@ class DMERLActor(nnx.Module):
             #jax.debug.print("vmap_sample_next_step: split keys.shape={s}", s=keys.shape)
             #jax.debug.print("vmap_ode_sample_next_step: split keys.shape={s}", s=keys.shape)
 
-        in_axes = (0, 0, 0, 0)  # keys, current_x, step, obs
+        in_axes = (0, 0, 0, 0, None)  # keys, current_x, step, obs, ode_coef
         current_x = obs["orig_actions"]
         step = obs["diff_time_step"][..., 0]
         out_dict, keys = jax.vmap(self._ode_sample_next_step, in_axes=in_axes)(
-            keys, current_x, step, obs
+            keys, current_x, step, obs, ode_coef
         )
         actions = out_dict["x_new"]
         return actions, keys

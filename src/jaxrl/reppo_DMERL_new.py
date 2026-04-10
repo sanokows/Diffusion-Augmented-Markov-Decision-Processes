@@ -42,6 +42,7 @@ from src.jaxrl.reppo_helpers.learning_DiffReppo import (
     critic_loss_fn,
     maybe_add_q_grad,
 )
+from src.jaxrl.reppo_helpers.rollout_aux_targets import build_rollout_aux_targets
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
     CategoricalCriticNetwork,
@@ -134,6 +135,8 @@ class Transition(struct.PyTreeNode):
     critic_obs: jax.Array
     action: jax.Array
     reward: jax.Array
+    reward_target: jax.Array
+    reward_target_mask: jax.Array
     soft_reward: jax.Array
     next_emb: jax.Array
     next_state_emb: jax.Array
@@ -213,6 +216,7 @@ class ReppoConfig(struct.PyTreeNode):
     remove_fisher_precond: bool = False
     aux_loss_mult: float = 0.0
     aux_loss_alpha: float = 0.9
+    use_final_step_reward_target: bool = False
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
     stop_grad_entropy: bool = True
@@ -310,6 +314,7 @@ class ReppoDMERLTrainer:
         log_callback: Callable[[SACTrainState, dict[str, jax.Array]], None] | None = None,
         num_seeds: int = 1,
         reward_scale: float = 1.0,
+        env_name: str | None = None,
     ) -> None:
         # print vmin and vmax
         print(f"Initial vmin: {cfg.vmin}, vmax: {cfg.vmax}")
@@ -355,6 +360,7 @@ class ReppoDMERLTrainer:
         self.log_callback = log_callback or (lambda *args: None)
         self.num_seeds = num_seeds
         self.reward_scale = reward_scale
+        self.env_name = env_name
         self.env = self._prepare_env(env)
         self.eval_env = copy.deepcopy(self.env)
         if self.cfg.normalize_env and hasattr(self.eval_env, "update_stats"):
@@ -368,9 +374,12 @@ class ReppoDMERLTrainer:
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
+        force_sde_eval = self.env_name == "AcrobotSwingupSparse"
         if(cfg.train_mode == "WPO"):
             self.eval_fn = self._make_sde_eval_fn(eval_policy=True)
             #self.eval_fn = self._make_ode_eval_fn()
+        elif force_sde_eval:
+            self.eval_fn = self.sde_eval_fn
         else:
             self.eval_fn = self._make_ode_eval_fn()
 
@@ -461,21 +470,26 @@ class ReppoDMERLTrainer:
                 xs=None,
                 length=max_episode_steps,
             )
+            returned_episode = infos["returned_episode"]
+            returned_episode_returns = infos["returned_episode_returns"]
+            returned_episode_lengths = infos["returned_episode_lengths"]
             metrics = {
-                "episode_return": infos["returned_episode_returns"].mean(
-                    where=infos["returned_episode"]
-                )
+                "episode_return": returned_episode_returns.mean(where=returned_episode)
                 * reward_scale,
-                "episode_return_std": infos["returned_episode_returns"].std(
-                    where=infos["returned_episode"]
+                "episode_return_unmasked": returned_episode_returns.mean()
+                * reward_scale,
+                "episode_return_std": returned_episode_returns.std(
+                    where=returned_episode
                 ),
-                "episode_length": infos["returned_episode_lengths"].mean(
-                    where=infos["returned_episode"]
+                "episode_return_std_unmasked": returned_episode_returns.std(),
+                "episode_length": returned_episode_lengths.mean(where=returned_episode),
+                "episode_length_unmasked": returned_episode_lengths.mean(),
+                "episode_length_std": returned_episode_lengths.std(
+                    where=returned_episode
                 ),
-                "episode_length_std": infos["returned_episode_lengths"].std(
-                    where=infos["returned_episode"]
-                ),
-                "num_episodes": infos["returned_episode"].sum(),
+                "episode_length_std_unmasked": returned_episode_lengths.std(),
+                "num_episodes": returned_episode.sum(),
+                "returned_episode_fraction": returned_episode.mean(),
             }
             return metrics
 
@@ -530,21 +544,26 @@ class ReppoDMERLTrainer:
                 xs=None,
                 length=max_episode_steps,
             )
+            returned_episode = infos["returned_episode"]
+            returned_episode_returns = infos["returned_episode_returns"]
+            returned_episode_lengths = infos["returned_episode_lengths"]
             metrics = {
-                "episode_return": infos["returned_episode_returns"].mean(
-                    where=infos["returned_episode"]
-                )
+                "episode_return": returned_episode_returns.mean(where=returned_episode)
                 * reward_scale,
-                "episode_return_std": infos["returned_episode_returns"].std(
-                    where=infos["returned_episode"]
+                "episode_return_unmasked": returned_episode_returns.mean()
+                * reward_scale,
+                "episode_return_std": returned_episode_returns.std(
+                    where=returned_episode
                 ),
-                "episode_length": infos["returned_episode_lengths"].mean(
-                    where=infos["returned_episode"]
+                "episode_return_std_unmasked": returned_episode_returns.std(),
+                "episode_length": returned_episode_lengths.mean(where=returned_episode),
+                "episode_length_unmasked": returned_episode_lengths.mean(),
+                "episode_length_std": returned_episode_lengths.std(
+                    where=returned_episode
                 ),
-                "episode_length_std": infos["returned_episode_lengths"].std(
-                    where=infos["returned_episode"]
-                ),
-                "num_episodes": infos["returned_episode"].sum(),
+                "episode_length_std_unmasked": returned_episode_lengths.std(),
+                "num_episodes": returned_episode.sum(),
+                "returned_episode_fraction": returned_episode.mean(),
             }
             return metrics
 
@@ -1021,6 +1040,8 @@ class ReppoDMERLTrainer:
             next_state_emb=next_emb,
             next_emb_mask=jnp.ones_like(reward),
             reward=reward,
+            reward_target=reward,
+            reward_target_mask=jnp.ones_like(reward),
             soft_reward=soft_reward,
             value=value,
             done=done,
@@ -1083,15 +1104,23 @@ class ReppoDMERLTrainer:
                 target_vals_finite,
                 bins=cfg.num_bins,
             )
-        shift_steps = self.cfg.diffusion.diff_steps
-        time_idx = jnp.arange(self.num_collection_steps)
-        shifted_idx = jnp.minimum(time_idx + shift_steps, self.num_collection_steps - 1)
-        next_state_emb = jnp.take(batch.next_emb, shifted_idx, axis=0)
-        valid_shift = (time_idx + shift_steps) <= (self.num_collection_steps - 1)
-        next_emb_mask = jnp.broadcast_to(
-            valid_shift[:, None], (self.num_collection_steps, cfg.num_envs)
+        # Build rollout-aligned aux targets (shifted embedding + final-step reward labels).
+        next_state_emb, next_emb_mask, reward_target, reward_target_mask = (
+            build_rollout_aux_targets(
+                batch.next_emb,
+                batch.reward,
+                batch.done,
+                batch.truncated,
+                batch.obs["diff_time_step"][..., 0],
+                self.cfg.diffusion.diff_steps,
+            )
         )
-        batch = batch.replace(next_state_emb=next_state_emb, next_emb_mask=next_emb_mask)
+        batch = batch.replace(
+            next_state_emb=next_state_emb,
+            next_emb_mask=next_emb_mask,
+            reward_target=reward_target,
+            reward_target_mask=reward_target_mask,
+        )
         # Flatten rollout data to (num_steps * num_envs, ...) for easier indexing.
         data = (batch, target_values)
         data = jax.tree.map(
@@ -1660,6 +1689,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         log_callback=log_callback,
         num_seeds=cfg.num_seeds,
         reward_scale=1.0 / cfg.env.reward_scaling,
+        env_name=str(cfg.env.name),
     )
 
     train_fn = trainer.build_train_fn()

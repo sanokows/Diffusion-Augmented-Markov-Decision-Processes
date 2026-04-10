@@ -60,6 +60,7 @@ hyperparameters:
   hl_gauss: True
   aux_loss_mult: 0.
   aux_loss_alpha: 0.95
+  use_final_step_reward_target: false
 
   diffusion:
     name: "dis"

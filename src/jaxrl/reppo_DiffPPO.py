@@ -48,6 +48,7 @@ from src.jaxrl.normalization import (
     NormalizationState,
     Normalizer,
 )
+from src.jaxrl.reppo_helpers.rollout_aux_targets import build_rollout_aux_targets
 from src.jaxrl.reppo_DMERL_old import randomize_env_steps
 
 
@@ -192,6 +193,7 @@ class PPOConfig(struct.PyTreeNode):
     hl_gauss: bool = False
     aux_loss_mult: float = 0.0
     aux_loss_alpha: float = 0.9
+    use_final_step_reward_target: bool = False
     action_clip_value: float = 1.0
     tanh_transform: bool = False
     kl_start: float = 0.1
@@ -226,6 +228,8 @@ class Transition(struct.PyTreeNode):
     next_state_emb: jax.Array
     next_emb_mask: jax.Array
     reward: jax.Array
+    reward_target: jax.Array
+    reward_target_mask: jax.Array
     soft_reward: jax.Array
     log_prob: jax.Array
     value: jax.Array
@@ -775,6 +779,8 @@ class ReppoPPOTrainer:
                 next_state_emb=next_features,
                 next_emb_mask=jnp.ones_like(reward),
                 reward=reward,
+                reward_target=reward,
+                reward_target_mask=jnp.ones_like(reward),
                 soft_reward=soft_reward,
                 log_prob=gen_log_prob,
                 value=model.critic(critic_obs),
@@ -855,18 +861,23 @@ class ReppoPPOTrainer:
         target_value_mean = jnp.mean(target_vals_finite)
         target_value_min = jnp.min(target_vals_finite)
         target_value_max = jnp.max(target_vals_finite)
-        shift_steps = self.cfg.diffusion.diff_steps
-        time_idx = jnp.arange(self.num_collection_steps)
-        shifted_idx = jnp.minimum(
-            time_idx + shift_steps, self.num_collection_steps - 1
-        )
-        next_state_emb = jnp.take(batch.next_emb, shifted_idx, axis=0)
-        valid_shift = (time_idx + shift_steps) <= (self.num_collection_steps - 1)
-        next_emb_mask = jnp.broadcast_to(
-            valid_shift[:, None], (self.num_collection_steps, cfg.num_envs)
+        # Build rollout-aligned aux targets (shifted embedding + final-step reward labels).
+        next_state_emb, next_emb_mask, reward_target, reward_target_mask = (
+            build_rollout_aux_targets(
+                batch.next_emb,
+                batch.reward,
+                batch.done,
+                batch.truncated,
+                batch.obs["diff_time_step"][..., 0],
+                self.cfg.diffusion.diff_steps,
+                mask_next_state_on_episode_end=True,
+            )
         )
         batch = batch.replace(
-            next_state_emb=next_state_emb, next_emb_mask=next_emb_mask
+            next_state_emb=next_state_emb,
+            next_emb_mask=next_emb_mask,
+            reward_target=reward_target,
+            reward_target_mask=reward_target_mask,
         )
 
         data = (batch, advantages, target_values)
@@ -912,23 +923,66 @@ class ReppoPPOTrainer:
                                 value.reshape(-1, 1),
                                 target_values.reshape(-1, 1),
                             )
-                        aux_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
-                            pred, minibatch.next_state_emb
+                        next_state_mask = minibatch.next_emb_mask.reshape(-1, 1).astype(
+                            pred.dtype
                         )
-                        aux_next_diff_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
-                            pred_next_diff_state, minibatch.next_emb
+                        aux_loss = (
+                            (1.0 - minibatch.truncated.reshape(-1, 1))
+                            * next_state_mask
+                            * optax.squared_error(pred, minibatch.next_state_emb)
                         )
-                        aux_rew_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
-                            pred_rew, minibatch.reward.reshape(-1, 1)
+                        use_final_step_reward_target = bool(
+                            getattr(cfg, "use_final_step_reward_target", False)
                         )
-                        diff_steps = jnp.asarray(
-                            cfg.diffusion.diff_steps - 1,
-                            dtype=minibatch.obs["diff_time_step"].dtype,
+                        if use_final_step_reward_target:
+                            reward_target = minibatch.reward_target.reshape(-1, 1)
+                            reward_target_mask = minibatch.reward_target_mask.reshape(
+                                -1, 1
+                            ).astype(pred_rew.dtype)
+                        else:
+                            reward_target = minibatch.reward.reshape(-1, 1)
+                            reward_target_mask = jnp.ones_like(
+                                reward_target, dtype=pred_rew.dtype
+                            )
+                        aux_rew_loss = cfg.diffusion.diff_steps * (
+                            1.0 - minibatch.truncated.reshape(-1, 1)
+                        ) * reward_target_mask * optax.squared_error(
+                            pred_rew, reward_target
                         )
-                        is_last_step = (
-                            minibatch.obs["diff_time_step"][..., 0] == diff_steps
-                        ).reshape(-1, 1)
-                        aux_weight = is_last_step.astype(aux_loss.dtype)
+
+                        use_normed_actions = bool(
+                            getattr(cfg, "critic_use_normed_actions", True)
+                        )
+                        if use_normed_actions:
+                            diff_steps = jnp.asarray(
+                                cfg.diffusion.diff_steps - 1,
+                                dtype=minibatch.obs["diff_time_step"].dtype,
+                            )
+                            is_last_step = (
+                                minibatch.obs["diff_time_step"][..., 0] == diff_steps
+                            ).reshape(-1, 1)
+                            aux_weight = is_last_step.astype(aux_loss.dtype)
+                        else:
+                            step_index = minibatch.obs["diff_time_step"][..., 0]
+                            max_step = jnp.maximum(
+                                jnp.asarray(
+                                    cfg.diffusion.diff_steps - 1,
+                                    dtype=step_index.dtype,
+                                ),
+                                1.0,
+                            )
+                            min_weight = 1.0 / jnp.maximum(
+                                jnp.asarray(
+                                    cfg.diffusion.diff_steps, dtype=step_index.dtype
+                                ),
+                                1.0,
+                            )
+                            step_progress = jnp.clip(step_index / max_step, 0.0, 1.0)
+                            aux_weight = (
+                                min_weight + (1.0 - min_weight) * step_progress
+                            ).reshape(-1, 1).astype(aux_loss.dtype)
+                            aux_weight = cfg.diffusion.diff_steps  * aux_weight**2
+
                         masked_aux_terms = jnp.concatenate(
                             [aux_loss, aux_rew_loss], axis=-1
                         )
@@ -938,18 +992,29 @@ class ReppoPPOTrainer:
                             * masked_aux_terms,
                             axis=-1,
                         )
-                        aux_next_diff_loss = jnp.mean(
-                            (1 - minibatch.done.reshape(-1, 1))
-                            * aux_next_diff_loss,
-                            axis=-1,
-                        )
-                        alpha = cfg.aux_loss_alpha
-                        aux_loss = (
-                            alpha
-                            * jnp.sum(masked_aux_loss)
-                            / jnp.maximum(jnp.sum(aux_weight), 1.0)
-                            + (1 - alpha) * jnp.mean(aux_next_diff_loss)
-                        )
+                        if use_normed_actions:
+                            aux_next_diff_loss = (
+                                1.0 - minibatch.truncated.reshape(-1, 1)
+                            ) * optax.squared_error(
+                                pred_next_diff_state, minibatch.next_emb
+                            )
+                            aux_next_diff_loss = jnp.mean(
+                                (1 - minibatch.done.reshape(-1, 1))
+                                * aux_next_diff_loss,
+                                axis=-1,
+                            )
+                            alpha = cfg.aux_loss_alpha
+                            aux_loss = (
+                                alpha
+                                * jnp.sum(masked_aux_loss)
+                                / jnp.maximum(jnp.sum(aux_weight), 1.0)
+                                + (1 - alpha) * jnp.mean(aux_next_diff_loss)
+                            )
+                        else:
+                            alpha = 1.0
+                            aux_loss = jnp.sum(masked_aux_loss) / jnp.maximum(
+                                jnp.sum(aux_weight), 1.0
+                            )
                         critic_loss = optax.squared_error(value, target_values)
                         critic_loss = jnp.mean(critic_loss)
                         value_loss = jnp.mean(
