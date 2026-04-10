@@ -19,28 +19,8 @@ NUM_SEEDS=1
 BASE_SEED=0
 TRIALS=5
 
-# Step 4: Defaults aligned with run_sweep_dmerl_PPO_control_1.sh
+# Step 4: Sweep-specific defaults. Core PPO settings come from DiffPPO_overrides=default.
 WANDB_PROJECT_SUFFIX="_FR_PPO_temp_abl"
-TOTAL_TIME_STEPS=50000000
-NUM_EVAL=50
-NUM_MINI_BATCHES=8
-LR=2e-4
-TEMPERATURE_LR=1e-4
-UPDATE_ENTROPY_LAGRANGIAN=false
-NUM_ENVS=1024
-DIFFUSION_LEARN_FRICTION=true
-DIFFUSION_LEARN_DT=true
-DIFFUSION_PER_STEP_DT=true
-USE_CATEGORICAL_VALUE=true
-NORMALIZE_ADVANTAGES=false
-ENT_TARGET_MULT=8.
-NUM_COLLECTION_STEP_FACTOR=0.5
-VMIN=-100
-VMAX=200
-NUM_BINS=301
-NUM_EPOCHS=8
-DIFFUSION_FRICTION=0.25
-DIFFUSION_INIT_STD=3.
 
 # Step 5: Define GPU pool and round-robin scheduling.
 # Prefer the SLURM-provided visibility mask when present.
@@ -100,29 +80,10 @@ launch_run() {
     echo "Starting env.name=$ENV_NAME entropy_coef=$ENTROPY_COEF num_seeds=$NUM_SEEDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DiffPPO \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
-        hyperparameters.num_eval="$NUM_EVAL" \
-        hyperparameters.total_time_steps="$TOTAL_TIME_STEPS" \
-        hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
-        hyperparameters.lr="$LR" \
-        hyperparameters.temperature_lr="$TEMPERATURE_LR" \
-        hyperparameters.update_entropy_lagrangian="$UPDATE_ENTROPY_LAGRANGIAN" \
-        hyperparameters.num_envs="$NUM_ENVS" \
-        hyperparameters.diffusion.learn_friction="$DIFFUSION_LEARN_FRICTION" \
-        hyperparameters.diffusion.learn_dt="$DIFFUSION_LEARN_DT" \
-        hyperparameters.diffusion.per_step_dt="$DIFFUSION_PER_STEP_DT" \
-        hyperparameters.use_categorical_value="$USE_CATEGORICAL_VALUE" \
-        hyperparameters.normalize_advantages="$NORMALIZE_ADVANTAGES" \
-        hyperparameters.ent_target_mult="$ENT_TARGET_MULT" \
-        hyperparameters.num_collection_step_factor="$NUM_COLLECTION_STEP_FACTOR" \
-        hyperparameters.vmin="$VMIN" \
-        hyperparameters.vmax="$VMAX" \
-        hyperparameters.num_bins="$NUM_BINS" \
-        hyperparameters.num_epochs="$NUM_EPOCHS" \
-        hyperparameters.diffusion.friction="$DIFFUSION_FRICTION" \
-        hyperparameters.diffusion.init_std="$DIFFUSION_INIT_STD" \
-        hyperparameters.entropy_coef="$ENTROPY_COEF" \
+        DiffPPO_overrides=default \
         env=mjx_dmc \
+        wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
+        hyperparameters.entropy_coef="$ENTROPY_COEF" \
         seed="$BASE_SEED" \
         num_seeds="$NUM_SEEDS" \
         trials="$TRIALS" &

@@ -66,6 +66,7 @@ hyperparameters:
   num_critic_pred_layers: 2
   use_simplical_embedding: False
   use_critic_skip: False
+  critic_use_normed_actions: false
 
   # actor architecture settings (seem stable)
   use_actor_norm: true

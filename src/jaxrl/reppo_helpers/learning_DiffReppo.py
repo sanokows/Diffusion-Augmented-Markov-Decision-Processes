@@ -47,43 +47,57 @@ def _maybe_stop_grad_entropy(entropy: jax.Array, cfg) -> jax.Array:
     return entropy
 
 
-def compute_action_q_grads(actor_model, critic_model, obs, critic_obs):
-    """Compute time-interpolated gradient between prior and Q wrt actions."""
+def compute_action_q_grads(
+    actor_model, critic_model, obs, critic_obs, temperature: jax.Array | None = None
+):
+    """Compute eval-style guidance gradient: q_grad + temperature * grad(log p)."""
     actions = obs["orig_actions"]
-    # Keep actions within arctanh domain to avoid inf/NaN in prior terms.
-    clip_limit = jnp.arctanh(jnp.asarray(0.999, dtype=actions.dtype))
-    actions = jnp.clip(actions, -clip_limit, clip_limit)
-    steps = obs["diff_time_step"][..., 0]
-    diff_steps = max(actor_model.diffusion_model.diff_steps - 1, 1)
-    time_norm = jnp.clip(steps.astype(jnp.float32) / diff_steps, 0.0, 1.0)
 
     def _q_grad(single_critic_obs, act):
         q_fn = lambda a: critic_model.critic(single_critic_obs, a).sum()
         return jax.grad(q_fn)(act)
 
     q_grad = jax.vmap(_q_grad)(critic_obs, actions)
-    def _prior_grad(act):
-        return jax.grad(
-            lambda a: actor_model.diffusion_model.prior_log_prob(a)
-        )(act)
 
-    prior_grad = jax.vmap(_prior_grad)(actions)
-    if time_norm.ndim < q_grad.ndim:
-        time_norm = jnp.reshape(
-            time_norm,
-            time_norm.shape + (1,) * (q_grad.ndim - time_norm.ndim),
-        )
-    #jax.debug.print("Time norm shape: {shape}, q_grad shape: {shape2}", shape=time_norm.shape, shape2 = q_grad.shape)
-    #blended_grad = (1.0 - time_norm) * prior_grad - time_norm * q_grad
-    blended_grad = - time_norm*q_grad
-    return blended_grad
+    obs_for_logp = dict(obs)
+    if bool(getattr(actor_model.diffusion_model, "langevin_param", False)):
+        obs_for_logp["q_grad"] = jax.lax.stop_gradient(q_grad)
+
+    def _forward_logp_grad(single_obs, single_action):
+        def _logp(a):
+            single_obs_batched = jax.tree.map(
+                lambda x: jnp.expand_dims(x, axis=0), single_obs
+            )
+            a_batched = jnp.expand_dims(a, axis=0)
+            _, dest_log_prob = actor_model.vmap_eval_log_prob(
+                single_obs_batched, a_batched
+            )
+            return dest_log_prob.sum()
+
+        return jax.grad(_logp)(single_action)
+
+    grad_log_p = jax.vmap(_forward_logp_grad)(obs_for_logp, actions)
+    if temperature is None:
+        temperature = actor_model.temperature()
+    guidance_temp = jax.lax.stop_gradient(jnp.asarray(temperature, dtype=grad_log_p.dtype))
+    guidance_grad = q_grad + guidance_temp * grad_log_p
+    return guidance_grad
 
 
-def maybe_add_q_grad(obs, critic_obs, actor_model, critic_model, use_langevin: bool):
-    """Attach blended prior/Q gradients to the observation dict when enabled."""
+def maybe_add_q_grad(
+    obs,
+    critic_obs,
+    actor_model,
+    critic_model,
+    use_langevin: bool,
+    temperature: jax.Array | None = None,
+):
+    """Attach guidance gradients to the observation dict when enabled."""
     if not use_langevin:
         return obs
-    q_grad = compute_action_q_grads(actor_model, critic_model, obs, critic_obs)
+    q_grad = compute_action_q_grads(
+        actor_model, critic_model, obs, critic_obs, temperature=temperature
+    )
     obs_with_grad = dict(obs)
     obs_with_grad["q_grad"] = jax.lax.stop_gradient(q_grad)
     return obs_with_grad
@@ -144,36 +158,54 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             * next_state_mask
             * optax.squared_error(pred, minibatch.next_state_emb)
         )
-        aux_next_diff_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
-            pred_next_diff_state, minibatch.next_emb
-        )
-        aux_rew_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
+        aux_rew_loss = cfg.diffusion.diff_steps * (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
             pred_rew, minibatch.reward.reshape(-1, 1)
         )
 
-        diff_steps = jnp.asarray(
-            cfg.diffusion.diff_steps - 1,
-            dtype=minibatch.obs["diff_time_step"].dtype,
-        )
-        is_last_step = (minibatch.obs["diff_time_step"][..., 0] == diff_steps).reshape(-1, 1)
-        aux_weight = is_last_step.astype(aux_loss.dtype)
-        # jax.debug.print("aux_weight value: {value}, sum: {sum}", value=aux_weight, sum=jnp.sum(aux_weight))
-        # jax.debug.print("diff_time_step: {value}", value=minibatch.obs["diff_time_step"][..., 0])
-        
+        use_normed_actions = bool(getattr(cfg, "critic_use_normed_actions", True))
+        if use_normed_actions:
+            diff_steps = jnp.asarray(
+                cfg.diffusion.diff_steps - 1,
+                dtype=minibatch.obs["diff_time_step"].dtype,
+            )
+            is_last_step = (minibatch.obs["diff_time_step"][..., 0] == diff_steps).reshape(
+                -1, 1
+            )
+            aux_weight = is_last_step.astype(aux_loss.dtype)
+        else:
+            step_index = minibatch.obs["diff_time_step"][..., 0]
+            max_step = jnp.maximum(
+                jnp.asarray(cfg.diffusion.diff_steps - 1, dtype=step_index.dtype), 1.0
+            )
+            min_weight = 1.0 / jnp.maximum(
+                jnp.asarray(cfg.diffusion.diff_steps, dtype=step_index.dtype), 1.0
+            )
+            step_progress = jnp.clip(step_index / max_step, 0.0, 1.0)
+            aux_weight = 2 * (
+                min_weight + (1.0 - min_weight) * step_progress
+            ).reshape(-1, 1).astype(aux_loss.dtype)
+
         masked_aux_terms = jnp.concatenate([aux_loss, aux_rew_loss], axis=-1)
         masked_aux_loss = jnp.mean(
             (1 - minibatch.done.reshape(-1, 1)) * aux_weight * masked_aux_terms,
             axis=-1,
         )
-        aux_next_diff_loss = jnp.mean(
-            (1 - minibatch.done.reshape(-1, 1)) * aux_next_diff_loss,
-            axis=-1,
-        )
-        alpha = cfg.aux_loss_alpha
-        aux_loss = (
-            alpha * jnp.sum(masked_aux_loss) / jnp.maximum(jnp.sum(aux_weight), 1.0)
-            + (1 - alpha) * jnp.mean(aux_next_diff_loss)
-        )
+        if use_normed_actions:
+            aux_next_diff_loss = (1.0 - minibatch.truncated.reshape(-1, 1)) * optax.squared_error(
+                pred_next_diff_state, minibatch.next_emb
+            )
+            aux_next_diff_loss = jnp.mean(
+                (1 - minibatch.done.reshape(-1, 1)) * aux_next_diff_loss,
+                axis=-1,
+            )
+            alpha = cfg.aux_loss_alpha
+            aux_loss = (
+                alpha * jnp.sum(masked_aux_loss) / jnp.maximum(jnp.sum(aux_weight), 1.0)
+                + (1 - alpha) * jnp.mean(aux_next_diff_loss)
+            )
+        else:
+            alpha = 1.0
+            aux_loss = jnp.sum(masked_aux_loss) / jnp.maximum(jnp.sum(aux_weight), 1.0)
         critic_loss = optax.squared_error(value, target_vals)
         critic_loss = jnp.mean(critic_loss)
         loss = jnp.mean(
@@ -212,10 +244,20 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
             critic_current_model if use_current_critic_for_actions else critic_rollout_model
         )
         obs_for_actions = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model, critic_current_model, use_langevin
+            minibatch.obs,
+            minibatch.critic_obs,
+            actor_model,
+            critic_current_model,
+            use_langevin,
+            temperature=temperature,
         )
         obs_for_target = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model, critic_for_target, use_langevin
+            minibatch.obs,
+            minibatch.critic_obs,
+            actor_model,
+            critic_for_target,
+            use_langevin,
+            temperature=temperature,
         )
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
@@ -326,11 +368,22 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             critic_current_model if use_current_critic_for_actions else critic_rollout_model
         )
         actor_model_raw = nnx.merge(updated_state.actor.graphdef, params)
+        temperature = _resolve_temperature(actor_model_raw, cfg, updated_state)
         obs_for_actions = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model_raw, critic_for_actions, use_langevin
+            minibatch.obs,
+            minibatch.critic_obs,
+            actor_model_raw,
+            critic_for_actions,
+            use_langevin,
+            temperature=temperature,
         )
         obs_for_target = maybe_add_q_grad(
-            minibatch.obs, minibatch.critic_obs, actor_model_raw, critic_rollout_model, use_langevin
+            minibatch.obs,
+            minibatch.critic_obs,
+            actor_model_raw,
+            critic_rollout_model,
+            use_langevin,
+            temperature=temperature,
         )
 
         stop_grad_params = jax.tree.map(jax.lax.stop_gradient, params)
@@ -570,7 +623,10 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     use_langevin = bool(cfg.diffusion.score_model.langevin_param)
     key, act_key, step_key = jax.random.split(key, 3)
     step_key = jax.random.split(step_key, cfg.num_envs)
-    obs_for_actor = maybe_add_q_grad(obs, critic_obs, actor_model, critic_model, use_langevin)
+    temperature = _resolve_temperature(actor_model, cfg, inner_state)
+    obs_for_actor = maybe_add_q_grad(
+        obs, critic_obs, actor_model, critic_model, use_langevin, temperature=temperature
+    )
 
     jax.debug.print("train_update_step_1_env shape: {shape}", shape=act_key.shape)
     action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
@@ -583,7 +639,12 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     importance_weight = jnp.zeros((cfg.num_envs,))
     key, next_act_key = jax.random.split(key)
     next_obs_for_actor = maybe_add_q_grad(
-        next_obs, next_critic_obs, actor_model, critic_model, use_langevin
+        next_obs,
+        next_critic_obs,
+        actor_model,
+        critic_model,
+        use_langevin,
+        temperature=temperature,
     )
 
     next_action, next_gen_log_prob, next_dest_log_prob = (
@@ -594,7 +655,6 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     log_ratio = jax.lax.stop_gradient(
         next_gen_log_prob - next_dest_log_prob
     )
-    temperature = _resolve_temperature(actor_model, cfg, inner_state)
     soft_reward = (
         reward
         - cfg.gamma * log_ratio.squeeze() * temperature

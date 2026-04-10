@@ -226,6 +226,7 @@ class ReppoConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
+    critic_use_normed_actions: bool = False
     use_actor_norm: bool = True
     num_actor_layers: int = 2
     actor_min_std: float = 0.05
@@ -679,6 +680,7 @@ class ReppoDMERLTrainer:
                     head_layers=cfg.num_critic_head_layers,
                     pred_layers=cfg.num_critic_pred_layers,
                     use_skip=cfg.use_critic_skip,
+                    use_normed_actions=cfg.critic_use_normed_actions,
                     rngs=nnx.Rngs(model_key),
                 )
             else:
@@ -692,6 +694,7 @@ class ReppoDMERLTrainer:
                     head_layers=cfg.num_critic_head_layers,
                     pred_layers=cfg.num_critic_pred_layers,
                     use_skip=cfg.use_critic_skip,
+                    use_normed_actions=cfg.critic_use_normed_actions,
                     rngs=nnx.Rngs(model_key),
                 )
 

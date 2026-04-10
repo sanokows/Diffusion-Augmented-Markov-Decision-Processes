@@ -1,4 +1,4 @@
-### TODO in Q function process states and actions separately. -> then change state reconst loss
+### TODO in Q function process states, noisy actions and actions separately. -> then change state reconst loss
 ### then store state embedding during rollout
 
 ### TODO rerun PPO exp with smaller temp

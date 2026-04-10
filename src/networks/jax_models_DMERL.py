@@ -497,13 +497,24 @@ class CriticNetwork(nnx.Module):
         num_time_hid: int = 32,
         num_time_out: int = 16,
         use_skip=False,
+        use_normed_actions: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
+        self.use_normed_actions = use_normed_actions
+        self.prev_action_dim = action_dim
+        if not self.use_normed_actions and obs_dim <= self.prev_action_dim:
+            raise ValueError(
+                "obs_dim must be greater than prev_action_dim when "
+                "use_normed_actions is False."
+            )
+        self.obs_feature_dim = (
+            obs_dim if self.use_normed_actions else obs_dim - self.prev_action_dim
+        )
         self.num_time_hid = num_time_hid
         self.num_time_out = num_time_out
         self.feature_module = FCNN(
-            in_features=obs_dim + action_dim + self.num_time_out,
+            in_features=self.obs_feature_dim + action_dim + self.num_time_out,
             out_features=hidden_dim,
             hidden_dim=hidden_dim,
             hidden_activation=nnx.swish,
@@ -575,9 +586,12 @@ class CriticNetwork(nnx.Module):
 
     def from_dict_to_observation(self, obs_dict):
         orig_obs = obs_dict["orig_obs"]
-        normed_prev_actions = obs_dict["normed_actions"]
         time = obs_dict["diff_time_step"]
-        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        if self.use_normed_actions:
+            normed_prev_actions = obs_dict["normed_actions"]
+            obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        else:
+            obs = orig_obs
         return obs, time
 
     def get_fourier_features(self, timesteps):
@@ -640,6 +654,7 @@ class CategoricalCriticNetwork(nnx.Module):
         num_time_out: int = 16,
         use_skip: bool = False,
         use_value_head: bool = False,
+        use_normed_actions: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -651,6 +666,16 @@ class CategoricalCriticNetwork(nnx.Module):
         self.num_time_out = num_time_out
 
         self.use_skip = use_skip
+        self.use_normed_actions = use_normed_actions
+        self.prev_action_dim = action_dim
+        if not self.use_normed_actions and obs_dim <= self.prev_action_dim:
+            raise ValueError(
+                "obs_dim must be greater than prev_action_dim when "
+                "use_normed_actions is False."
+            )
+        self.obs_feature_dim = (
+            obs_dim if self.use_normed_actions else obs_dim - self.prev_action_dim
+        )
 
         if project_discrete_action:
             self.action_embedding = nnx.Embed(
@@ -662,7 +687,7 @@ class CategoricalCriticNetwork(nnx.Module):
             self.action_embedding = Identity()
 
         self.feature_module = FCNN(
-            in_features=obs_dim + action_dim + self.num_time_out,
+            in_features=self.obs_feature_dim + action_dim + self.num_time_out,
             out_features=hidden_dim,
             hidden_dim=hidden_dim,
             hidden_activation=nnx.swish,
@@ -749,9 +774,12 @@ class CategoricalCriticNetwork(nnx.Module):
     
     def from_dict_to_observation(self, obs_dict):
         orig_obs = obs_dict["orig_obs"]
-        normed_prev_actions = obs_dict["normed_actions"]
         time = obs_dict["diff_time_step"]
-        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        if self.use_normed_actions:
+            normed_prev_actions = obs_dict["normed_actions"]
+            obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        else:
+            obs = orig_obs
         return obs, time
 
     def critic_cat(self, obs_dict: jax.Array, action: jax.Array) -> jax.Array:
@@ -791,6 +819,7 @@ class CategoricalValueNetwork(nnx.Module):
     def __init__(
         self,
         obs_dim: int,
+        normed_action_dim: int = 0,
         hidden_dim: int = 512,
         use_norm: bool = True,
         use_simplical_embedding: bool = False,
@@ -804,6 +833,7 @@ class CategoricalValueNetwork(nnx.Module):
         num_time_out: int = 16,
         use_skip: bool = False,
         use_value_head: bool = False,
+        use_normed_actions: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -816,9 +846,24 @@ class CategoricalValueNetwork(nnx.Module):
 
         self.use_skip = use_skip
         self.use_value_head = use_value_head
+        self.use_normed_actions = use_normed_actions
+        self.normed_action_dim = normed_action_dim
+        if not self.use_normed_actions:
+            if self.normed_action_dim <= 0:
+                raise ValueError(
+                    "normed_action_dim must be > 0 when use_normed_actions is False."
+                )
+            if obs_dim <= self.normed_action_dim:
+                raise ValueError(
+                    "obs_dim must be greater than normed_action_dim when "
+                    "use_normed_actions is False."
+                )
+        self.obs_feature_dim = (
+            obs_dim if self.use_normed_actions else obs_dim - self.normed_action_dim
+        )
 
         self.feature_module = FCNN(
-            in_features=obs_dim + self.num_time_out,
+            in_features=self.obs_feature_dim + self.num_time_out,
             out_features=hidden_dim,
             hidden_dim=hidden_dim,
             hidden_activation=nnx.swish,
@@ -918,9 +963,12 @@ class CategoricalValueNetwork(nnx.Module):
 
     def from_dict_to_observation(self, obs_dict):
         orig_obs = obs_dict["orig_obs"]
-        normed_prev_actions = obs_dict["normed_actions"]
         time = obs_dict["diff_time_step"]
-        obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        if self.use_normed_actions:
+            normed_prev_actions = obs_dict["normed_actions"]
+            obs = jnp.concatenate([orig_obs, normed_prev_actions], axis=-1)
+        else:
+            obs = orig_obs
         return obs, time
 
     def critic_cat(self, obs_dict: jax.Array) -> jax.Array:

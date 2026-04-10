@@ -1,5 +1,6 @@
 defaults:
   - env: mjx_dmc
+  - DiffPPO_overrides: default
   - experiment_overrides: default
   - _self_
 
@@ -51,6 +52,7 @@ hyperparameters:
   num_critic_pred_layers: 2
   use_simplical_embedding: False
   use_critic_skip: False
+  critic_use_normed_actions: true
   use_categorical_value: False
   vmin: ${env.vmin}
   vmax: ${env.vmax}

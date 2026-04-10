@@ -1,0 +1,23 @@
+hyperparameters:
+  num_eval: 50
+  total_time_steps: 50_000_000
+  num_mini_batches: 8
+  lr: 4e-4
+  temperature_lr: 1e-4
+  entropy_coef: 0.00004
+  update_entropy_lagrangian: false
+  num_envs: 2024
+  use_categorical_value: true
+  normalize_advantages: false
+  ent_target_mult: 8.0
+  num_collection_step_factor: 0.5
+  vmin: -100
+  vmax: 200
+  num_bins: 301
+  num_epochs: 8
+  diffusion:
+    friction: 0.25
+    init_std: 3.0
+    learn_friction: true
+    learn_dt: true
+    per_step_dt: true

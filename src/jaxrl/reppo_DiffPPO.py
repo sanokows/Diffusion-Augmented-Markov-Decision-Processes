@@ -184,6 +184,7 @@ class PPOConfig(struct.PyTreeNode):
     num_critic_pred_layers: int = 1
     use_simplical_embedding: bool = False
     use_critic_skip: bool = False
+    critic_use_normed_actions: bool = False
     use_categorical_value: bool = False
     vmin: float = -10.0
     vmax: float = 10.0
@@ -333,6 +334,17 @@ class PPONetworks(nnx.Module):
         )
 
         critic_hidden_dim = require(cfg, "critic_hidden_dim")
+        if isinstance(cfg, dict):
+            critic_use_normed_actions = bool(cfg.get("critic_use_normed_actions", False))
+        else:
+            critic_use_normed_actions = bool(
+                getattr(cfg, "critic_use_normed_actions", False)
+            )
+        if not critic_use_normed_actions:
+            raise ValueError(
+                "reppo_DiffPPO requires `critic_use_normed_actions=True`. "
+                "Set `hyperparameters.critic_use_normed_actions: true` in config."
+            )
         self.actor_module = DMERLActor(
             action_dim=action_dim,
             observation_dim=obs_dim,
@@ -351,6 +363,7 @@ class PPONetworks(nnx.Module):
         if require(cfg, "use_categorical_value"):
             self.critic_module = CategoricalValueNetwork(
                 obs_dim=critic_obs_dim,
+                normed_action_dim=action_dim,
                 hidden_dim=critic_hidden_dim,
                 num_bins=require(cfg, "num_bins"),
                 vmin=require(cfg, "vmin"),
@@ -364,6 +377,7 @@ class PPONetworks(nnx.Module):
                 use_simplical_embedding=require(cfg, "use_simplical_embedding"),
                 use_skip=require(cfg, "use_critic_skip"),
                 use_value_head=not cfg.hl_gauss,
+                use_normed_actions=critic_use_normed_actions,
                 rngs=rngs,
             )
         else:
@@ -1468,8 +1482,14 @@ def tune(cfg: DictConfig):
 
 @hydra.main(version_base=None, config_path="../../config", config_name="diff_ppo")
 def main(cfg: DictConfig):
+    diffppo_overrides = OmegaConf.select(
+        cfg, "DiffPPO_overrides.hyperparameters", default={}
+    )
+    experiment_overrides = OmegaConf.select(
+        cfg, "experiment_overrides.hyperparameters", default={}
+    )
     cfg.hyperparameters = OmegaConf.merge(
-        cfg.hyperparameters, cfg.experiment_overrides.hyperparameters
+        cfg.hyperparameters, diffppo_overrides, experiment_overrides
     )
     if cfg.tune:
         tune(cfg)
