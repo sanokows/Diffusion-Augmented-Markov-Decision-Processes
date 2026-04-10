@@ -935,16 +935,20 @@ class ReppoPPOTrainer:
                             getattr(cfg, "use_final_step_reward_target", False)
                         )
                         if use_final_step_reward_target:
-                            reward_target = minibatch.reward_target.reshape(-1, 1)
-                            reward_target_mask = minibatch.reward_target_mask.reshape(
-                                -1, 1
-                            ).astype(pred_rew.dtype)
+                            reward_target = getattr(
+                                minibatch, "reward_target", minibatch.reward
+                            ).reshape(-1, 1)
+                            reward_target_mask = getattr(
+                                minibatch,
+                                "reward_target_mask",
+                                jnp.ones_like(minibatch.reward),
+                            ).reshape(-1, 1).astype(pred_rew.dtype)
                         else:
                             reward_target = minibatch.reward.reshape(-1, 1)
                             reward_target_mask = jnp.ones_like(
                                 reward_target, dtype=pred_rew.dtype
                             )
-                        aux_rew_loss = cfg.diffusion.diff_steps * (
+                        aux_rew_loss = (
                             1.0 - minibatch.truncated.reshape(-1, 1)
                         ) * reward_target_mask * optax.squared_error(
                             pred_rew, reward_target
@@ -981,7 +985,12 @@ class ReppoPPOTrainer:
                             aux_weight = (
                                 min_weight + (1.0 - min_weight) * step_progress
                             ).reshape(-1, 1).astype(aux_loss.dtype)
-                            aux_weight = cfg.diffusion.diff_steps  * aux_weight**2
+                            # aux_weight = cfg.diffusion.diff_steps * aux_weight**2
+                            aux_weight = (
+                                cfg.diffusion.diff_steps
+                                * (aux_weight == 1.0)
+                                * cfg.aux_loss_mult
+                            )
 
                         masked_aux_terms = jnp.concatenate(
                             [aux_loss, aux_rew_loss], axis=-1
@@ -1012,9 +1021,7 @@ class ReppoPPOTrainer:
                             )
                         else:
                             alpha = 1.0
-                            aux_loss = jnp.sum(masked_aux_loss) / jnp.maximum(
-                                jnp.sum(aux_weight), 1.0
-                            )
+                            aux_loss = jnp.mean(masked_aux_loss) 
                         critic_loss = optax.squared_error(value, target_values)
                         critic_loss = jnp.mean(critic_loss)
                         value_loss = jnp.mean(

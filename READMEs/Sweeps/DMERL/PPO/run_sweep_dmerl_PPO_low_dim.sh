@@ -48,7 +48,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         env=mjx_dmc \
         wandb.project_suffix="_FR_10_04" \
         seed=0 \
-        trials=5 &
+        trials=1 &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

@@ -1113,6 +1113,7 @@ class ReppoDMERLTrainer:
                 batch.truncated,
                 batch.obs["diff_time_step"][..., 0],
                 self.cfg.diffusion.diff_steps,
+                mask_next_state_on_episode_end=True,
             )
         )
         batch = batch.replace(

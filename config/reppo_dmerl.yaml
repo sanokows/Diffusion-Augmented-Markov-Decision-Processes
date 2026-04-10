@@ -109,9 +109,9 @@ hyperparameters:
   temperature_lr_mult: 1.0
   lagrangian_lr_mult: 1.0
   ## auxiliary loss settings
-  aux_loss_mult: 0.15
+  aux_loss_mult: 1.
   aux_loss_alpha: 0.95
-  use_final_step_reward_target: false
+  use_final_step_reward_target: true
 
   # DIME diffusion settings
   diffusion:

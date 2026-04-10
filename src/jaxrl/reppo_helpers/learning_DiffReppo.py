@@ -197,7 +197,8 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             aux_weight = (
                 min_weight + (1.0 - min_weight) * step_progress
             ).reshape(-1, 1).astype(aux_loss.dtype)
-            aux_weight = cfg.diffusion.diff_steps *aux_weight**2
+            #aux_weight = cfg.diffusion.diff_steps *aux_weight**2
+            aux_weight = cfg.diffusion.diff_steps * (aux_weight == 1.0) * cfg.aux_loss_mult
 
         masked_aux_terms = jnp.concatenate([aux_loss, aux_rew_loss], axis=-1)
         masked_aux_loss = jnp.mean(
@@ -219,7 +220,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
             )
         else:
             alpha = 1.0
-            aux_loss = jnp.sum(masked_aux_loss) / jnp.maximum(jnp.sum(aux_weight), 1.0)
+            aux_loss = jnp.mean(masked_aux_loss)
         critic_loss = optax.squared_error(value, target_vals)
         critic_loss = jnp.mean(critic_loss)
         loss = jnp.mean(

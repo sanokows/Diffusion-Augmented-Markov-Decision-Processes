@@ -14,7 +14,7 @@ def build_rollout_aux_targets(
     diff_time_step: jax.Array,
     shift_steps: int,
     *,
-    mask_next_state_on_episode_end: bool = False,
+    mask_next_state_on_episode_end: bool = True,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Build shifted embedding and final-step reward targets for aux losses.
 
@@ -49,7 +49,7 @@ def build_rollout_aux_targets(
 
     if mask_next_state_on_episode_end:
         next_idx_2d = jnp.broadcast_to(
-            jnp.minimum(time_idx + shift_steps, rollout_steps), step_index.shape
+            jnp.minimum(time_idx + shift_steps, rollout_steps)[:, None], step_index.shape
         )
         ends_before_start = jnp.take_along_axis(
             episode_end_cumsum, time_idx_2d, axis=0
