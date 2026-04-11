@@ -6,7 +6,7 @@ hyperparameters:
   temperature_lr: 1e-4
   entropy_coef: 0.00001 
   update_entropy_lagrangian: false
-  num_envs: 2024
+  num_envs: 4048
   use_categorical_value: true
   normalize_advantages: false
   ent_target_mult: 8.0
@@ -21,3 +21,8 @@ hyperparameters:
     learn_friction: true
     learn_dt: true
     per_step_dt: true
+
+    dt_schedule:
+      _target_: src.networks.diffusion.schedulers.get_linear_schedule
+      total_steps: ${hyperparameters.diffusion.diff_steps}
+      min: 0.05
