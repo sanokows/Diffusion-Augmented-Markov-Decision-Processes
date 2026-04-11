@@ -6,7 +6,8 @@ hyperparameters:
   temperature_lr: 1e-4
   entropy_coef: 0.00001 
   update_entropy_lagrangian: false
-  num_envs: 2024
+  num_envs: 4028
+  num_steps: 64
   use_categorical_value: true
   normalize_advantages: false
   ent_target_mult: 8.0
