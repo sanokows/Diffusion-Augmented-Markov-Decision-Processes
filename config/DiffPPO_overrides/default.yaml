@@ -2,12 +2,13 @@ hyperparameters:
   num_eval: 50
   total_time_steps: 50_000_000
   num_mini_batches: 8
-  lr: 3e-4
-  temperature_lr: 1e-4
+  lr: 6e-4
+  temperature_lr: 2e-4
   entropy_coef: 0.00001 
-  update_entropy_lagrangian: false
+  update_entropy_lagrangian: True
   num_envs: 4028
   num_steps: 64
+  ent_start: 0.01
   use_categorical_value: true
   normalize_advantages: false
   ent_target_mult: 8.0
