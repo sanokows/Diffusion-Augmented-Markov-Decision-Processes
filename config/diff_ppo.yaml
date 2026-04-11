@@ -28,7 +28,7 @@ hyperparameters:
   temp_lagrangian_ema_decay: 0.99
   temperature_lr: null
   total_time_steps: 50_000_000
-  num_steps: 64
+  num_steps: 128
   num_collection_step_factor: 1
   num_mini_batches: 128
   num_envs: 2048
