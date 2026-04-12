@@ -18,4 +18,4 @@ python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
 chmod +x ./READMEs/Sweeps/DMERL/PPO/run_sweep_dmerl_PPO_hyperparam.sh
-sh ./READMEs/Sweeps/DMERL/PPO/run_sweep_dmerl_PPO_hyperparam.sh
+sh ./READMEs/Sweeps/DMERL/PPO/run_sweep_dmerl_PPO_hyperparam.sh 

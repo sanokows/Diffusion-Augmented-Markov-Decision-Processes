@@ -17,6 +17,7 @@ LRS=(
 
 ENTROPY_COEFS=(
     1e-5
+    2e-5
 )
 
 NUM_ENVS_VALUES=(
