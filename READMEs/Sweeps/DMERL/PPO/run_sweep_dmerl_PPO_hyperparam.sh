@@ -77,7 +77,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
                         env.name="$ENV_NAME" \
                         DiffPPO_overrides=default \
                         env=mjx_dmc \
-                        wandb.project_suffix="_FR_10_04" \
+                        wandb.project_suffix="_FR_13_04" \
                         DiffPPO_overrides.hyperparameters.lr="$LR" \
                         DiffPPO_overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
                         DiffPPO_overrides.hyperparameters.num_envs="$NUM_ENVS" \
