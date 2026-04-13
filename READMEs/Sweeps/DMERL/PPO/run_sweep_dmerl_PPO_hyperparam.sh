@@ -11,23 +11,26 @@ ENV_NAMES=(
 
 # Step 2: Define hyperparameter values to sweep
 LRS=(
-    6e-4
     3e-4
+    1e-4
 )
 
 ENTROPY_COEFS=(
     1e-5
-    2e-5
 )
 
 NUM_ENVS_VALUES=(
-    2024
     4048
-    6096
 )
 
-TOTAL_RUNS=$(( ${#ENV_NAMES[@]} * ${#LRS[@]} * ${#ENTROPY_COEFS[@]} * ${#NUM_ENVS_VALUES[@]} ))
-echo "Planned runs: $TOTAL_RUNS (env=${#ENV_NAMES[@]} lrs=${#LRS[@]} entropy_coefs=${#ENTROPY_COEFS[@]} num_envs=${#NUM_ENVS_VALUES[@]})"
+NUM_EPOCHS_VALUES=(
+    8
+    12
+    16
+)
+
+TOTAL_RUNS=$(( ${#ENV_NAMES[@]} * ${#LRS[@]} * ${#ENTROPY_COEFS[@]} * ${#NUM_ENVS_VALUES[@]} * ${#NUM_EPOCHS_VALUES[@]} ))
+echo "Planned runs: $TOTAL_RUNS (env=${#ENV_NAMES[@]} lrs=${#LRS[@]} entropy_coefs=${#ENTROPY_COEFS[@]} num_envs=${#NUM_ENVS_VALUES[@]} num_epochs=${#NUM_EPOCHS_VALUES[@]})"
 
 # Step 3: Define GPU pool and round-robin scheduling
 NUM_GPUS=4
@@ -51,7 +54,7 @@ wait_for_gpu() {
     done
 }
 
-# Step 5: Launch one run per env.name x lr x entropy_coef x num_envs combo
+# Step 5: Launch one run per env.name x lr x entropy_coef x num_envs x num_epochs combo
 declare -a GPU_PIDS
 for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
@@ -61,25 +64,29 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             ENTROPY_COEF="${ENTROPY_COEF%,}"
             for NUM_ENVS in "${NUM_ENVS_VALUES[@]}"; do
                 NUM_ENVS="${NUM_ENVS%,}"
-                GPU_ID=$((GPU_INDEX % NUM_GPUS))
-                wait_for_gpu "$GPU_ID"
-                if [ -n "${GPU_PIDS[$GPU_ID]}" ]; then
-                    echo "Waiting for previous run on GPU $GPU_ID (pid ${GPU_PIDS[$GPU_ID]})..."
-                    wait "${GPU_PIDS[$GPU_ID]}"
-                fi
-                echo "Starting env.name=$ENV_NAME lr=$LR entropy_coef=$ENTROPY_COEF num_envs=$NUM_ENVS on GPU $GPU_ID..."
-                CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DiffPPO \
-                    env.name="$ENV_NAME" \
-                    DiffPPO_overrides=default \
-                    env=mjx_dmc \
-                    wandb.project_suffix="_FR_10_04" \
-                    DiffPPO_overrides.hyperparameters.lr="$LR" \
-                    DiffPPO_overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
-                    DiffPPO_overrides.hyperparameters.num_envs="$NUM_ENVS" \
-                    seed=0 \
-                    trials=1 &
-                GPU_PIDS[$GPU_ID]=$!
-                GPU_INDEX=$((GPU_INDEX + 1))
+                for NUM_EPOCHS in "${NUM_EPOCHS_VALUES[@]}"; do
+                    NUM_EPOCHS="${NUM_EPOCHS%,}"
+                    GPU_ID=$((GPU_INDEX % NUM_GPUS))
+                    wait_for_gpu "$GPU_ID"
+                    if [ -n "${GPU_PIDS[$GPU_ID]}" ]; then
+                        echo "Waiting for previous run on GPU $GPU_ID (pid ${GPU_PIDS[$GPU_ID]})..."
+                        wait "${GPU_PIDS[$GPU_ID]}"
+                    fi
+                    echo "Starting env.name=$ENV_NAME lr=$LR entropy_coef=$ENTROPY_COEF num_envs=$NUM_ENVS num_epochs=$NUM_EPOCHS on GPU $GPU_ID..."
+                    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DiffPPO \
+                        env.name="$ENV_NAME" \
+                        DiffPPO_overrides=default \
+                        env=mjx_dmc \
+                        wandb.project_suffix="_FR_10_04" \
+                        DiffPPO_overrides.hyperparameters.lr="$LR" \
+                        DiffPPO_overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
+                        DiffPPO_overrides.hyperparameters.num_envs="$NUM_ENVS" \
+                        DiffPPO_overrides.hyperparameters.num_epochs="$NUM_EPOCHS" \
+                        seed=0 \
+                        trials=1 &
+                    GPU_PIDS[$GPU_ID]=$!
+                    GPU_INDEX=$((GPU_INDEX + 1))
+                done
             done
         done
     done
