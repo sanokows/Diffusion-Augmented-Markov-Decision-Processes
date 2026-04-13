@@ -61,6 +61,7 @@ for AUX_LOSS_MULT in "${AUX_LOSS_MULT_VALUES[@]}"; do
         echo "Starting env.name=$ENV_NAME seed=$SEED aux_loss_mult=$AUX_LOSS_MULT on GPU $GPU_ID..."
         CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
             env.name="$ENV_NAME" \
+            wandb.project_suffix="_FR_sparse_test" \
             hyperparameters.num_eval="$NUM_EVAL" \
             hyperparameters.total_time_steps="$TOTAL_TIME_STEPS" \
             hyperparameters.diffusion.diff_steps="$DIFF_STEPS" \
