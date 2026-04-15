@@ -51,7 +51,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         env=mjx_dmc \
         num_trials=2 \
         seed=0 \
-        experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule &
+        experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

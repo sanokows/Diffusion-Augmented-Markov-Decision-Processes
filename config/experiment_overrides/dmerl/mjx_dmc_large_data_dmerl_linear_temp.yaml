@@ -1,0 +1,40 @@
+hyperparameters:
+  num_envs: 1024
+  num_steps: 128
+  num_mini_batches: 8 # *diff_steps = 64 -> same num of updates
+  num_epochs: 8
+  kl_bound: 0.1 # 0.2
+  kl_start: 0.3 # 0.15
+  kl_action_rep: 4
+  temp_lagrangian_adam_gamma1: 0.9
+  temp_lagrangian_adam_gamma2: 0.999
+  num_collection_step_factor: 0.5
+  vmin: -100
+  vmax: 200
+  num_bins: 151
+  num_eval: 50
+  #aux_loss_mult: 0.25 ## increase a bit??
+  aux_loss_alpha: 0.98 #0.95
+  
+  lr: 1e-3
+  temperature_lr: 3e-4
+  lagrangian_lr: 3e-4
+  ent_target_mult: 3.
+  tanh_transform: false
+  gamma: 0.999
+  lmbda: 0.98
+  diffusion:
+    learn_friction: true
+    learn_dt: true
+    per_step_dt: true
+    friction: 0.25
+    init_std: 3.0
+
+    dt_schedule:
+      _target_: src.networks.diffusion.schedulers.get_linear_schedule
+      total_steps: ${hyperparameters.diffusion.diff_steps}
+      min: 0.05
+
+
+
+
