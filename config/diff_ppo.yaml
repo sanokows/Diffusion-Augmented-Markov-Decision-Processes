@@ -33,6 +33,12 @@ hyperparameters:
   num_mini_batches: 128
   num_envs: 2048
   num_epochs: 16
+  importance_sample_diffusion_steps: false
+  diffusion_step_sampling_mode: "power"  # "power" or "song"
+  diffusion_step_sampling_exponent: 1.0  # power mode: 1.0=linear, 2.0=quadratic
+  diffusion_step_song_reverse_time: true
+  diffusion_step_sampling_min_prob: 0.0
+  diffusion_step_importance_clip: null
   max_grad_norm: 0.5
   normalize_advantages: True
   normalize_env: True
@@ -58,7 +64,7 @@ hyperparameters:
   vmax: ${env.vmax}
   num_bins: 151
   hl_gauss: True
-  aux_loss_mult: 0.
+  aux_loss_mult: 0.75
   aux_loss_alpha: 0.95
   use_final_step_reward_target: true
 

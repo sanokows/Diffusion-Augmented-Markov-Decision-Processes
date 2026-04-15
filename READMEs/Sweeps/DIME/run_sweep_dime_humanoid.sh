@@ -59,7 +59,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         env=mjx_humanoid \
         seed=1 \
         num_trials=1 \
-        experiment_overrides=mjx_humanoid_large_data &
+        experiment_overrides=dime/mjx_humanoid_large_data &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

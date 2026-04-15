@@ -54,7 +54,7 @@ for RUN in "${RUNS[@]}"; do
         hyperparameters.aux_loss_alpha="$AUX_LOSS_ALPHA" \
         env=mjx_dmc \
         num_trials=3 \
-        experiment_overrides=mjx_dmc_large_data_dmerl_WPO_aux_loss &
+        experiment_overrides=dmerl_WPO/mjx_dmc_large_data_dmerl_WPO_aux_loss &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

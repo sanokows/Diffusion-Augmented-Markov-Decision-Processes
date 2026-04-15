@@ -133,7 +133,47 @@ def _metric_scalar(x: jax.Array) -> jax.Array:
     return jnp.mean(jnp.asarray(x))
 
 
-def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
+def _weighted_batch_mean(values: jax.Array, importance_ratio: jax.Array | None) -> jax.Array:
+    """Importance-weighted mean over batch axis (axis 0)."""
+    values = jnp.asarray(values)
+    if values.ndim == 0:
+        raise ValueError(
+            "_weighted_batch_mean expects per-sample values with a batch axis, got scalar."
+        )
+    if importance_ratio is None:
+        return jnp.mean(values)
+    ratio = jnp.asarray(importance_ratio, dtype=values.dtype).reshape((-1,))
+    if values.shape[0] != ratio.shape[0]:
+        raise ValueError(
+            "_weighted_batch_mean shape mismatch: values batch axis "
+            f"{values.shape[0]} != importance_ratio length {ratio.shape[0]}."
+        )
+    ratio = ratio.reshape((ratio.shape[0],) + (1,) * (values.ndim - 1))
+    return jnp.mean(ratio * values)
+
+
+def _weighted_batch_mean_axis0(
+    values: jax.Array, importance_ratio: jax.Array | None
+) -> jax.Array:
+    """Importance-weighted mean over batch axis while preserving remaining axes."""
+    values = jnp.asarray(values)
+    if values.ndim == 0:
+        raise ValueError(
+            "_weighted_batch_mean_axis0 expects per-sample values with a batch axis, got scalar."
+        )
+    if importance_ratio is None:
+        return jnp.mean(values, axis=0)
+    ratio = jnp.asarray(importance_ratio, dtype=values.dtype).reshape((-1,))
+    if values.shape[0] != ratio.shape[0]:
+        raise ValueError(
+            "_weighted_batch_mean_axis0 shape mismatch: values batch axis "
+            f"{values.shape[0]} != importance_ratio length {ratio.shape[0]}."
+        )
+    ratio = ratio.reshape((ratio.shape[0],) + (1,) * (values.ndim - 1))
+    return jnp.mean(ratio * values, axis=0)
+
+
+def critic_loss_fn(params, train_state, minibatch, target_vals, cfg, importance_ratio=None):
         critic_model = nnx.merge(train_state.critic.graphdef, params)
         critic_pred = critic_model.critic_cat(minibatch.critic_obs, minibatch.action).squeeze()
         if cfg.hl_gauss:
@@ -198,7 +238,7 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
                 min_weight + (1.0 - min_weight) * step_progress
             ).reshape(-1, 1).astype(aux_loss.dtype)
             #aux_weight = cfg.diffusion.diff_steps *aux_weight**2
-            aux_weight = cfg.diffusion.diff_steps * (aux_weight == 1.0) * cfg.aux_loss_mult
+            aux_weight = cfg.diffusion.diff_steps * (aux_weight == 1.0)
 
         masked_aux_terms = jnp.concatenate([aux_loss, aux_rew_loss], axis=-1)
         masked_aux_loss = jnp.mean(
@@ -221,23 +261,26 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
         else:
             alpha = 1.0
             aux_loss = jnp.mean(masked_aux_loss)
-        critic_loss = optax.squared_error(value, target_vals)
-        critic_loss = jnp.mean(critic_loss)
-        loss = jnp.mean(
+        critic_loss = _weighted_batch_mean(optax.squared_error(value, target_vals), importance_ratio)
+        loss = _weighted_batch_mean(
             (1.0 - minibatch.truncated)
-            * (critic_update_loss ) + cfg.aux_loss_mult * aux_loss
+            * (critic_update_loss)
+            + cfg.aux_loss_mult * aux_loss,
+            importance_ratio,
         )
         metrics = dict(
             value_loss=critic_loss,
-            critic_update_loss=_metric_scalar(critic_update_loss),
+            critic_update_loss=_metric_scalar(_weighted_batch_mean(critic_update_loss, importance_ratio)),
             loss=loss,
             aux_loss=aux_loss,
             rew_aux_loss=_metric_scalar(
-                aux_rew_loss * aux_weight.astype(aux_rew_loss.dtype)
+                _weighted_batch_mean(
+                    aux_rew_loss * aux_weight.astype(aux_rew_loss.dtype), importance_ratio
+                )
             ),
-            q=value.mean(),
-            reward_mean=minibatch.reward.mean(),
-            target_values=target_vals.mean(),
+            q=_metric_scalar(_weighted_batch_mean(value, importance_ratio)),
+            reward_mean=_metric_scalar(_weighted_batch_mean(minibatch.reward, importance_ratio)),
+            target_values=_metric_scalar(_weighted_batch_mean(target_vals, importance_ratio)),
         )
         if bool(getattr(cfg, "log_pnorms", False)):
             metrics["critic_pnorm"] = utils.tree_norm(params)
@@ -245,7 +288,18 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg):
 
 
 
-def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibatch, target_vals, action_size_target, cfg, actor_target_model):
+def actor_loss_fn(
+    params,
+    updated_state,
+    critic_rollout_model,
+    step_key,
+    minibatch,
+    target_vals,
+    action_size_target,
+    cfg,
+    actor_target_model,
+    importance_ratio=None,
+):
         use_langevin = bool(cfg.diffusion.score_model.langevin_param)
         use_current_critic_for_actions = bool(
             getattr(cfg, "use_current_critic_for_actor_samples", False)
@@ -283,7 +337,9 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
     
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
-        entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio, axis=0)
+        entropy = -cfg.diffusion.diff_steps * _weighted_batch_mean_axis0(
+            log_prob_ratio, importance_ratio
+        )
         entropy = _maybe_stop_grad_entropy(entropy, cfg)
         # print the entropy in jax debug mode also print the target entropy and the temperature
         #jax.debug.print("Entropy: {ent}, target: {tar}, temp: {temp}", ent=entropy, tar=action_size_target, temp=actor_model.temperature())
@@ -301,7 +357,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         kl = cfg.diffusion.diff_steps * kl_log_ratios.sum(-1)
         lagrangian = actor_model.lagrangian()
 
-        clip_ratio = jnp.mean((kl >= cfg.kl_bound).astype(jnp.float32))
+        clip_ratio = _weighted_batch_mean((kl >= cfg.kl_bound).astype(jnp.float32), importance_ratio)
 
         target_entropy = action_size_target + entropy
         kl_constraint = kl - cfg.kl_bound
@@ -329,13 +385,16 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         target_entropy_loss = (
             temperature
             * jax.lax.stop_gradient(target_entropy) ### should ther ebe a stop grad for WPO?
-        ).mean()
+        )
+        # This is a global scalar (or shape-(1,)) term, not per-sample.
+        target_entropy_loss = _metric_scalar(target_entropy_loss)
         lagrangian_loss = (
             -lagrangian
             * jax.lax.stop_gradient(kl_constraint)
-        ).mean()
+        )
+        lagrangian_loss = _weighted_batch_mean(lagrangian_loss, importance_ratio)
 
-        loss = jnp.mean(actor_loss_val)
+        loss = _weighted_batch_mean(actor_loss_val, importance_ratio)
         if cfg.update_entropy_lagrangian:
             loss += target_entropy_loss
         if cfg.update_kl_lagrangian:
@@ -344,14 +403,25 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         friction = actor_model.diffusion_model.friction.value
         friction_detached = jax.lax.stop_gradient(friction)
         metrics = dict(
-            actor_loss=_metric_scalar(actor_loss_val),
+            actor_loss=_metric_scalar(_weighted_batch_mean(actor_loss_val, importance_ratio)),
             loss=loss,
             temp=_metric_scalar(temperature),
-            abs_batch_action=jnp.abs(minibatch.action).mean(),
-            abs_pred_action=jnp.abs(pred_action).mean(),
-            reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
-            energy_mean = -minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
-            kl=kl.mean(),
+            abs_batch_action=_metric_scalar(
+                _weighted_batch_mean(jnp.abs(minibatch.action), importance_ratio)
+            ),
+            abs_pred_action=_metric_scalar(
+                _weighted_batch_mean(jnp.abs(pred_action), importance_ratio)
+            ),
+            reward_mean=_metric_scalar(
+                _weighted_batch_mean(minibatch.reward, importance_ratio)
+            )
+            * cfg.diffusion.diff_steps,
+            energy_mean=-_metric_scalar(
+                _weighted_batch_mean(minibatch.reward, importance_ratio)
+            )
+            * cfg.diffusion.diff_steps
+            + 1,
+            kl=_metric_scalar(_weighted_batch_mean(kl, importance_ratio)),
             lagrangian=_metric_scalar(lagrangian),
             lagrangian_loss=lagrangian_loss,
             run_cost=0.0,
@@ -361,7 +431,7 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
             entropy_target=-action_size_target,
             entropy_loss=target_entropy_loss,
             kl_clip_ratio=clip_ratio,
-            target_values=target_vals.mean(),
+            target_values=_metric_scalar(_weighted_batch_mean(target_vals, importance_ratio)),
             friction=friction_detached.mean(),
             entropy_prior=_metric_scalar(entropy_prior),
         )
@@ -370,7 +440,18 @@ def actor_loss_fn(params, updated_state, critic_rollout_model, step_key, minibat
         return loss, metrics
 
 
-def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, minibatch, target_vals, action_size_target, cfg, actor_target_model):
+def actor_WPO_loss_fn(
+    params,
+    updated_state,
+    critic_rollout_model,
+    step_key,
+    minibatch,
+    target_vals,
+    action_size_target,
+    cfg,
+    actor_target_model,
+    importance_ratio=None,
+):
         use_new_temp_mode = bool(getattr(cfg, "new_temp_mode", False))
         use_langevin = bool(cfg.diffusion.score_model.langevin_param)
         use_current_critic_for_actions = bool(
@@ -545,9 +626,21 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             axis=-1,
         )
 
-        actor_WPO_loss = temperature*jnp.mean(((jax.lax.stop_gradient(log_prob_action_grad) - jax.lax.stop_gradient(stop_q_action_grad)/temperature)**2).sum(axis=-1))
+        actor_WPO_loss = temperature * _weighted_batch_mean(
+            (
+                (
+                    jax.lax.stop_gradient(log_prob_action_grad)
+                    - jax.lax.stop_gradient(stop_q_action_grad) / temperature
+                )
+                ** 2
+            ).sum(axis=-1),
+            importance_ratio,
+        )
 
-        clip_ratio = jnp.mean((kl_clip_value >= cfg.kl_bound).astype(jnp.float32))
+        clip_ratio = _weighted_batch_mean(
+            (kl_clip_value >= cfg.kl_bound).astype(jnp.float32),
+            importance_ratio,
+        )
         if cfg.actor_kl_clip_mode == "full":
             actor_loss_val = (
                 actor_Q_loss
@@ -575,7 +668,10 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
                 kl_clip_value < cfg.kl_bound,
                 log_prob_ratio,
                 jax.lax.stop_gradient(log_prob_ratio))
-        entropy = -cfg.diffusion.diff_steps * jnp.mean(log_prob_ratio_maybe_stop_grad, axis=0)
+        entropy = -cfg.diffusion.diff_steps * _weighted_batch_mean_axis0(
+            log_prob_ratio_maybe_stop_grad,
+            importance_ratio,
+        )
         entropy_stop_grad = _maybe_stop_grad_entropy(entropy, cfg)
 
         target_entropy = action_size_target + entropy_stop_grad
@@ -583,14 +679,16 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
 
         target_entropy_loss = (
             entropy_lagrangian_maybe_stop_grad * target_entropy
-        ).mean()
+        )
+        target_entropy_loss = _weighted_batch_mean(target_entropy_loss, importance_ratio)
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
-        ).mean()
+        )
+        lagrangian_loss = _weighted_batch_mean(lagrangian_loss, importance_ratio)
         entropy_penalty = jnp.array(0.0)
         kl_penalty = jnp.array(0.0)
 
-        loss = jnp.mean(actor_loss_val)
+        loss = _weighted_batch_mean(actor_loss_val, importance_ratio)
         if cfg.update_entropy_lagrangian:
             loss += target_entropy_loss
         if cfg.update_kl_lagrangian:
@@ -599,19 +697,33 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
         friction = actor_model.diffusion_model.friction.value
         friction_detached = jax.lax.stop_gradient(friction)
         metrics = dict(
-            actor_loss=_metric_scalar(actor_loss_val),
+            actor_loss=_metric_scalar(_weighted_batch_mean(actor_loss_val, importance_ratio)),
             actor_WPO_loss=_metric_scalar(actor_WPO_loss),
             Kl_reg_loss=_metric_scalar(
-                kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
+                _weighted_batch_mean(
+                    kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
+                    importance_ratio,
+                )
             ),
             loss=loss,
             temp=_metric_scalar(temperature),
-            abs_batch_action=jnp.abs(minibatch.action).mean(),
-            abs_pred_action=jnp.abs(pred_action).mean(),
-            reward_mean=minibatch.reward.mean() * cfg.diffusion.diff_steps,
-            energy_mean=-minibatch.reward.mean() * cfg.diffusion.diff_steps + 1,
-            kl=kl_clip_value.mean(),
-            kl_clip_value=kl.mean(),
+            abs_batch_action=_metric_scalar(
+                _weighted_batch_mean(jnp.abs(minibatch.action), importance_ratio)
+            ),
+            abs_pred_action=_metric_scalar(
+                _weighted_batch_mean(jnp.abs(pred_action), importance_ratio)
+            ),
+            reward_mean=_metric_scalar(
+                _weighted_batch_mean(minibatch.reward, importance_ratio)
+            )
+            * cfg.diffusion.diff_steps,
+            energy_mean=-_metric_scalar(
+                _weighted_batch_mean(minibatch.reward, importance_ratio)
+            )
+            * cfg.diffusion.diff_steps
+            + 1,
+            kl=_metric_scalar(_weighted_batch_mean(kl_clip_value, importance_ratio)),
+            kl_clip_value=_metric_scalar(_weighted_batch_mean(kl, importance_ratio)),
             lagrangian=_metric_scalar(lagrangian),
             lagrangian_loss=lagrangian_loss,
             run_cost=0.0,
@@ -625,7 +737,7 @@ def actor_WPO_loss_fn(params, updated_state, critic_rollout_model, step_key, min
             entropy_penalty=entropy_penalty,
             kl_penalty=kl_penalty,
             kl_clip_ratio=clip_ratio,
-            target_values=target_vals.mean(),
+            target_values=_metric_scalar(_weighted_batch_mean(target_vals, importance_ratio)),
             friction=friction_detached.mean(),
             entropy_prior=_metric_scalar(entropy_prior),
         )

@@ -2,7 +2,7 @@ hyperparameters:
   num_eval: 50
   total_time_steps: 50_000_000
   num_mini_batches: 8
-  lr: 3e-4
+  lr: 1e-4
   temperature_lr: 2e-4
   entropy_coef: 0.00001 
   update_entropy_lagrangian: false
@@ -16,7 +16,7 @@ hyperparameters:
   vmin: -100
   vmax: 200
   num_bins: 301
-  num_epochs: 8
+  num_epochs: 12
   diffusion:
     friction: 0.25
     init_std: 3.0

@@ -591,3 +591,46 @@ Outputs are written as PNG files into `artifacts/` (see `--tdw-action-analysis-o
 
 - Histogram + reward plot: `<basename>.png`
 - Q-function plot (when `--tdw-action-analysis-q` is set): `<basename>__q.png`
+
+## TurningDoubleWellEnv Paper Composites (6 Methods, 2 Rows)
+
+To auto-generate compact paper-ready composites in the fixed method order
+
+`REPPO | DiffPPO | DiffPPO (zero temp) | DMERL | DMERL-WPO | DIME`
+
+use:
+
+```bash
+python eval_models/make_tdw_paper_figures.py \
+  --checkpoint-reppo saved_models/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744.pkl \
+  --checkpoint-diffppo saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl  \
+  --checkpoint-diffppo saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
+  --checkpoint-dmerl saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
+  --checkpoint-dmerl-wpo saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl \
+  --checkpoint-dime saved_models/reppo_dime__TurningDoubleWellEnv__seed0__trial0__ts20260326T110236.pkl \
+  --sampler-diffppo sde \
+  --sampler-diffppo-zero ode \
+  --horizon 100 \
+  --analysis-samples 5000 \
+  --analysis-grid 401 \
+  --analysis-bins 60 \
+  --env-config-override randomize_initial_heading=true \
+  --env-config-override snap_action_to_optimal=true \
+  --render-num-envs 20 \
+  --render-width 1200 \
+  --render-height 800 \
+  --output-dir artifacts/tdw_paper \
+  --output-stem tdw_paper_main
+```
+
+`--checkpoint-diffppo-zero` is optional. If omitted, the script auto-detects a DiffPPO checkpoint with `entropy_coef` closest to `0` (same env and, when available, same seed/trial).
+If you pass `--checkpoint-diffppo` multiple times, zero-temp selection is done among those provided runs.
+
+This writes:
+
+- `<output-dir>/<output-stem>__action_hist_row.png`  
+  One row (6 columns), each column overlays all state-conditioned action histograms for one method, with a shared state legend and reward curve.
+- `<output-dir>/<output-stem>__trajectory_row.png`  
+  One row (6 columns) of static trajectory snapshots (not GIFs), one per method.
+- `<output-dir>/<output-stem>__manifest.json`  
+  Metadata with checkpoint paths, resolved samplers, and source render artifacts.

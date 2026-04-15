@@ -47,6 +47,12 @@ hyperparameters:
   num_envs: 1024
   num_epochs: 4
   use_lax_scan: true
+  importance_sample_diffusion_steps: false
+  diffusion_step_sampling_mode: "power"  # "power" or "song"
+  diffusion_step_sampling_exponent: 1.0  # power mode: 1.0=linear, 2.0=quadratic
+  diffusion_step_song_reverse_time: true
+  diffusion_step_sampling_min_prob: 0.0
+  diffusion_step_importance_clip: null
 
   # exploration settings (currently not touched)
   exploration_noise_max: 1.0
@@ -109,7 +115,7 @@ hyperparameters:
   temperature_lr_mult: 1.0
   lagrangian_lr_mult: 1.0
   ## auxiliary loss settings
-  aux_loss_mult: 1.
+  aux_loss_mult: 0.75
   aux_loss_alpha: 0.95
   use_final_step_reward_target: true
 

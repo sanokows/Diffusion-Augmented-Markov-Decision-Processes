@@ -1,0 +1,3 @@
+# Backward-compatible alias to keep old experiment_overrides names working.
+defaults:
+  - /experiment_overrides/reppo: mjx_humanoid_large_data_test

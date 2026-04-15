@@ -120,7 +120,7 @@ launch_run() {
         num_trials="$NUM_TRIALS" \
         num_seeds="$NUM_SEEDS" \
         seed="$BASE_SEED" \
-        experiment_overrides=mjx_dmc_large_data_dmerl_small_nets &
+        experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_small_nets &
     GPU_PIDS[$GPU_SLOT]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 }

@@ -29,7 +29,9 @@ def integrate_one_step(diffusion_model, curr_x , step, obs, key, stop_grad=False
     
     obs_new = dict(obs)
     obs_new['diff_time_step'] = obs_new['diff_time_step'] + 1.0
-    mu_bwd, scale_new, eta_new = diffusion_model.compute_diffusion_stuff(step+1, x, obs_new, model=diffusion_model.backward_model)
+    mu_bwd, scale_new, eta_new = diffusion_model.compute_diffusion_stuff(
+        step + 1, x_new, obs_new, model=diffusion_model.backward_model
+    )
 
     bwd_mean = x_new + eta_new * mu_bwd
 
@@ -93,7 +95,9 @@ def evaluate_one_step_log_prob(diffusion_model, curr_x , step, obs, actions, sto
     # Backward kernel
     obs_new = dict(obs)
     obs_new['diff_time_step'] = obs_new['diff_time_step'] + 1.0
-    mu_bwd, scale_new, eta_new = diffusion_model.compute_diffusion_stuff(step+1, x, obs_new, model=diffusion_model.backward_model)
+    mu_bwd, scale_new, eta_new = diffusion_model.compute_diffusion_stuff(
+        step + 1, x_new, obs_new, model=diffusion_model.backward_model
+    )
 
     bwd_mean = x_new + eta_new * mu_bwd
 

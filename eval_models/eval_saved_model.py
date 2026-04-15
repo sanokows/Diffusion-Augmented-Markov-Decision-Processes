@@ -402,6 +402,21 @@ def _resolve_train_mode(checkpoint: dict[str, Any], cfg) -> str:
     return ""
 
 
+_FORCE_SDE_EVAL_ENVS = {"AcrobotSwingupSparse", "TurningDoubleWellEnv"}
+
+
+def _force_sde_eval_for_env(env_name: str | None) -> bool:
+    return str(env_name or "") in _FORCE_SDE_EVAL_ENVS
+
+
+def _resolve_dmerl_sampler_auto(train_mode: str | None, env_name: str | None) -> str:
+    if str(train_mode or "").upper() == "WPO":
+        return "sde"
+    if _force_sde_eval_for_env(env_name):
+        return "sde"
+    return "ode"
+
+
 def _entropy_coef_token(entropy_coef: float | None) -> str | None:
     if entropy_coef is None:
         return None
@@ -1275,6 +1290,70 @@ def _to_jax_tree(tree):
     return jax.tree.map(lambda x: jnp.asarray(x), tree)
 
 
+def _ensure_reppo_actor_params_compat(actor_params, *, ent_start: float):
+    """Backfill newer SAC actor params missing in older REPPO checkpoints."""
+    if actor_params is None:
+        return actor_params
+    if not isinstance(actor_params, dict):
+        return actor_params
+
+    try:
+        keys = set(actor_params.keys())
+    except Exception:
+        return actor_params
+
+    if "entropy_lagrangian_log_param" in keys:
+        return actor_params
+
+    if "temperature_log_param" in keys:
+        fallback = jnp.asarray(actor_params["temperature_log_param"])
+    else:
+        fallback = jnp.ones((1,), dtype=jnp.float32) * float(math.log(float(ent_start)))
+
+    out = dict(actor_params)
+    out["entropy_lagrangian_log_param"] = fallback
+    return out
+
+
+def _ensure_diffppo_params_compat(params, *, ent_start: float):
+    """Backfill newer DiffPPO params missing in older checkpoints."""
+    if params is None or not isinstance(params, dict):
+        return params
+    actor_module = params.get("actor_module", None)
+    if not isinstance(actor_module, dict):
+        return params
+    if "log_entropy_lagrangian" in actor_module:
+        return params
+
+    if "log_temperature" in actor_module:
+        fallback = jnp.asarray(actor_module["log_temperature"])
+    else:
+        fallback = jnp.ones((1,), dtype=jnp.float32) * float(math.log(float(ent_start)))
+
+    out = dict(params)
+    actor_out = dict(actor_module)
+    actor_out["log_entropy_lagrangian"] = fallback
+    out["actor_module"] = actor_out
+    return out
+
+
+def _ensure_dmerl_actor_params_compat(actor_params, *, ent_start: float):
+    """Backfill newer DMERL actor params missing in older checkpoints."""
+    if actor_params is None or not isinstance(actor_params, dict):
+        return actor_params
+    if "log_entropy_lagrangian" in actor_params:
+        return actor_params
+
+    if "log_temperature" in actor_params:
+        fallback = jnp.asarray(actor_params["log_temperature"])
+    else:
+        fallback = jnp.ones((1,), dtype=jnp.float32) * float(math.log(float(ent_start)))
+
+    out = dict(actor_params)
+    out["log_entropy_lagrangian"] = fallback
+    return out
+
+
 def _select_seed(tree, seed_idx: int, num_seeds: int):
     def _maybe_index(x):
         x = np.asarray(x)
@@ -1835,7 +1914,10 @@ def _render_mjx_rollout_grid_dmerl(
     if sampler not in ("auto", "sde", "ode"):
         raise ValueError(f"Unknown --diffusion-sampler: {sampler}")
     if sampler == "auto":
-        sampler = "sde" if str(train_mode or "").upper() == "WPO" else "ode"
+        sampler = _resolve_dmerl_sampler_auto(
+            train_mode=train_mode,
+            env_name=OmegaConf.select(cfg_render, "env.name"),
+        )
 
     out_gif = _resolve_mjx_grid_render_out(
         method_name=method_name,
@@ -2621,7 +2703,7 @@ def _render_turning_double_well_reppo(
     fps: int,
     seed: int,
     render_format: str,
-) -> None:
+) -> dict[str, str]:
     method_display = _method_display_name(
         method_name, train_mode=train_mode, entropy_coef=entropy_coef
     )
@@ -2697,7 +2779,7 @@ def _render_turning_double_well_reppo(
 
     if not hasattr(base_env, "render_trajectory"):
         logging.warning("Underlying env does not expose render_trajectory; skipping render.")
-        return
+        return {}
 
     out_path = _resolve_render_out(
         method_name=method_name,
@@ -2805,7 +2887,10 @@ def _render_turning_double_well_reppo(
         mode_upper = str(train_mode or OmegaConf.select(cfg_render, "hyperparameters.train_mode") or "").upper()
         sampler_mode = sampler
         if sampler_mode == "auto":
-            sampler_mode = "sde" if mode_upper == "WPO" else "ode"
+            sampler_mode = _resolve_dmerl_sampler_auto(
+                train_mode=mode_upper,
+                env_name=OmegaConf.select(cfg_render, "env.name"),
+            )
 
         for step_idx in range(total_steps):
             key, act_key, env_key = jax.random.split(key, 3)
@@ -2868,6 +2953,7 @@ def _render_turning_double_well_reppo(
         "Saved TurningDoubleWellEnv render: primary=%s",
         outputs.get("primary", ""),
     )
+    return outputs
 
 
 def _collect_reppo_trajectories(
@@ -3054,7 +3140,10 @@ def _collect_dmerl_trajectories(
     if sampler not in ("auto", "sde", "ode"):
         raise ValueError(f"Unknown --diffusion-sampler: {sampler}")
     if sampler == "auto":
-        sampler = "sde" if str(train_mode or "").upper() == "WPO" else "ode"
+        sampler = _resolve_dmerl_sampler_auto(
+            train_mode=train_mode,
+            env_name=OmegaConf.select(cfg, "env.name"),
+        )
 
     diff_steps = int(diff_cfg.diff_steps)
     total_steps = int(horizon) * diff_steps
@@ -3292,6 +3381,9 @@ def _eval_reppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
     )
     actor_graphdef = nnx.graphdef(actor_template)
     actor_params = _to_jax_tree(actor_params)
+    actor_params = _ensure_reppo_actor_params_compat(
+        actor_params, ent_start=float(hp.ent_start)
+    )
     if norm_state is not None:
         norm_state = _to_jax_tree(norm_state)
     if not bool(hp.normalize_env):
@@ -3530,6 +3622,9 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
         norm_state = _select_seed(norm_state, seed_idx, num_seeds)
 
     actor_params = _to_jax_tree(actor_params)
+    actor_params = _ensure_dmerl_actor_params_compat(
+        actor_params, ent_start=float(getattr(cfg.hyperparameters, "ent_start", 0.1))
+    )
     critic_params = _to_jax_tree(critic_params)
     actor_target_params = _to_jax_tree(actor_target_params)
     if norm_state is not None:
@@ -3624,7 +3719,10 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
     if sampler_arg not in ("auto", "sde", "ode"):
         raise ValueError(f"Unknown --diffusion-sampler: {sampler_arg}")
     if sampler_arg == "auto":
-        sampler = "sde" if str(train_mode).upper() == "WPO" else "ode"
+        sampler = _resolve_dmerl_sampler_auto(
+            train_mode=train_mode,
+            env_name=OmegaConf.select(cfg, "env.name"),
+        )
     else:
         sampler = sampler_arg
 
@@ -3750,6 +3848,9 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
         reward_norm_state = _select_seed(reward_norm_state, seed_idx, num_seeds)
 
     params = _to_jax_tree(params)
+    params = _ensure_diffppo_params_compat(
+        params, ent_start=float(getattr(hp, "ent_start", 0.1))
+    )
     if norm_state is not None:
         norm_state = _to_jax_tree(norm_state)
     if critic_norm_state is not None:

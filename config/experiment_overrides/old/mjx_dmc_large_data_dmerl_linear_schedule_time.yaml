@@ -1,0 +1,3 @@
+# Backward-compatible alias to keep old experiment_overrides names working.
+defaults:
+  - /experiment_overrides/dmerl: mjx_dmc_large_data_dmerl_linear_schedule_time

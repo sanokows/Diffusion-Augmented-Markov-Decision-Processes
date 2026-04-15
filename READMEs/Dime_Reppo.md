@@ -21,7 +21,7 @@ exec python -m src.jaxrl.reppo_dime \
         env=mjx_dmc \
         seed=0 \
         num_trials=1 \
-        experiment_overrides=mjx_dmc_large_data 
+        experiment_overrides=dime/mjx_dmc_large_data 
 
 ### todo test smaller vmin and vmax only two critic layers
-exec python -m src.jaxrl.reppo_dime env.name=TurningDoubleWellEnv hyperparameters.num_eval=50 hyperparameters.total_time_steps=10000000 hyperparameters.diffusion.diff_steps=8 env=mjx_double_well experiment_overrides=mjx_double_well_dime
+exec python -m src.jaxrl.reppo_dime env.name=TurningDoubleWellEnv hyperparameters.num_eval=50 hyperparameters.total_time_steps=10000000 hyperparameters.diffusion.diff_steps=8 env=mjx_double_well experiment_overrides=dime/mjx_double_well_dime

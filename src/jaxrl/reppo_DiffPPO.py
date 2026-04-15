@@ -13,6 +13,9 @@ import numpy as np
 import hydra
 import jax
 import optax
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 from flax import nnx, struct
 from flax.struct import PyTreeNode
@@ -49,6 +52,10 @@ from src.jaxrl.normalization import (
     Normalizer,
 )
 from src.jaxrl.reppo_helpers.rollout_aux_targets import build_rollout_aux_targets
+from src.jaxrl.reppo_helpers.diffusion_index_sampling import (
+    prepare_diffusion_importance_sampling,
+    sample_minibatch_indices,
+)
 from src.jaxrl.reppo_DMERL_old import randomize_env_steps
 
 
@@ -127,6 +134,46 @@ def _sectioned_wandb_key(key: str) -> str:
 
 def _sectioned_wandb_log(log_data: dict[str, Any]) -> dict[str, Any]:
     return {_sectioned_wandb_key(key): value for key, value in log_data.items()}
+
+
+def _weighted_batch_mean(values: jax.Array, importance_ratio: jax.Array | None) -> jax.Array:
+    """Importance-weighted mean over batch axis (axis 0)."""
+    values = jnp.asarray(values)
+    if values.ndim == 0:
+        raise ValueError(
+            "_weighted_batch_mean expects per-sample values with a batch axis, got scalar."
+        )
+    if importance_ratio is None:
+        return jnp.mean(values)
+    ratio = jnp.asarray(importance_ratio, dtype=values.dtype).reshape((-1,))
+    if values.shape[0] != ratio.shape[0]:
+        raise ValueError(
+            "_weighted_batch_mean shape mismatch: values batch axis "
+            f"{values.shape[0]} != importance_ratio length {ratio.shape[0]}."
+        )
+    ratio = ratio.reshape((ratio.shape[0],) + (1,) * (values.ndim - 1))
+    return jnp.mean(ratio * values)
+
+
+def _weighted_batch_mean_axis0(
+    values: jax.Array, importance_ratio: jax.Array | None
+) -> jax.Array:
+    """Importance-weighted mean over batch axis while preserving remaining axes."""
+    values = jnp.asarray(values)
+    if values.ndim == 0:
+        raise ValueError(
+            "_weighted_batch_mean_axis0 expects per-sample values with a batch axis, got scalar."
+        )
+    if importance_ratio is None:
+        return jnp.mean(values, axis=0)
+    ratio = jnp.asarray(importance_ratio, dtype=values.dtype).reshape((-1,))
+    if values.shape[0] != ratio.shape[0]:
+        raise ValueError(
+            "_weighted_batch_mean_axis0 shape mismatch: values batch axis "
+            f"{values.shape[0]} != importance_ratio length {ratio.shape[0]}."
+        )
+    ratio = ratio.reshape((ratio.shape[0],) + (1,) * (values.ndim - 1))
+    return jnp.mean(ratio * values, axis=0)
 
 
 def require(cfg, key):
@@ -218,6 +265,12 @@ class PPOConfig(struct.PyTreeNode):
     num_collection_step_factor: float = 1.0
     use_temp_lagrangian_mlp: bool = False
     temp_lagrangian_hidden: int = 64
+    importance_sample_diffusion_steps: bool = False
+    diffusion_step_sampling_mode: str = "power"
+    diffusion_step_sampling_exponent: float = 1.0
+    diffusion_step_song_reverse_time: bool = True
+    diffusion_step_sampling_min_prob: float = 0.0
+    diffusion_step_importance_clip: float | None = None
 
 
 class Transition(struct.PyTreeNode):
@@ -439,6 +492,9 @@ class ReppoPPOTrainer:
             cfg.num_steps * self.diffusion_steps * cfg.num_collection_step_factor
         )
         self.num_minibatches = cfg.num_mini_batches * self.diffusion_steps
+        self.use_diffusion_importance_sampling = bool(
+            getattr(cfg, "importance_sample_diffusion_steps", False)
+        )
         self.normalizer = DictNormalizer()
         self.reward_normalizer = Normalizer()
         self.num_train_steps = cfg.total_time_steps // int(cfg.num_steps * cfg.num_envs * cfg.num_collection_step_factor) 
@@ -887,11 +943,54 @@ class ReppoPPOTrainer:
             ),
             data,
         )
+        total_size = math.floor(self.num_collection_steps * cfg.num_envs)
+        if self.use_diffusion_importance_sampling:
+            step_indices = data[0].obs["diff_time_step"][..., 0]
+            sampling_mode = str(
+                getattr(self.cfg, "diffusion_step_sampling_mode", "power")
+            ).lower()
+            beta_per_sample = None
+            if sampling_mode == "song":
+                diff_model = model.actor_module.diffusion_model
+                step_indices_for_coeff = step_indices.reshape((-1, 1))
+                _, eta, _ = diff_model.diffusion_coeff_fn(
+                    step_indices_for_coeff, data[0].obs
+                )
+                beta_per_sample = eta
+                if beta_per_sample.ndim > 1:
+                    beta_per_sample = jnp.mean(beta_per_sample, axis=-1)
+                beta_per_sample = beta_per_sample.reshape(-1).astype(jnp.float32)
+            per_sample_probs, per_sample_importance_ratio, step_probs = (
+                prepare_diffusion_importance_sampling(
+                    step_indices,
+                    self.cfg.diffusion.diff_steps,
+                    sampling_mode=sampling_mode,
+                    exponent=self.cfg.diffusion_step_sampling_exponent,
+                    beta_per_sample=beta_per_sample,
+                    song_reverse_time=bool(
+                        getattr(self.cfg, "diffusion_step_song_reverse_time", True)
+                    ),
+                    min_step_prob=self.cfg.diffusion_step_sampling_min_prob,
+                    importance_clip=self.cfg.diffusion_step_importance_clip,
+                )
+            )
+        else:
+            per_sample_probs = jnp.full(
+                (total_size,),
+                1.0 / max(total_size, 1),
+                dtype=jnp.float32,
+            )
+            per_sample_importance_ratio = jnp.ones((total_size,), dtype=jnp.float32)
+            step_probs = jnp.full(
+                (self.cfg.diffusion.diff_steps,),
+                1.0 / max(self.cfg.diffusion.diff_steps, 1),
+                dtype=jnp.float32,
+            )
 
         def update(train_state, key):
             def minibatch_update(carry, scan_inputs):
                 idx, train_state = carry
-                indices, step_key = scan_inputs
+                indices, step_key, importance_ratio = scan_inputs
                 minibatch, advantages, target_values = jax.tree.map(
                     lambda x: jnp.take(x, indices, axis=0), data
                 )
@@ -989,7 +1088,6 @@ class ReppoPPOTrainer:
                             aux_weight = (
                                 cfg.diffusion.diff_steps
                                 * (aux_weight == 1.0)
-                                * cfg.aux_loss_mult
                             )
 
                         masked_aux_terms = jnp.concatenate(
@@ -1022,11 +1120,14 @@ class ReppoPPOTrainer:
                         else:
                             alpha = 1.0
                             aux_loss = jnp.mean(masked_aux_loss) 
-                        critic_loss = optax.squared_error(value, target_values)
-                        critic_loss = jnp.mean(critic_loss)
-                        value_loss = jnp.mean(
+                        critic_loss = _weighted_batch_mean(
+                            optax.squared_error(value, target_values), importance_ratio
+                        )
+                        value_loss = _weighted_batch_mean(
                             (1.0 - minibatch.truncated) * (critic_update_loss)
                             + cfg.aux_loss_mult * aux_loss
+                            ,
+                            importance_ratio,
                         )
                     else:
                         value = model.critic(minibatch.critic_obs)
@@ -1035,9 +1136,10 @@ class ReppoPPOTrainer:
                         ).clip(-cfg.clip_ratio, cfg.clip_ratio)
                         value_error = jnp.square(value - target_values)
                         value_error_clipped = jnp.square(value_pred_clipped - target_values)
-                        value_loss = 0.5 * jnp.mean(
+                        value_loss = 0.5 * _weighted_batch_mean(
                             (1.0 - minibatch.truncated)
-                            * jnp.maximum(value_error, value_error_clipped)
+                            * jnp.maximum(value_error, value_error_clipped),
+                            importance_ratio,
                         )
                         critic_loss = value_loss
 
@@ -1082,8 +1184,10 @@ class ReppoPPOTrainer:
                     clipped = jnp.logical_or(
                         ratio > 1 + cfg.clip_ratio, ratio < 1 - cfg.clip_ratio
                     )
-                    clip_fraction = (valid_mask * clipped).mean() / (
-                        valid_mask.mean() + 1e-8
+                    clip_fraction = _weighted_batch_mean(
+                        valid_mask * clipped.astype(jnp.float32), importance_ratio
+                    ) / (
+                        _weighted_batch_mean(valid_mask, importance_ratio) + 1e-8
                     )
                     lagrangian_loss = jnp.array(0.0)
                     
@@ -1092,8 +1196,9 @@ class ReppoPPOTrainer:
                         jnp.clip(ratio, 1 - cfg.clip_ratio, 1 + cfg.clip_ratio)
                         * adv_base
                     )
-                    actor_loss = -jnp.mean(
-                        valid_mask * jnp.minimum(actor_loss1, actor_loss2)
+                    actor_loss = _weighted_batch_mean(
+                        -(valid_mask * jnp.minimum(actor_loss1, actor_loss2)),
+                        importance_ratio,
                     )
                     do_update = ( (actor_loss1 < actor_loss2))| ((ratio >= 1 - cfg.clip_ratio) & (ratio <= 1 + cfg.clip_ratio))
                     do_update = valid_mask.astype(bool) * do_update
@@ -1109,7 +1214,10 @@ class ReppoPPOTrainer:
                     scaled_dest_log_prob = dest_log_prob/sdt
                     stop_grad_ratio = jax.lax.stop_gradient(ratio)
                     masked_scaled_dest_log_prob = jnp.where(do_update, scaled_dest_log_prob, jax.lax.stop_gradient(scaled_dest_log_prob))
-                    dest_loss = -jnp.mean(stop_grad_ratio*masked_scaled_dest_log_prob*entropy_scale)
+                    dest_loss = _weighted_batch_mean(
+                        -stop_grad_ratio * masked_scaled_dest_log_prob * entropy_scale,
+                        importance_ratio,
+                    )
                     actor_loss += dest_loss
 
 
@@ -1118,15 +1226,20 @@ class ReppoPPOTrainer:
                         + cfg.value_coef * value_loss
                     )
                     if cfg.update_entropy_lagrangian:
-                        entropy = -self.diffusion_steps * jnp.mean(log_ratio, axis=0)
+                        entropy = -self.diffusion_steps * _weighted_batch_mean_axis0(
+                            log_ratio, importance_ratio
+                        )
                         target_entropy = self.action_size_target + entropy
                         target_entropy_loss = (
                             model.actor_module.temperature()
                             * jax.lax.stop_gradient(target_entropy)
-                        ).mean()
+                        )
+                        target_entropy_loss = jnp.mean(target_entropy_loss)
                         loss += target_entropy_loss
                     else:
-                        entropy = -self.diffusion_steps * jnp.mean(log_ratio, axis=0)
+                        entropy = -self.diffusion_steps * _weighted_batch_mean_axis0(
+                            log_ratio, importance_ratio
+                        )
                         target_entropy = 0.0
                         target_entropy_loss = 0.0
                     if cfg.use_kl_regularization:
@@ -1148,19 +1261,26 @@ class ReppoPPOTrainer:
                         lagrangian=lagrangian,
                         lagrangian_loss=lagrangian_loss,
                         loss=loss,
-                        mean_value=value.mean(),
-                        mean_log_prob=gen_log_prob.mean(),
-                        mean_advantages=adv_base.mean(),
-                        mean_action=minibatch.action.mean(),
-                        abs_batch_action=jnp.abs(minibatch.action).mean(),
-                        abs_pred_action=jnp.abs(minibatch.action).mean(),
-                        reward_mean=minibatch.reward.mean()*self.diffusion_steps,
+                        mean_value=_weighted_batch_mean(value, importance_ratio),
+                        mean_log_prob=_weighted_batch_mean(gen_log_prob, importance_ratio),
+                        mean_advantages=_weighted_batch_mean(adv_base, importance_ratio),
+                        mean_action=_weighted_batch_mean(minibatch.action, importance_ratio),
+                        abs_batch_action=_weighted_batch_mean(
+                            jnp.abs(minibatch.action), importance_ratio
+                        ),
+                        abs_pred_action=_weighted_batch_mean(
+                            jnp.abs(minibatch.action), importance_ratio
+                        ),
+                        reward_mean=_weighted_batch_mean(
+                            minibatch.reward, importance_ratio
+                        )
+                        * self.diffusion_steps,
                         target_value_mean=target_value_mean,
                         target_value_min=target_value_min,
                         target_value_max=target_value_max,
                         clip_ratio=clip_fraction,
                         critic_update_loss=(
-                            jnp.mean(critic_update_loss)
+                            _weighted_batch_mean(critic_update_loss, importance_ratio)
                             if cfg.use_categorical_value
                             else jnp.array(0.0)
                         ),
@@ -1170,9 +1290,10 @@ class ReppoPPOTrainer:
                             else jnp.array(0.0)
                         ),
                         rew_aux_loss=(
-                            jnp.mean(
+                            _weighted_batch_mean(
                                 aux_rew_loss
-                                * aux_weight.astype(aux_rew_loss.dtype)
+                                * aux_weight.astype(aux_rew_loss.dtype),
+                                importance_ratio,
                             )
                             if cfg.use_categorical_value
                             else jnp.array(0.0)
@@ -1186,27 +1307,35 @@ class ReppoPPOTrainer:
                 global_grad_norm = jnp.linalg.norm(flat_grads)
 
                 metrics = output[1]
-                metrics["advantages"] = advantages.mean()
+                metrics["advantages"] = _weighted_batch_mean(advantages, importance_ratio)
                 metrics["global_grad_norm"] = global_grad_norm
+                metrics["importance_ratio_mean"] = jnp.mean(importance_ratio)
+                metrics["importance_ratio_max"] = jnp.max(importance_ratio)
+                metrics["importance_ratio_min"] = jnp.min(importance_ratio)
                 train_state = train_state.apply_gradients(grads)
                 return (idx + 1, train_state), metrics
 
             key, shuffle_key = jax.random.split(key)
-
-            mini_batch_size = (self.num_collection_steps * cfg.num_envs) // self.num_minibatches
-            indices = jax.random.permutation(shuffle_key, self.num_collection_steps * cfg.num_envs)
-            minibatch_idxs = jax.tree.map(
-                lambda x: x.reshape(
-                    (self.num_minibatches, mini_batch_size, *x.shape[1:])
-                ),
-                indices,
+            mini_batch_size = total_size // self.num_minibatches
+            minibatch_idxs, minibatch_importance_ratio, minibatch_keys = (
+                sample_minibatch_indices(
+                    shuffle_key,
+                    total_size=total_size,
+                    num_minibatches=self.num_minibatches,
+                    mini_batch_size=mini_batch_size,
+                    use_importance_sampling=self.use_diffusion_importance_sampling,
+                    per_sample_probs=per_sample_probs,
+                    per_sample_importance_ratio=per_sample_importance_ratio,
+                )
             )
-            minibatch_keys = jax.random.split(shuffle_key, self.num_minibatches)
 
             train_state, metrics = jax.lax.scan(
-                minibatch_update, train_state, (minibatch_idxs, minibatch_keys)
+                minibatch_update,
+                train_state,
+                (minibatch_idxs, minibatch_keys, minibatch_importance_ratio),
             )
             metrics = jax.tree.map(lambda x: x.mean(0), metrics)
+            metrics["step_sampling_probs"] = step_probs
             return train_state, metrics
 
         key, train_key = jax.random.split(key)
@@ -1349,6 +1478,7 @@ def run(cfg: DictConfig):
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         advantages = metrics.pop("train/advantages", None)
+        step_sampling_probs = metrics.pop("train/step_sampling_probs", None)
         advantages_hist = None
         if advantages is not None:
             adv_np = np.asarray(jax.device_get(advantages))
@@ -1365,6 +1495,31 @@ def run(cfg: DictConfig):
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
+        if step_sampling_probs is not None:
+            step_probs_np = np.asarray(step_sampling_probs)
+            if step_probs_np.ndim == 0:
+                step_probs_mean = step_probs_np.reshape(1)
+            else:
+                step_probs_mean = step_probs_np
+                while step_probs_mean.ndim > 1:
+                    step_probs_mean = step_probs_mean.mean(axis=0)
+
+            for step_idx, prob in enumerate(step_probs_mean):
+                log_data[f"train/step_sampling_prob_t{step_idx:02d}"] = float(prob)
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(
+                np.arange(step_probs_mean.shape[0]),
+                step_probs_mean,
+                marker="o",
+                markersize=2,
+            )
+            ax.set_title("Diffusion-step sampling probability q(t)")
+            ax.set_xlabel("Diffusion step")
+            ax.set_ylabel("q(t)")
+            fig.tight_layout()
+            log_data["figures/step_sampling_probs"] = wandb.Image(fig)
+            plt.close(fig)
         if advantages_hist is not None:
             log_data["train/advantages"] = advantages_hist
         wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])

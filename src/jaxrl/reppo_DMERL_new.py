@@ -42,6 +42,10 @@ from src.jaxrl.reppo_helpers.learning_DiffReppo import (
     critic_loss_fn,
     maybe_add_q_grad,
 )
+from src.jaxrl.reppo_helpers.diffusion_index_sampling import (
+    prepare_diffusion_importance_sampling,
+    sample_minibatch_indices,
+)
 from src.jaxrl.reppo_helpers.rollout_aux_targets import build_rollout_aux_targets
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
@@ -55,6 +59,12 @@ from src.networks.jax_models_DMERL import (
 )
 
 logging.basicConfig(level=logging.INFO)
+
+_FORCE_SDE_EVAL_ENVS = {"AcrobotSwingupSparse", "TurningDoubleWellEnv"}
+
+
+def _force_sde_eval_for_env(env_name: str | None) -> bool:
+    return str(env_name or "") in _FORCE_SDE_EVAL_ENVS
 
 
 def _sectioned_wandb_key(key: str) -> str:
@@ -256,6 +266,12 @@ class ReppoConfig(struct.PyTreeNode):
     normalize_reward: bool = False
     log_target_value_stats: bool = False
     log_pnorms: bool = False
+    importance_sample_diffusion_steps: bool = False
+    diffusion_step_sampling_mode: str = "power"
+    diffusion_step_sampling_exponent: float = 1.0
+    diffusion_step_song_reverse_time: bool = True
+    diffusion_step_sampling_min_prob: float = 0.0
+    diffusion_step_importance_clip: float | None = None
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -371,10 +387,13 @@ class ReppoDMERLTrainer:
             cfg.num_steps * self.cfg.diffusion.diff_steps * cfg.num_collection_step_factor
         )
         self.num_minibatches = cfg.num_mini_batches*self.cfg.diffusion.diff_steps
+        self.use_diffusion_importance_sampling = bool(
+            getattr(cfg, "importance_sample_diffusion_steps", False)
+        )
         action_shape = jnp.prod(jnp.array(self.env.action_space(env_params).shape))
         self.action_size_target = action_shape * cfg.ent_target_mult
         self.sde_eval_fn = self._make_sde_eval_fn()
-        force_sde_eval = self.env_name == "AcrobotSwingupSparse"
+        force_sde_eval = _force_sde_eval_for_env(self.env_name)
         if(cfg.train_mode == "WPO"):
             self.eval_fn = self._make_sde_eval_fn(eval_policy=True)
             #self.eval_fn = self._make_ode_eval_fn()
@@ -476,18 +495,18 @@ class ReppoDMERLTrainer:
             metrics = {
                 "episode_return": returned_episode_returns.mean(where=returned_episode)
                 * reward_scale,
-                "episode_return_unmasked": returned_episode_returns.mean()
-                * reward_scale,
+                # "episode_return_unmasked": returned_episode_returns.mean()
+                # * reward_scale,
                 "episode_return_std": returned_episode_returns.std(
                     where=returned_episode
                 ),
-                "episode_return_std_unmasked": returned_episode_returns.std(),
+                # "episode_return_std_unmasked": returned_episode_returns.std(),
                 "episode_length": returned_episode_lengths.mean(where=returned_episode),
-                "episode_length_unmasked": returned_episode_lengths.mean(),
+                # "episode_length_unmasked": returned_episode_lengths.mean(),
                 "episode_length_std": returned_episode_lengths.std(
                     where=returned_episode
                 ),
-                "episode_length_std_unmasked": returned_episode_lengths.std(),
+                # "episode_length_std_unmasked": returned_episode_lengths.std(),
                 "num_episodes": returned_episode.sum(),
                 "returned_episode_fraction": returned_episode.mean(),
             }
@@ -1127,6 +1146,52 @@ class ReppoDMERLTrainer:
         data = jax.tree.map(
             lambda x: x.reshape((self.num_collection_steps * cfg.num_envs, *x.shape[2:])), data
         )
+        total_size = self.num_collection_steps * cfg.num_envs
+        if self.use_diffusion_importance_sampling:
+            step_indices = data[0].obs["diff_time_step"][..., 0]
+            sampling_mode = str(
+                getattr(self.cfg, "diffusion_step_sampling_mode", "power")
+            ).lower()
+            beta_per_sample = None
+            if sampling_mode == "song":
+                actor_model_for_sampling = nnx.merge(
+                    train_state.actor.graphdef, train_state.actor.params
+                )
+                diff_model = actor_model_for_sampling.diffusion_model
+                step_indices_for_coeff = step_indices.reshape((-1, 1))
+                _, eta, _ = diff_model.diffusion_coeff_fn(
+                    step_indices_for_coeff, data[0].obs
+                )
+                beta_per_sample = eta
+                if beta_per_sample.ndim > 1:
+                    beta_per_sample = jnp.mean(beta_per_sample, axis=-1)
+                beta_per_sample = beta_per_sample.reshape(-1).astype(jnp.float32)
+            per_sample_probs, per_sample_importance_ratio, step_probs = (
+                prepare_diffusion_importance_sampling(
+                    step_indices,
+                    self.cfg.diffusion.diff_steps,
+                    sampling_mode=sampling_mode,
+                    exponent=self.cfg.diffusion_step_sampling_exponent,
+                    beta_per_sample=beta_per_sample,
+                    song_reverse_time=bool(
+                        getattr(self.cfg, "diffusion_step_song_reverse_time", True)
+                    ),
+                    min_step_prob=self.cfg.diffusion_step_sampling_min_prob,
+                    importance_clip=self.cfg.diffusion_step_importance_clip,
+                )
+            )
+        else:
+            per_sample_probs = jnp.full(
+                (total_size,),
+                1.0 / max(total_size, 1),
+                dtype=jnp.float32,
+            )
+            per_sample_importance_ratio = jnp.ones((total_size,), dtype=jnp.float32)
+            step_probs = jnp.full(
+                (self.cfg.diffusion.diff_steps,),
+                1.0 / max(self.cfg.diffusion.diff_steps, 1),
+                dtype=jnp.float32,
+            )
 
         train_state = train_state.replace(
             actor_target=train_state.actor_target.replace(
@@ -1143,6 +1208,9 @@ class ReppoDMERLTrainer:
         epoch_fn = partial(
             self._run_epoch_update,
             data=data,
+            per_sample_probs=per_sample_probs,
+            per_sample_importance_ratio=per_sample_importance_ratio,
+            step_sampling_probs=step_probs,
             action_size_target=action_size_target,
             actor_target_model=actor_target_model,
         )
@@ -1171,19 +1239,28 @@ class ReppoDMERLTrainer:
         epoch_key: PRNGKey,
         *,
         data,
+        per_sample_probs,
+        per_sample_importance_ratio,
+        step_sampling_probs,
         action_size_target: float,
         actor_target_model,
     ) -> tuple[SACTrainState, dict[str, jax.Array]]:
         """Shuffle data once and run minibatch SGD updates for a single epoch."""
         cfg = self.cfg
-        mini_batch_size = (self.num_collection_steps * cfg.num_envs) // self.num_minibatches
-        indices = jax.random.permutation(epoch_key, self.num_collection_steps * cfg.num_envs)
-        minibatch_idxs = jax.tree.map(
-            lambda x: x.reshape((self.num_minibatches, mini_batch_size, *x.shape[1:])),
-            indices,
+        total_size = self.num_collection_steps * cfg.num_envs
+        mini_batch_size = total_size // self.num_minibatches
+        minibatch_idxs, minibatch_importance_ratio, minibatch_keys = (
+            sample_minibatch_indices(
+                epoch_key,
+                total_size=total_size,
+                num_minibatches=self.num_minibatches,
+                mini_batch_size=mini_batch_size,
+                use_importance_sampling=self.use_diffusion_importance_sampling,
+                per_sample_probs=per_sample_probs,
+                per_sample_importance_ratio=per_sample_importance_ratio,
+            )
         )
-        minibatch_keys = jax.random.split(epoch_key, self.num_minibatches)
-        scan_inputs = (minibatch_idxs, minibatch_keys)
+        scan_inputs = (minibatch_idxs, minibatch_keys, minibatch_importance_ratio)
         minibatch_fn = partial(
             self.minibatch_update_step,
             cfg,
@@ -1197,6 +1274,7 @@ class ReppoDMERLTrainer:
             scan_inputs,
         )
         metrics = jax.tree.map(lambda x: x.mean(0), metrics)
+        metrics["step_sampling_probs"] = step_sampling_probs
         return train_state, metrics
 
     def minibatch_update_step(self, 
@@ -1208,12 +1286,19 @@ class ReppoDMERLTrainer:
         inputs,
     ):
         """Run one SGD step over a minibatch and return updated train state and metrics."""
-        indices, step_key = inputs
+        indices, step_key, importance_ratio = inputs
         minibatch, target_vals = jax.tree.map(
             lambda x: jnp.take(x, indices, axis=0), data
         )
 
-        critic_loss_fn_ = lambda p: critic_loss_fn(p, train_state, minibatch, target_vals, cfg)
+        critic_loss_fn_ = lambda p: critic_loss_fn(
+            p,
+            train_state,
+            minibatch,
+            target_vals,
+            cfg,
+            importance_ratio=importance_ratio,
+        )
         
         critic_grad_fn = jax.value_and_grad(critic_loss_fn_, has_aux=True)
         critic_output, critic_grads = critic_grad_fn(train_state.critic.params)
@@ -1245,6 +1330,7 @@ class ReppoDMERLTrainer:
                 action_size_target,
                 cfg,
                 actor_target_model,
+                importance_ratio=importance_ratio,
             )
         else:
             actor_loss_fn_ = lambda p: selected_actor_loss(
@@ -1257,6 +1343,7 @@ class ReppoDMERLTrainer:
                 action_size_target,
                 cfg,
                 actor_target_model,
+                importance_ratio=importance_ratio,
             )
 
         actor_grad_fn = jax.value_and_grad(actor_loss_fn_, has_aux=True)
@@ -1273,6 +1360,9 @@ class ReppoDMERLTrainer:
             lambda x: jnp.mean(jnp.asarray(x)),
             {**critic_metrics, **actor_metrics},
         )
+        metrics["importance_ratio_mean"] = jnp.mean(importance_ratio)
+        metrics["importance_ratio_max"] = jnp.max(importance_ratio)
+        metrics["importance_ratio_min"] = jnp.min(importance_ratio)
         return updated_state, metrics
 
     def _train_eval_step(
@@ -1496,6 +1586,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         train_metrics = utils.filter_prefix("train", metrics)
         target_hist_counts = train_metrics.pop("train/target_value_hist_counts", None)
         target_hist_edges = train_metrics.pop("train/target_value_hist_edges", None)
+        step_sampling_probs = train_metrics.pop("train/step_sampling_probs", None)
 
         log_data = {
             "eval/episode_return": episode_return,
@@ -1513,6 +1604,31 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         for key_name, value in metrics.items():
             if key_name.startswith("eval/"):
                 log_data[key_name] = value.mean() if hasattr(value, "mean") else value
+        if step_sampling_probs is not None:
+            step_probs_np = np.asarray(step_sampling_probs)
+            if step_probs_np.ndim == 0:
+                step_probs_mean = step_probs_np.reshape(1)
+            else:
+                step_probs_mean = step_probs_np
+                while step_probs_mean.ndim > 1:
+                    step_probs_mean = step_probs_mean.mean(axis=0)
+
+            for step_idx, prob in enumerate(step_probs_mean):
+                log_data[f"train/step_sampling_prob_t{step_idx:02d}"] = float(prob)
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(
+                np.arange(step_probs_mean.shape[0]),
+                step_probs_mean,
+                marker="o",
+                markersize=2,
+            )
+            ax.set_title("Diffusion-step sampling probability q(t)")
+            ax.set_xlabel("Diffusion step")
+            ax.set_ylabel("q(t)")
+            fig.tight_layout()
+            log_data["figures/step_sampling_probs"] = wandb.Image(fig)
+            plt.close(fig)
         if target_hist_counts is not None and target_hist_edges is not None:
             # Convert JAX arrays to NumPy before plotting to ensure wandb.Image
             # receives a fully rendered Matplotlib figure.
