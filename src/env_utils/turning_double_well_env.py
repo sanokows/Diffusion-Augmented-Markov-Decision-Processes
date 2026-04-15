@@ -388,6 +388,9 @@ class TurningDoubleWellEnv:
         figure_title: str | None = None,
         title_fontsize: int = 16,
         show_reward: bool = True,
+        hide_axis_ticks: bool = False,
+        show_scale_bar: bool = False,
+        scale_bar_length: float | None = None,
     ) -> list[np.ndarray]:
         import matplotlib
 
@@ -420,6 +423,13 @@ class TurningDoubleWellEnv:
 
         x_extent = max(1.0, float(np.max(np.abs(positions[..., 0])))) + 1.5
         y_extent = max(1.0, float(np.max(np.abs(positions[..., 1])))) + 1.5
+        resolved_scale_bar_length: float | None = None
+        if bool(show_scale_bar):
+            if scale_bar_length is None:
+                target_length = 0.18 * min(2.0 * x_extent, 2.0 * y_extent)
+                resolved_scale_bar_length = self._nice_scale_length(target_length)
+            else:
+                resolved_scale_bar_length = max(0.0, float(scale_bar_length))
         colors = plt.cm.tab10(np.linspace(0.0, 1.0, max(num_envs, 1)))
 
         frames: list[np.ndarray] = []
@@ -469,6 +479,15 @@ class TurningDoubleWellEnv:
                         title=None,
                         title_fontsize=max(10, int(0.72 * title_fontsize)),
                     )
+                if bool(show_scale_bar) and resolved_scale_bar_length is not None:
+                    self._draw_scale_bar(
+                        ax,
+                        x_extent=x_extent,
+                        y_extent=y_extent,
+                        bar_length=resolved_scale_bar_length,
+                    )
+                if bool(hide_axis_ticks):
+                    self._hide_axis_ticks(ax)
             else:
                 for env_idx, ax in enumerate(axes):
                     if env_idx >= num_envs:
@@ -497,6 +516,15 @@ class TurningDoubleWellEnv:
                         ),
                         title_fontsize=max(10, int(0.72 * title_fontsize)),
                     )
+                    if bool(show_scale_bar) and env_idx == 0 and resolved_scale_bar_length is not None:
+                        self._draw_scale_bar(
+                            ax,
+                            x_extent=x_extent,
+                            y_extent=y_extent,
+                            bar_length=resolved_scale_bar_length,
+                        )
+                    if bool(hide_axis_ticks):
+                        self._hide_axis_ticks(ax)
 
             if figure_title is not None:
                 fig.suptitle(
@@ -632,6 +660,64 @@ class TurningDoubleWellEnv:
         ax.set_ylim(-y_extent, y_extent)
         ax.set_aspect(aspect)
         ax.grid(True, linewidth=0.3, alpha=0.5)
+
+    @staticmethod
+    def _hide_axis_ticks(ax) -> None:
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.tick_params(axis="both", which="both", length=0, labelbottom=False, labelleft=False)
+
+    @staticmethod
+    def _nice_scale_length(target: float) -> float:
+        if not np.isfinite(target) or target <= 0.0:
+            return 1.0
+        exponent = float(np.floor(np.log10(target)))
+        scaled = target / (10.0**exponent)
+        if scaled <= 1.0:
+            nice = 1.0
+        elif scaled <= 2.0:
+            nice = 2.0
+        elif scaled <= 5.0:
+            nice = 5.0
+        else:
+            nice = 10.0
+        return float(nice * (10.0**exponent))
+
+    def _draw_scale_bar(
+        self,
+        ax,
+        *,
+        x_extent: float,
+        y_extent: float,
+        bar_length: float,
+    ) -> None:
+        if bar_length <= 0.0:
+            return
+        span_x = 2.0 * float(x_extent)
+        span_y = 2.0 * float(y_extent)
+        margin_x = 0.06 * span_x
+        margin_y = 0.08 * span_y
+        x0 = -float(x_extent) + margin_x
+        y0 = -float(y_extent) + margin_y
+        x1 = min(x0 + float(bar_length), float(x_extent) - margin_x)
+        if x1 <= x0:
+            return
+        tick_half = 0.018 * span_y
+        bar_color = "#111111"
+        ax.plot([x0, x1], [y0, y0], color=bar_color, linewidth=2.6, zorder=6, solid_capstyle="butt")
+        ax.plot([x0, x0], [y0 - tick_half, y0 + tick_half], color=bar_color, linewidth=1.6, zorder=6)
+        ax.plot([x1, x1], [y0 - tick_half, y0 + tick_half], color=bar_color, linewidth=1.6, zorder=6)
+        ax.text(
+            (x0 + x1) * 0.5,
+            y0 + 0.03 * span_y,
+            f"{(x1 - x0):g} units",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color=bar_color,
+            bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none", "pad": 1.5},
+            zorder=7,
+        )
 
     def _draw_env(
         self,

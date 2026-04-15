@@ -888,8 +888,15 @@ def _sample_actions_for_method(
     return angles_np, sampled_np, grid_actions_np, reward_curve_np
 
 
-def _render_snapshot(method: PreparedMethod, args) -> dict[str, str]:
-    render_basename = f"{args.output_stem}__{method.spec.slot}__turning_double_well_traj.gif"
+def _render_snapshot(
+    method: PreparedMethod,
+    args,
+    *,
+    show_title: bool,
+    variant_tag: str,
+) -> dict[str, str]:
+    suffix = f"__{variant_tag}" if variant_tag else ""
+    render_basename = f"{args.output_stem}__{method.spec.slot}{suffix}__turning_double_well_traj.gif"
 
     outputs = esm._render_turning_double_well_reppo(
         method_name=method.method_name,
@@ -911,6 +918,10 @@ def _render_snapshot(method: PreparedMethod, args) -> dict[str, str]:
         fps=int(args.render_fps),
         seed=int(args.render_seed),
         render_format="gif",
+        show_figure_title=bool(show_title),
+        hide_axis_ticks=True,
+        show_scale_bar=True,
+        scale_bar_length=None,
     )
     return outputs
 
@@ -970,13 +981,13 @@ def _compose_hist_figure(
             ax.set_ylabel("")
         ax.tick_params(axis="both", labelsize=9)
         ax.grid(True, linestyle="--", linewidth=0.55, alpha=0.28)
-        ax.set_title(method.spec.label, fontsize=12, pad=7)
+        ax.set_title(method.spec.label, fontsize=12, fontweight="bold", pad=7)
 
         ax2 = ax.twinx()
         ax2.plot(grid_actions, reward_curve, color="black", linewidth=2.0)
         ax2.set_ylim(-0.05, 1.05)
         if idx == n_methods - 1:
-            ax2.set_ylabel("reward", fontsize=11, color="black")
+            ax2.set_ylabel("reward curve", fontsize=11, color="black")
         else:
             ax2.set_yticklabels([])
         ax2.tick_params(axis="y", labelsize=8, colors="black")
@@ -987,7 +998,9 @@ def _compose_hist_figure(
         Line2D([0], [0], color=colors[i], linewidth=2.0, label=_state_angle_label(ref_angles[i]))
         for i in range(n_states)
     ]
-    legend_handles.append(Line2D([0], [0], color="black", linewidth=2.3, label="reward"))
+    legend_handles.append(
+        Line2D([0], [0], color="black", linewidth=2.3, label="reward curve")
+    )
 
     fig.legend(
         handles=legend_handles,
@@ -995,7 +1008,7 @@ def _compose_hist_figure(
         bbox_to_anchor=(0.5, 1.07),
         ncol=min(max(3, n_states // 2 + 1), len(legend_handles)),
         frameon=False,
-        fontsize=9,
+        fontsize=12,
     )
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.89))
     fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
@@ -1018,7 +1031,6 @@ def _compose_trajectory_figure(
         png_path = trajectory_pngs[method.spec.slot]
         img = plt.imread(png_path)
         ax.imshow(img)
-        ax.set_title(method.spec.label, fontsize=12, pad=8)
         ax.axis("off")
 
     fig.tight_layout()
@@ -1111,8 +1123,13 @@ def main() -> None:
 
     specs = [
         MethodSpec("reppo", "REPPO", args.checkpoint_reppo, args.sampler_reppo),
+        MethodSpec(
+            "diffppo_zero",
+            r"DPPO ($\mathcal{T}=0$)",
+            diffppo_zero_ckpt,
+            args.sampler_diffppo_zero,
+        ),
         MethodSpec("diffppo", "DiffPPO", diffppo_ckpt, args.sampler_diffppo),
-        MethodSpec("diffppo_zero", "DPPO (DME-PPO zero temp)", diffppo_zero_ckpt, args.sampler_diffppo_zero),
         MethodSpec("dmerl", "DMERL", args.checkpoint_dmerl, args.sampler_dmerl),
         MethodSpec("dmerl_wpo", "DMERL-WPO", args.checkpoint_dmerl_wpo, args.sampler_dmerl_wpo),
         MethodSpec("dime", "DIME", args.checkpoint_dime, args.sampler_dime),
@@ -1158,8 +1175,15 @@ def main() -> None:
     _progress("Rendering static trajectory snapshots")
     trajectory_pngs: dict[str, str] = {}
     trajectory_outputs: dict[str, dict[str, str]] = {}
+    trajectory_pngs_no_title: dict[str, str] = {}
+    trajectory_outputs_no_title: dict[str, dict[str, str]] = {}
     for method in prepared_methods:
-        outputs = _render_snapshot(method, args)
+        outputs = _render_snapshot(
+            method,
+            args,
+            show_title=True,
+            variant_tag="",
+        )
         last_frame = outputs.get("last_frame_png", "")
         if not last_frame or not os.path.isfile(last_frame):
             raise RuntimeError(
@@ -1168,9 +1192,26 @@ def main() -> None:
             )
         trajectory_pngs[method.spec.slot] = last_frame
         trajectory_outputs[method.spec.slot] = outputs
+        outputs_no_title = _render_snapshot(
+            method,
+            args,
+            show_title=False,
+            variant_tag="no_title",
+        )
+        last_frame_no_title = outputs_no_title.get("last_frame_png", "")
+        if not last_frame_no_title or not os.path.isfile(last_frame_no_title):
+            raise RuntimeError(
+                f"Failed to produce last-frame no-title trajectory PNG for {method.spec.label} "
+                f"({method.spec.checkpoint})."
+            )
+        trajectory_pngs_no_title[method.spec.slot] = last_frame_no_title
+        trajectory_outputs_no_title[method.spec.slot] = outputs_no_title
 
     hist_png = os.path.abspath(os.path.join(args.output_dir, f"{args.output_stem}__action_hist_row.png"))
     traj_png = os.path.abspath(os.path.join(args.output_dir, f"{args.output_stem}__trajectory_row.png"))
+    traj_png_no_title = os.path.abspath(
+        os.path.join(args.output_dir, f"{args.output_stem}__trajectory_row_no_title.png")
+    )
 
     _progress(f"Composing action figure: {hist_png}")
     _compose_hist_figure(
@@ -1189,6 +1230,13 @@ def main() -> None:
         out_path=traj_png,
         dpi=int(args.dpi),
     )
+    _progress(f"Composing no-title trajectory figure: {traj_png_no_title}")
+    _compose_trajectory_figure(
+        prepared_methods,
+        trajectory_pngs_no_title,
+        out_path=traj_png_no_title,
+        dpi=int(args.dpi),
+    )
 
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1196,6 +1244,7 @@ def main() -> None:
         "output_stem": str(args.output_stem),
         "action_hist_figure": hist_png,
         "trajectory_figure": traj_png,
+        "trajectory_figure_no_title": traj_png_no_title,
         "methods": [
             {
                 "slot": m.spec.slot,
@@ -1206,6 +1255,7 @@ def main() -> None:
                 "sampler_arg": m.spec.sampler,
                 "sampler_resolved": action_data[m.spec.slot]["sampler_resolved"],
                 "trajectory_outputs": trajectory_outputs[m.spec.slot],
+                "trajectory_outputs_no_title": trajectory_outputs_no_title[m.spec.slot],
             }
             for m in prepared_methods
         ],
@@ -1234,6 +1284,7 @@ def main() -> None:
     _progress("Done")
     _progress(f"Action figure: {hist_png}")
     _progress(f"Trajectory figure: {traj_png}")
+    _progress(f"Trajectory figure (no title): {traj_png_no_title}")
     _progress(f"Manifest: {manifest_path}")
 
 

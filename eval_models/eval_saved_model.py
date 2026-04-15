@@ -2703,6 +2703,10 @@ def _render_turning_double_well_reppo(
     fps: int,
     seed: int,
     render_format: str,
+    show_figure_title: bool = True,
+    hide_axis_ticks: bool = False,
+    show_scale_bar: bool = False,
+    scale_bar_length: float | None = None,
 ) -> dict[str, str]:
     method_display = _method_display_name(
         method_name, train_mode=train_mode, entropy_coef=entropy_coef
@@ -2929,17 +2933,28 @@ def _render_turning_double_well_reppo(
             )
             states.append(_state_to_numpy(_unwrap_env_state(env_state)))
 
-    frames = base_env.render_trajectory(
-        states,
+    render_kwargs = dict(
+        trajectory=states,
         rewards=None,
         width=int(width),
         height=int(height),
         overlay=bool(overlay),
         max_envs=int(num_envs),
-        figure_title=method_display,
+        figure_title=method_display if bool(show_figure_title) else None,
         title_fontsize=18,
         show_reward=False,
     )
+    render_sig = inspect.signature(base_env.render_trajectory)
+    if "hide_axis_ticks" in render_sig.parameters:
+        render_kwargs["hide_axis_ticks"] = bool(hide_axis_ticks)
+    if "show_scale_bar" in render_sig.parameters:
+        render_kwargs["show_scale_bar"] = bool(show_scale_bar)
+    if "scale_bar_length" in render_sig.parameters:
+        render_kwargs["scale_bar_length"] = (
+            None if scale_bar_length is None else float(scale_bar_length)
+        )
+
+    frames = base_env.render_trajectory(**render_kwargs)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     outputs = _save_animation_outputs(

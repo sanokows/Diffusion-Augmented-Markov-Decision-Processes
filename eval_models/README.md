@@ -596,7 +596,7 @@ Outputs are written as PNG files into `artifacts/` (see `--tdw-action-analysis-o
 
 To auto-generate compact paper-ready composites in the fixed method order
 
-`REPPO | DiffPPO | DiffPPO (zero temp) | DMERL | DMERL-WPO | DIME`
+`REPPO | DiffPPO (zero temp) | DiffPPO | DMERL | DMERL-WPO | DIME`
 
 use:
 
@@ -631,6 +631,8 @@ This writes:
 - `<output-dir>/<output-stem>__action_hist_row.png`  
   One row (6 columns), each column overlays all state-conditioned action histograms for one method, with a shared state legend and reward curve.
 - `<output-dir>/<output-stem>__trajectory_row.png`  
-  One row (6 columns) of static trajectory snapshots (not GIFs), one per method.
+  One row (6 columns) of static trajectory snapshots (not GIFs), one per method, with in-panel scale bars and no x/y ticks.
+- `<output-dir>/<output-stem>__trajectory_row_no_title.png`  
+  Same as above, but with no per-panel titles at all.
 - `<output-dir>/<output-stem>__manifest.json`  
   Metadata with checkpoint paths, resolved samplers, and source render artifacts.

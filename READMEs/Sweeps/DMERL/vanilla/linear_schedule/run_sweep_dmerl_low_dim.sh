@@ -5,7 +5,7 @@ ENV_NAMES=(
     AcrobotSwingup
     PendulumSwingup
     CartpoleSwingupSparse
-    #AcrobotSwingupSparse
+    AcrobotSwingupSparse
     # Add more env names here
 )
 
@@ -44,12 +44,12 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_30_01" \
+        wandb.project_suffix="_FR_REPPO_14_04" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
         env=mjx_dmc \
-        seed=12 \
+        seed=0 \
         num_trials=2 \
         experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule &
     GPU_PIDS[$GPU_ID]=$!
