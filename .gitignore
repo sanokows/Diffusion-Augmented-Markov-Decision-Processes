@@ -1,4 +1,5 @@
 outputs/
+artifacts/
 saved_models/
 wandb/
 logs/

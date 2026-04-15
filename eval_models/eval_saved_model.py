@@ -2707,6 +2707,7 @@ def _render_turning_double_well_reppo(
     hide_axis_ticks: bool = False,
     show_scale_bar: bool = False,
     scale_bar_length: float | None = None,
+    scale_bar_fontsize: float | None = None,
 ) -> dict[str, str]:
     method_display = _method_display_name(
         method_name, train_mode=train_mode, entropy_coef=entropy_coef
@@ -2952,6 +2953,10 @@ def _render_turning_double_well_reppo(
     if "scale_bar_length" in render_sig.parameters:
         render_kwargs["scale_bar_length"] = (
             None if scale_bar_length is None else float(scale_bar_length)
+        )
+    if "scale_bar_fontsize" in render_sig.parameters:
+        render_kwargs["scale_bar_fontsize"] = (
+            None if scale_bar_fontsize is None else float(scale_bar_fontsize)
         )
 
     frames = base_env.render_trajectory(**render_kwargs)

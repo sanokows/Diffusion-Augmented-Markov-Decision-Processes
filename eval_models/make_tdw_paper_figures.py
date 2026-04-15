@@ -922,6 +922,7 @@ def _render_snapshot(
         hide_axis_ticks=True,
         show_scale_bar=True,
         scale_bar_length=None,
+        scale_bar_fontsize=float(args.trajectory_scale_fontsize),
     )
     return outputs
 
@@ -939,6 +940,9 @@ def _compose_hist_figure(
     bins: int,
     state_cmap: str,
     dpi: int,
+    legend_fontsize: float,
+    axis_label_fontsize: float,
+    axis_tick_fontsize: float,
 ) -> None:
     n_methods = len(methods)
     if n_methods == 0:
@@ -974,12 +978,12 @@ def _compose_hist_figure(
             )
 
         ax.set_xlim(-1.0, 1.0)
-        ax.set_xlabel("action", fontsize=11)
+        ax.set_xlabel("action", fontsize=float(axis_label_fontsize))
         if idx == 0:
-            ax.set_ylabel("density", fontsize=11)
+            ax.set_ylabel("density", fontsize=float(axis_label_fontsize))
         else:
             ax.set_ylabel("")
-        ax.tick_params(axis="both", labelsize=9)
+        ax.tick_params(axis="both", labelsize=float(axis_tick_fontsize))
         ax.grid(True, linestyle="--", linewidth=0.55, alpha=0.28)
         ax.set_title(method.spec.label, fontsize=12, fontweight="bold", pad=7)
 
@@ -987,10 +991,10 @@ def _compose_hist_figure(
         ax2.plot(grid_actions, reward_curve, color="black", linewidth=2.0)
         ax2.set_ylim(-0.05, 1.05)
         if idx == n_methods - 1:
-            ax2.set_ylabel("reward curve", fontsize=11, color="black")
+            ax2.set_ylabel("reward curve", fontsize=float(axis_label_fontsize), color="black")
         else:
             ax2.set_yticklabels([])
-        ax2.tick_params(axis="y", labelsize=8, colors="black")
+        ax2.tick_params(axis="y", labelsize=float(axis_tick_fontsize), colors="black")
 
     from matplotlib.lines import Line2D
 
@@ -1008,7 +1012,7 @@ def _compose_hist_figure(
         bbox_to_anchor=(0.5, 1.07),
         ncol=min(max(3, n_states // 2 + 1), len(legend_handles)),
         frameon=False,
-        fontsize=12,
+        fontsize=float(legend_fontsize),
     )
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.89))
     fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
@@ -1096,6 +1100,30 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", default=os.path.join("artifacts", "tdw_paper"))
     p.add_argument("--output-stem", default="tdw_paper")
     p.add_argument("--state-cmap", default="hsv")
+    p.add_argument(
+        "--hist-legend-fontsize",
+        type=float,
+        default=15.0,
+        help="Font size for the shared state legend in the histogram row.",
+    )
+    p.add_argument(
+        "--hist-axis-label-fontsize",
+        type=float,
+        default=11.0,
+        help="Font size for histogram x/y axis labels.",
+    )
+    p.add_argument(
+        "--hist-axis-tick-fontsize",
+        type=float,
+        default=9.0,
+        help="Font size for histogram axis tick labels.",
+    )
+    p.add_argument(
+        "--trajectory-scale-fontsize",
+        type=float,
+        default=12.0,
+        help="Font size of the in-panel trajectory scale label.",
+    )
     p.add_argument("--dpi", type=int, default=220)
     return p
 
@@ -1221,6 +1249,9 @@ def main() -> None:
         bins=int(args.analysis_bins),
         state_cmap=str(args.state_cmap),
         dpi=int(args.dpi),
+        legend_fontsize=float(args.hist_legend_fontsize),
+        axis_label_fontsize=float(args.hist_axis_label_fontsize),
+        axis_tick_fontsize=float(args.hist_axis_tick_fontsize),
     )
 
     _progress(f"Composing trajectory figure: {traj_png}")
@@ -1267,6 +1298,9 @@ def main() -> None:
             "grid_points": int(args.analysis_grid),
             "max_states": None if args.analysis_max_states is None else int(args.analysis_max_states),
             "seed": int(args.analysis_seed),
+            "hist_legend_fontsize": float(args.hist_legend_fontsize),
+            "hist_axis_label_fontsize": float(args.hist_axis_label_fontsize),
+            "hist_axis_tick_fontsize": float(args.hist_axis_tick_fontsize),
         },
         "render": {
             "num_envs": int(args.render_num_envs),
@@ -1274,6 +1308,7 @@ def main() -> None:
             "height": int(args.render_height),
             "fps": int(args.render_fps),
             "seed": int(args.render_seed),
+            "scale_fontsize": float(args.trajectory_scale_fontsize),
         },
         "env_overrides": list(args.env_config_override or []),
     }

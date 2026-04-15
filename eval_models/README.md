@@ -614,17 +614,22 @@ python eval_models/make_tdw_paper_figures.py \
   --analysis-samples 5000 \
   --analysis-grid 401 \
   --analysis-bins 60 \
+  --hist-legend-fontsize 18 \
+  --hist-axis-label-fontsize 11 \
+  --hist-axis-tick-fontsize 14 \
   --env-config-override randomize_initial_heading=true \
   --env-config-override snap_action_to_optimal=true \
   --render-num-envs 20 \
   --render-width 1200 \
   --render-height 800 \
+  --trajectory-scale-fontsize 15 \
   --output-dir artifacts/tdw_paper \
   --output-stem tdw_paper_main
 ```
 
 `--checkpoint-diffppo-zero` is optional. If omitted, the script auto-detects a DiffPPO checkpoint with `entropy_coef` closest to `0` (same env and, when available, same seed/trial).
 If you pass `--checkpoint-diffppo` multiple times, zero-temp selection is done among those provided runs.
+Use `--hist-legend-fontsize` to control the histogram legend text size, `--hist-axis-label-fontsize`/`--hist-axis-tick-fontsize` to control histogram axis text, and `--trajectory-scale-fontsize` to control the trajectory scale-label text size.
 
 This writes:
 

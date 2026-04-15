@@ -391,6 +391,7 @@ class TurningDoubleWellEnv:
         hide_axis_ticks: bool = False,
         show_scale_bar: bool = False,
         scale_bar_length: float | None = None,
+        scale_bar_fontsize: float | None = None,
     ) -> list[np.ndarray]:
         import matplotlib
 
@@ -485,6 +486,7 @@ class TurningDoubleWellEnv:
                         x_extent=x_extent,
                         y_extent=y_extent,
                         bar_length=resolved_scale_bar_length,
+                        label_fontsize=scale_bar_fontsize,
                     )
                 if bool(hide_axis_ticks):
                     self._hide_axis_ticks(ax)
@@ -522,6 +524,7 @@ class TurningDoubleWellEnv:
                             x_extent=x_extent,
                             y_extent=y_extent,
                             bar_length=resolved_scale_bar_length,
+                            label_fontsize=scale_bar_fontsize,
                         )
                     if bool(hide_axis_ticks):
                         self._hide_axis_ticks(ax)
@@ -690,6 +693,7 @@ class TurningDoubleWellEnv:
         x_extent: float,
         y_extent: float,
         bar_length: float,
+        label_fontsize: float | None = None,
     ) -> None:
         if bar_length <= 0.0:
             return
@@ -713,7 +717,7 @@ class TurningDoubleWellEnv:
             f"{(x1 - x0):g} units",
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=12.0 if label_fontsize is None else float(label_fontsize),
             color=bar_color,
             bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none", "pad": 1.5},
             zorder=7,
