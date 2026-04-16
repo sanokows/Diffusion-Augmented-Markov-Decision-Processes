@@ -569,18 +569,18 @@ class ReppoDMERLTrainer:
             metrics = {
                 "episode_return": returned_episode_returns.mean(where=returned_episode)
                 * reward_scale,
-                "episode_return_unmasked": returned_episode_returns.mean()
-                * reward_scale,
+                #"episode_return_unmasked": returned_episode_returns.mean()
+                #* reward_scale,
                 "episode_return_std": returned_episode_returns.std(
                     where=returned_episode
                 ),
-                "episode_return_std_unmasked": returned_episode_returns.std(),
+                #"episode_return_std_unmasked": returned_episode_returns.std(),
                 "episode_length": returned_episode_lengths.mean(where=returned_episode),
-                "episode_length_unmasked": returned_episode_lengths.mean(),
+                #"episode_length_unmasked": returned_episode_lengths.mean(),
                 "episode_length_std": returned_episode_lengths.std(
                     where=returned_episode
                 ),
-                "episode_length_std_unmasked": returned_episode_lengths.std(),
+                #"episode_length_std_unmasked": returned_episode_lengths.std(),
                 "num_episodes": returned_episode.sum(),
                 "returned_episode_fraction": returned_episode.mean(),
             }
