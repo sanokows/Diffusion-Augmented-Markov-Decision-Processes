@@ -10,7 +10,7 @@ ENV_NAMES=(
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
-NUM_GPUS=3
+NUM_GPUS=4
 GPU_INDEX=0
 
 # Step 3: Wait until a GPU is free (no active compute processes)
