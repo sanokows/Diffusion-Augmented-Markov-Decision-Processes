@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name="dmerl_control"
-#SBATCH --time=24:00:00
+#SBATCH --time=42:00:00
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --ntasks-per-core=1
