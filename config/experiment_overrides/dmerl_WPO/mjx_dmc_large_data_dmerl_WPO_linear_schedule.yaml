@@ -23,7 +23,7 @@ hyperparameters:
   remove_fisher_precond: true
   new_temp_mode: false
   ent_start: 0.01
-  ent_target_mult: 6.
+  ent_target_mult: 8.
 
   entropy_lagrangian_start: 0.01
   
