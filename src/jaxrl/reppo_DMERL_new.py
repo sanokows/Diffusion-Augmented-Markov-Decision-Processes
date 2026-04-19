@@ -1586,7 +1586,13 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         train_metrics = utils.filter_prefix("train", metrics)
         target_hist_counts = train_metrics.pop("train/target_value_hist_counts", None)
         target_hist_edges = train_metrics.pop("train/target_value_hist_edges", None)
-        step_sampling_probs = train_metrics.pop("train/step_sampling_probs", None)
+        for metric_key in (
+            "train/step_sampling_probs",
+            "train/importance_ratio_mean",
+            "train/importance_ratio_max",
+            "train/importance_ratio_min",
+        ):
+            train_metrics.pop(metric_key, None)
 
         log_data = {
             "eval/episode_return": episode_return,
@@ -1604,31 +1610,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         for key_name, value in metrics.items():
             if key_name.startswith("eval/"):
                 log_data[key_name] = value.mean() if hasattr(value, "mean") else value
-        if step_sampling_probs is not None:
-            step_probs_np = np.asarray(step_sampling_probs)
-            if step_probs_np.ndim == 0:
-                step_probs_mean = step_probs_np.reshape(1)
-            else:
-                step_probs_mean = step_probs_np
-                while step_probs_mean.ndim > 1:
-                    step_probs_mean = step_probs_mean.mean(axis=0)
-
-            for step_idx, prob in enumerate(step_probs_mean):
-                log_data[f"train/step_sampling_prob_t{step_idx:02d}"] = float(prob)
-
-            fig, ax = plt.subplots(figsize=(8, 4))
-            ax.plot(
-                np.arange(step_probs_mean.shape[0]),
-                step_probs_mean,
-                marker="o",
-                markersize=2,
-            )
-            ax.set_title("Diffusion-step sampling probability q(t)")
-            ax.set_xlabel("Diffusion step")
-            ax.set_ylabel("q(t)")
-            fig.tight_layout()
-            log_data["figures/step_sampling_probs"] = wandb.Image(fig)
-            plt.close(fig)
         if target_hist_counts is not None and target_hist_edges is not None:
             # Convert JAX arrays to NumPy before plotting to ensure wandb.Image
             # receives a fully rendered Matplotlib figure.

@@ -12,7 +12,7 @@ hyperparameters:
   vmax: 200
   num_bins: 301
   num_eval: 50
-  aux_loss_mult: 0.25 #0.02
+  aux_loss_mult: 0.1 #0.02
   #aux_loss_alpha: 0.98 #0.95
   train_mode: "WPO"
   actor_kl_clip_mode: "full"
@@ -20,7 +20,12 @@ hyperparameters:
   env_action_clip_value: 1.
   action_clip_value: 1.
   use_W2_kl: false
-  #remove_fisher_precond: true
+  remove_fisher_precond: true
+  new_temp_mode: false
+  ent_start: 0.01
+  ent_target_mult: 6.
+
+  entropy_lagrangian_start: 0.01
   
   lr: 1e-3
   temperature_lr: 3e-4

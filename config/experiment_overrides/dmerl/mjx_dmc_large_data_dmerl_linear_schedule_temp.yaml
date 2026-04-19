@@ -13,14 +13,13 @@ hyperparameters:
   vmax: 200
   num_bins: 151
   num_eval: 50
-  #aux_loss_mult: 0.25 ## increase a bit??
+  aux_loss_mult: 0.5 ## increase a bit??
   aux_loss_alpha: 0.98 #0.95
-  importance_sample_diffusion_steps: true
   
   lr: 1e-3
   temperature_lr: 3e-4
   lagrangian_lr: 3e-4
-  ent_target_mult: 4.
+ # ent_target_mult: 4.
   tanh_transform: false
   gamma: 0.999
   lmbda: 0.98

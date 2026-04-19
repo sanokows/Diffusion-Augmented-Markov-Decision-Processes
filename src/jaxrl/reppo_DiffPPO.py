@@ -13,9 +13,6 @@ import numpy as np
 import hydra
 import jax
 import optax
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 from flax import nnx, struct
 from flax.struct import PyTreeNode
@@ -1478,7 +1475,13 @@ def run(cfg: DictConfig):
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         advantages = metrics.pop("train/advantages", None)
-        step_sampling_probs = metrics.pop("train/step_sampling_probs", None)
+        for metric_key in (
+            "train/step_sampling_probs",
+            "train/importance_ratio_mean",
+            "train/importance_ratio_max",
+            "train/importance_ratio_min",
+        ):
+            metrics.pop(metric_key, None)
         advantages_hist = None
         if advantages is not None:
             adv_np = np.asarray(jax.device_get(advantages))
@@ -1495,31 +1498,6 @@ def run(cfg: DictConfig):
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
-        if step_sampling_probs is not None:
-            step_probs_np = np.asarray(step_sampling_probs)
-            if step_probs_np.ndim == 0:
-                step_probs_mean = step_probs_np.reshape(1)
-            else:
-                step_probs_mean = step_probs_np
-                while step_probs_mean.ndim > 1:
-                    step_probs_mean = step_probs_mean.mean(axis=0)
-
-            for step_idx, prob in enumerate(step_probs_mean):
-                log_data[f"train/step_sampling_prob_t{step_idx:02d}"] = float(prob)
-
-            fig, ax = plt.subplots(figsize=(8, 4))
-            ax.plot(
-                np.arange(step_probs_mean.shape[0]),
-                step_probs_mean,
-                marker="o",
-                markersize=2,
-            )
-            ax.set_title("Diffusion-step sampling probability q(t)")
-            ax.set_xlabel("Diffusion step")
-            ax.set_ylabel("q(t)")
-            fig.tight_layout()
-            log_data["figures/step_sampling_probs"] = wandb.Image(fig)
-            plt.close(fig)
         if advantages_hist is not None:
             log_data["train/advantages"] = advantages_hist
         wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])
