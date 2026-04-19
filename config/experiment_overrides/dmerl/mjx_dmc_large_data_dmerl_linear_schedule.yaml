@@ -33,7 +33,7 @@ hyperparameters:
     dt_schedule:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
       total_steps: ${hyperparameters.diffusion.diff_steps}
-      min: 0.05
+      min: 0.17
 
 
 
