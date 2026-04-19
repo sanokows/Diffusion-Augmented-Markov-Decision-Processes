@@ -1,13 +1,13 @@
 
 
 
-exec python -m src.jaxrl.reppo_DMERL_new env.name=FingerSpin hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=0 hyperparameters.ent_target_mult=6
+exec python -m src.jaxrl.reppo_DMERL_new env.name=FingerSpin hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=0 hyperparameters.ent_target_mult=4
 
-exec python -m src.jaxrl.reppo_DMERL_new env.name=HopperStand hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=2 hyperparameters.ent_target_mult=6
+exec python -m src.jaxrl.reppo_DMERL_new env.name=HopperStand hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=2 hyperparameters.ent_target_mult=4
 
-exec python -m src.jaxrl.reppo_DMERL_new env.name=FishSwim hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=2 hyperparameters.ent_target_mult=6
+exec python -m src.jaxrl.reppo_DMERL_new env.name=FishSwim hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=2 hyperparameters.ent_target_mult=4
 
-exec python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingupSparse hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=2 hyperparameters.ent_target_mult=6 hyperparameters.aux_loss_mult=1.
+exec python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingupSparse hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_temp seed=2 hyperparameters.ent_target_mult=4 hyperparameters.aux_loss_mult=1.
 
 
 exec python -m src.jaxrl.reppo_DMERL_new env.name=WalkerRun hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_no_temp seed=0 hyperparameters.ent_target_mult=4 hyperparameters.importance_sample_diffusion_steps=true
