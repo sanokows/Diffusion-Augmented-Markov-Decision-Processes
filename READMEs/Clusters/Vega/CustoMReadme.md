@@ -58,4 +58,5 @@ sbatch ./READMEs/Clusters/Vega/DME_REPPO/run_gpu_dmerl_asp_reurn.sh
 
 sbatch ./READMEs/Clusters/Vega/DME_PPO/run_gpu_dmerl_control_1.sh
 sbatch ./READMEs/Clusters/Vega/DME_PPO/run_gpu_dmerl_control_2.sh
+sbatch ./READMEs/Clusters/Vega/DME_PPO/run_gpu_dmerl_hyperparam.sh
 ```
