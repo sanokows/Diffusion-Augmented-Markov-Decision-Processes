@@ -13,6 +13,7 @@ hyperparameters:
   #vmax: 200
   #num_bins: 301
   num_eval: 50
+  aux_loss_mult: 0.5 
   #aux_loss_mult: 0.25 ## increase a bit??
   #aux_loss_alpha: 0.98 #0.95
   
@@ -33,4 +34,4 @@ hyperparameters:
     dt_schedule:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
       total_steps: ${hyperparameters.diffusion.diff_steps}
-      min: 0.05
+      min: 0.17
