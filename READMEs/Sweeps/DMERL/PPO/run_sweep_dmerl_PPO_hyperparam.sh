@@ -11,12 +11,14 @@ ENV_NAMES=(
 
 # Step 2: Define hyperparameter values to sweep
 LRS=(
-    3e-4
+    #3e-4
     1e-4
 )
 
 ENTROPY_COEFS=(
+    1e-6
     1e-5
+    1e-4
 )
 
 NUM_ENVS_VALUES=(
@@ -24,9 +26,9 @@ NUM_ENVS_VALUES=(
 )
 
 NUM_EPOCHS_VALUES=(
-    8
+    #8
     12
-    16
+    #16
 )
 
 TOTAL_RUNS=$(( ${#ENV_NAMES[@]} * ${#LRS[@]} * ${#ENTROPY_COEFS[@]} * ${#NUM_ENVS_VALUES[@]} * ${#NUM_EPOCHS_VALUES[@]} ))

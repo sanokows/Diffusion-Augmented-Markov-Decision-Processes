@@ -37,7 +37,7 @@ import wandb
 
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_REPPO_14_04", "_FR_PPO_14_04", "_FR_ME-WPO", "_FR_WPO"]
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_REPPO_20_04", "_FR_PPO_14_04", "_FR_ME-WPO", "_FR_WPO"]
 # old DME PPO _FR_test_PPO --> new PPO _FR_PPO_14_04
 # old DME REPPO _FR_30_01 --> new _FR_REPPO_14_04
 ENV_NAMES = [
