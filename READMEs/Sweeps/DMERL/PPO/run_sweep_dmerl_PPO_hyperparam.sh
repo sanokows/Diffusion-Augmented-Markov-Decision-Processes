@@ -9,12 +9,13 @@ ENV_NAMES=(
 
 # Step 2: Define hyperparameter values to sweep
 LRS=(
+    1e-3
     5e-4
     1e-4
-    1e-3
 )
 
 ENTROPY_COEFS=(
+    2e-4
     1e-4
     1e-5
 )
@@ -41,12 +42,13 @@ wait_for_gpu() {
     while true; do
         # nvidia-smi returns empty output when no compute processes are running
         if command -v rg >/dev/null 2>&1; then
-            BUSY_CHECK_CMD="rg -q '\\S'"
+            if ! nvidia-smi -i "$GPU_ID" --query-compute-apps=pid --format=csv,noheader | rg -q '\S'; then
+                break
+            fi
         else
-            BUSY_CHECK_CMD="grep -q '[^[:space:]]'"
-        fi
-        if ! nvidia-smi -i "$GPU_ID" --query-compute-apps=pid --format=csv,noheader | eval "$BUSY_CHECK_CMD"; then
-            break
+            if ! nvidia-smi -i "$GPU_ID" --query-compute-apps=pid --format=csv,noheader | grep -q '[^[:space:]]'; then
+                break
+            fi
         fi
         echo "GPU $GPU_ID busy, waiting..."
         sleep 30
