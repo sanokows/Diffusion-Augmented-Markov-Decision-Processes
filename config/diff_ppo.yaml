@@ -7,7 +7,7 @@ defaults:
 hyperparameters:
   lr: 1e-4
   gamma: 0.999
-  lmbda: 0.97
+  lmbda: 0.98
   clip_ratio: 0.2
   value_coef: 0.5
   entropy_coef: 0.00

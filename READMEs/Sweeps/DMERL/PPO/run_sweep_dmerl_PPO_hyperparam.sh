@@ -3,24 +3,25 @@
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
     PendulumSwingup
-    HopperStand
+    #HopperStand
     # Add more env names here
 )
 
 # Step 2: Define hyperparameter values to sweep
 LRS=(
+    2e-3
     1e-3
     5e-4
-    1e-4
 )
 
 ENTROPY_COEFS=(
-    2e-4
     1e-4
     1e-5
+    1e-6
 )
 
 NUM_ENVS_VALUES=(
+    2024
     4048
 )
 
