@@ -6,13 +6,13 @@ hyperparameters:
   num_mini_batches: 8
   lr: 5e-4
   temperature_lr: 2e-4
-  entropy_coef: 0.0001 
-  hl_gauss: False
+  entropy_coef: 0.00002 
+  hl_gauss: true 
   update_entropy_lagrangian: false
   num_envs: 4028
   num_steps: 64
   ent_start: 0.01
-  aux_loss_mult: 0.15 
+  aux_loss_mult: 0.0
   use_categorical_value: true
   normalize_advantages: false
   ent_target_mult: 8.0
