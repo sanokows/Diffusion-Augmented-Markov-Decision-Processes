@@ -2,27 +2,30 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
+    AcrobotSwingup
     PendulumSwingup
+    CartpoleSwingupSparse
+    AcrobotSwingupSparse
     #HopperStand
     # Add more env names here
 )
 
 # Step 2: Define hyperparameter values to sweep
 LRS=(
-    2e-3
-    1e-3
+    1e-4
     5e-4
+    1e-3
 )
 
 ENTROPY_COEFS=(
+    2e-4
     1e-4
-    1e-5
-    1e-6
+    5e-5
+
 )
 
 NUM_ENVS_VALUES=(
     2024
-    4048
 )
 
 NUM_EPOCHS_VALUES=(
@@ -79,8 +82,8 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
                         env.name="$ENV_NAME" \
                         DiffPPO_overrides=default \
                         env=mjx_dmc \
-                        DiffPPO_overrides.hyperparameters.total_time_steps=25000000 \
-                        wandb.project_suffix="_FR_13_04" \
+                        DiffPPO_overrides.hyperparameters.total_time_steps=5000000 \
+                        wandb.project_suffix="_FR_13_04_hyper" \
                         DiffPPO_overrides.hyperparameters.lr="$LR" \
                         DiffPPO_overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
                         DiffPPO_overrides.hyperparameters.num_envs="$NUM_ENVS" \
