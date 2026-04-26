@@ -12,7 +12,7 @@ hyperparameters:
   num_envs: 2048
   num_steps: 128
   ent_start: 0.01
-  aux_loss_mult: 0.0
+  aux_loss_mult: 0.01
   use_categorical_value: true
   normalize_advantages: false
   ent_target_mult: 8.0
