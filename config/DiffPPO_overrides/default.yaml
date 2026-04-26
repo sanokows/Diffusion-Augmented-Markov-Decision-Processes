@@ -7,6 +7,7 @@ hyperparameters:
   lr: 5e-4
   temperature_lr: 2e-4
   entropy_coef: 0.0001 
+  hl_gauss: False
   update_entropy_lagrangian: false
   num_envs: 4028
   num_steps: 64

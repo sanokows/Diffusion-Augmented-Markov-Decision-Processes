@@ -51,10 +51,10 @@ hyperparameters:
   tanh_transform: false
 
   # critic architecture settings (need to be increased for MJX humanoid)
-  critic_hidden_dim: 512
+  critic_hidden_dim: 256
   use_critic_norm: true
   num_critic_encoder_layers: 2
-  num_critic_head_layers: 2
+  num_critic_head_layers: 3
   num_critic_pred_layers: 2
   use_simplical_embedding: False
   use_critic_skip: False

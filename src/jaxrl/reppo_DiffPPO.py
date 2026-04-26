@@ -1117,9 +1117,7 @@ class ReppoPPOTrainer:
                         else:
                             alpha = 1.0
                             aux_loss = jnp.mean(masked_aux_loss) 
-                        critic_loss = _weighted_batch_mean(
-                            optax.squared_error(value, target_values), importance_ratio
-                        )
+
                         value_loss = _weighted_batch_mean(
                             (1.0 - minibatch.truncated) * (critic_update_loss)
                             + cfg.aux_loss_mult * aux_loss
