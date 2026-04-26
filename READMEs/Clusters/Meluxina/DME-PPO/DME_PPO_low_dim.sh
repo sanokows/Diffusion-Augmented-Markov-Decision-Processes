@@ -11,7 +11,6 @@
 #SBATCH --qos=default                      # quality of service
 
 # (optional) load needed modules
-conda activate REPPO
 
 which python
 python -c "import sys; print(sys.executable)"
