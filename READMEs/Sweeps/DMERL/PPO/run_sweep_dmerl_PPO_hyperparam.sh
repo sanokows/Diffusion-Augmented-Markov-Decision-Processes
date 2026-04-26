@@ -82,7 +82,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
                         env.name="$ENV_NAME" \
                         DiffPPO_overrides=default \
                         env=mjx_dmc \
-                        DiffPPO_overrides.hyperparameters.total_time_steps=5000000 \
+                        DiffPPO_overrides.hyperparameters.total_time_steps=50000000  \
                         wandb.project_suffix="_FR_13_04_hyper" \
                         DiffPPO_overrides.hyperparameters.lr="$LR" \
                         DiffPPO_overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
