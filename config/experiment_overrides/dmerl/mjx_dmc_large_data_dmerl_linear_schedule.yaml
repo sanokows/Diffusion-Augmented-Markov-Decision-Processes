@@ -13,7 +13,7 @@ hyperparameters:
   vmax: 200
   num_bins: 151
   num_eval: 50
-  aux_loss_mult: 0.5 ## increase a bit??
+  #aux_loss_mult: 0.5 ## increase a bit??
   aux_loss_alpha: 0.98 #0.95
   
   lr: 1e-3

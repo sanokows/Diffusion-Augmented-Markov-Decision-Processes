@@ -6,7 +6,6 @@ AUX_LOSS_MULT_VALUES=(
     0.15
     0.25
     0.35
-    0.5
 )
 
 # Step 2: Define GPU pool and round-robin scheduling

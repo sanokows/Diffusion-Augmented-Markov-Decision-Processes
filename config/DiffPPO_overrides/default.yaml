@@ -4,15 +4,15 @@ hyperparameters:
   lmbda: 0.98
   total_time_steps: 50_000_000
   num_mini_batches: 8
-  lr: 5e-4
+  lr: 1e-4
   temperature_lr: 2e-4
-  entropy_coef: 0.00002 
+  entropy_coef: 0.0002 
   hl_gauss: true 
   update_entropy_lagrangian: false
   num_envs: 2048
   num_steps: 128
   ent_start: 0.01
-  aux_loss_mult: 0.01
+  aux_loss_mult: 0.3
   use_categorical_value: true
   normalize_advantages: false
   ent_target_mult: 8.0
