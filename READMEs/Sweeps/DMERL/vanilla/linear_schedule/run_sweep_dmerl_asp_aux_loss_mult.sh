@@ -3,6 +3,7 @@
 # Step 1: Fixed settings
 ENV_NAME=AcrobotSwingupSparse
 AUX_LOSS_MULT_VALUES=(
+    0.1
     0.15
     0.25
     0.35
