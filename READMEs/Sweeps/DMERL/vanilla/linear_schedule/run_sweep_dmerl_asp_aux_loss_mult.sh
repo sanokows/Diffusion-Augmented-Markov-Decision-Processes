@@ -3,14 +3,12 @@
 # Step 1: Fixed settings
 ENV_NAME=AcrobotSwingupSparse
 AUX_LOSS_MULT_VALUES=(
-    0.1
-    0.15
-    0.25
-    0.35
+    0.025
+    0.05
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
-NUM_GPUS=4
+NUM_GPUS=2
 GPU_INDEX=0
 
 # Step 3: Wait until a GPU is free (no active compute processes)

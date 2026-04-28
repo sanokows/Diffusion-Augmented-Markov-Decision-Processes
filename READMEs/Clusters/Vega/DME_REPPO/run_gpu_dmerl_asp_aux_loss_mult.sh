@@ -2,7 +2,7 @@
 #SBATCH --job-name="dmerl_asp_aux_loss_mult"
 #SBATCH --time=42:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
