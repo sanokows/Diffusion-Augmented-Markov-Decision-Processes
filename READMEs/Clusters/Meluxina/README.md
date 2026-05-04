@@ -9,6 +9,11 @@ sbatch ./READMEs/Clusters/Meluxina/DME-PPO/DME_PPO_low_dim.sh
 sbatch ./READMEs/Clusters/Meluxina/DME-PPO/DME_PPO_2.sh
 sbatch ./READMEs/Clusters/Meluxina/DME-PPO/DME_PPO_hyperparam.sh
 sbatch ./READMEs/Clusters/Meluxina/DME-REPPO_Sparse/run.sh
+
+
+sbatch ./READMEs/Clusters/Meluxina/DME-PPO/DME_PPO_1.sh
+sbatch ./READMEs/Clusters/Meluxina/DME-PPO/DME_PPO_2.sh
+sbatch ./READMEs/Clusters/Meluxina/DME-PPO/DME_PPO_low_dim.sh
 ```
 
 
