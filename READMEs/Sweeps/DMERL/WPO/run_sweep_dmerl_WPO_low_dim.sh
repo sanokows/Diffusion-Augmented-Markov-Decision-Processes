@@ -5,12 +5,12 @@ ENV_NAMES=(
     AcrobotSwingup
     PendulumSwingup
     CartpoleSwingupSparse
-    #AcrobotSwingupSparse
+    AcrobotSwingupSparse
     # Add more env names here
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
-NUM_GPUS=3
+NUM_GPUS=4
 GPU_INDEX=0
 
 # Step 3: Wait until a GPU is free (no active compute processes)
@@ -44,14 +44,14 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_24_01" \
+        wandb.project_suffix="_FR_WPO_02_05" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
         hyperparameters.train_mode=WPO \
         env=mjx_dmc \
-        seed=12 \
-        num_trials=2 \
+        seed=0 \
+        num_trials=4 \
         experiment_overrides=dmerl_WPO/mjx_dmc_large_data_dmerl_WPO_linear_schedule &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))

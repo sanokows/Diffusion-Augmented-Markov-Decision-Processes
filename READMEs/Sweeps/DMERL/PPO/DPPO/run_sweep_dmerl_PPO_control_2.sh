@@ -2,14 +2,15 @@
 
 # Step 1: Define env.name values to loop over
 ENV_NAMES=(
-    WalkerRun
-    WalkerStand
-    WalkerWalk
+    CheetahRun
+    FishSwim
+    HopperHop
+    HopperStand
     # Add more env names here
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
-NUM_GPUS=3
+NUM_GPUS=4
 GPU_INDEX=0
 
 # Step 3: Wait until a GPU is free (no active compute processes)
@@ -41,17 +42,13 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         wait "${GPU_PIDS[$GPU_ID]}"
     fi
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
-    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DiffPPO \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_24_01" \
-        hyperparameters.num_eval=50 \
-        hyperparameters.total_time_steps=50000000 \
-        hyperparameters.diffusion.diff_steps=8 \
-        hyperparameters.train_mode=WPO \
+        DiffPPO_overrides=DPPO \
         env=mjx_dmc \
-        num_trials=1 \
-        seed=10 \
-        experiment_overrides=dmerl_WPO/mjx_dmc_large_data_dmerl_WPO_linear_schedule &
+        wandb.project_suffix="_FR_DPPO_29_04" \
+        trials=4 \
+        seed=7 &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

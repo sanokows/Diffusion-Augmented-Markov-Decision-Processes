@@ -48,7 +48,7 @@ for AUX_LOSS_MULT in "${AUX_LOSS_MULT_VALUES[@]}"; do
         hyperparameters.diffusion.diff_steps=8 \
         hyperparameters.aux_loss_mult="$AUX_LOSS_MULT" \
         env=mjx_dmc \
-        seed=0 \
+        seed=7 \
         num_trials=4 \
         experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule &
     GPU_PIDS[$GPU_ID]=$!

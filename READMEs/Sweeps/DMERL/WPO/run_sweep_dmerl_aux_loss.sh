@@ -3,10 +3,10 @@
 # Step 1: Define explicit runs (env, aux_loss_mult, aux_loss_alpha)
 # Format: "ENV_NAME|AUX_LOSS_MULT|AUX_LOSS_ALPHA"
 RUNS=(
-    "AcrobotSwingupSparse|0.02|0.98"
-    "AcrobotSwingupSparse|0.04|0.98"
-    "AcrobotSwingupSparse|0.06|0.98"
-    "AcrobotSwingupSparse|0.01|0.98"
+    "AcrobotSwingupSparse|0.05|0."
+    "AcrobotSwingupSparse|0.02|0."
+    "AcrobotSwingupSparse|0.005|0."
+    "AcrobotSwingupSparse|0.01|0."
     # Add more runs here
 
 )
@@ -46,7 +46,7 @@ for RUN in "${RUNS[@]}"; do
     echo "Starting env.name=$ENV_NAME aux_loss_mult=$AUX_LOSS_MULT aux_loss_alpha=$AUX_LOSS_ALPHA on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_aux_loss_WPO" \
+        wandb.project_suffix="_aux_loss_WPO_29_04" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \

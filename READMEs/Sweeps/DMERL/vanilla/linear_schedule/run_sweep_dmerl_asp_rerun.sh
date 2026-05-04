@@ -7,7 +7,7 @@ ENV_NAMES=(
 )
 
 # Step 2: Define GPU pool and round-robin scheduling
-NUM_GPUS=1
+NUM_GPUS=4
 GPU_INDEX=0
 
 # Step 3: Wait until a GPU is free (no active compute processes)
@@ -46,7 +46,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         hyperparameters.total_time_steps=50000000 \
         hyperparameters.diffusion.diff_steps=8 \
         env=mjx_dmc \
-        seed=0 \
+        seed=7 \
         num_trials=4 \
         experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule &
     GPU_PIDS[$GPU_ID]=$!

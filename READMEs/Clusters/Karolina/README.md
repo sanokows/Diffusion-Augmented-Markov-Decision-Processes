@@ -43,4 +43,14 @@ sbatch ./READMEs/Clusters/Karolina/run_DMEREPPO_low_dim.sh
 sbatch ./READMEs/Clusters/Karolina/run_DMERPPO_more_steps_no_learn.sh
 sbatch ./READMEs/Clusters/Karolina/run_DMERPPO_more_steps.sh
 
+sbatch ./READMEs/Clusters/Karolina/DPPO/control_1.sh
+sbatch ./READMEs/Clusters/Karolina/DPPO/control_2.sh
+sbatch ./READMEs/Clusters/Karolina/DPPO/low_dim.sh
+sbatch ./READMEs/Clusters/Karolina/WPO/aux_loss.sh
+sbatch ./READMEs/Clusters/Karolina/DME_REPPO/rerun.sh
+
+sbatch ./READMEs/Clusters/Karolina/WPO/control_1.sh
+sbatch ./READMEs/Clusters/Karolina/WPO/control_2.sh
+sbatch ./READMEs/Clusters/Karolina/WPO/low_dim.sh
+
 ```

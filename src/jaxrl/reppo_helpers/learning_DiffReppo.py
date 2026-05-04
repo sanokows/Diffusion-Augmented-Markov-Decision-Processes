@@ -453,6 +453,9 @@ def actor_WPO_loss_fn(
     importance_ratio=None,
 ):
         use_new_temp_mode = bool(getattr(cfg, "new_temp_mode", False))
+        use_wpo_log_temp_update = (
+            use_new_temp_mode and getattr(cfg, "train_mode", None) == "WPO"
+        )
         use_langevin = bool(cfg.diffusion.score_model.langevin_param)
         use_current_critic_for_actions = bool(
             getattr(cfg, "use_current_critic_for_actor_samples", False)
@@ -464,7 +467,11 @@ def actor_WPO_loss_fn(
             critic_current_model if use_current_critic_for_actions else critic_rollout_model
         )
         actor_model_raw = nnx.merge(updated_state.actor.graphdef, params)
-        temperature = _resolve_temperature(actor_model_raw, cfg, updated_state)
+        temperature = (
+            actor_model_raw.entropy_lagrangian()
+            if use_wpo_log_temp_update
+            else _resolve_temperature(actor_model_raw, cfg, updated_state)
+        )
         obs_for_actions = maybe_add_q_grad(
             minibatch.obs,
             minibatch.critic_obs,
@@ -537,7 +544,11 @@ def actor_WPO_loss_fn(
                 actor_model = fisher_actor_model
             else:
                 actor_model = nnx.merge(updated_state.actor.graphdef, params)
-        temperature = _resolve_temperature(actor_model, cfg, updated_state)
+        temperature = (
+            actor_model.entropy_lagrangian()
+            if use_wpo_log_temp_update
+            else _resolve_temperature(actor_model, cfg, updated_state)
+        )
 
         #jax.debug.print("train_update_step_5_env shape: {shape}", shape=step_key.shape)
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
@@ -626,16 +637,15 @@ def actor_WPO_loss_fn(
             axis=-1,
         )
 
-        actor_WPO_loss = temperature * _weighted_batch_mean(
-            (
-                (
-                    jax.lax.stop_gradient(log_prob_action_grad)
-                    - jax.lax.stop_gradient(stop_q_action_grad) / temperature
-                )
-                ** 2
-            ).sum(axis=-1),
-            importance_ratio,
+        safe_temperature = jnp.maximum(temperature, 1e-8)
+        delta_t = (
+            jax.lax.stop_gradient(log_prob_action_grad)
+            - jax.lax.stop_gradient(stop_q_action_grad) / safe_temperature
         )
+        delta_t_sq_mean = _weighted_batch_mean(
+            (delta_t**2).sum(axis=-1), importance_ratio
+        )
+        actor_WPO_loss = temperature * delta_t_sq_mean
 
         clip_ratio = _weighted_batch_mean(
             (kl_clip_value >= cfg.kl_bound).astype(jnp.float32),
@@ -681,6 +691,8 @@ def actor_WPO_loss_fn(
             entropy_lagrangian_maybe_stop_grad * target_entropy
         )
         target_entropy_loss = _weighted_batch_mean(target_entropy_loss, importance_ratio)
+        target_entropy_scalar = _metric_scalar(target_entropy)
+        wpo_temperature_objective = actor_WPO_loss + temperature * target_entropy_scalar
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
         )
@@ -690,7 +702,10 @@ def actor_WPO_loss_fn(
 
         loss = _weighted_batch_mean(actor_loss_val, importance_ratio)
         if cfg.update_entropy_lagrangian:
-            loss += target_entropy_loss
+            if use_wpo_log_temp_update:
+                loss += wpo_temperature_objective
+            else:
+                loss += target_entropy_loss
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
 
@@ -734,6 +749,8 @@ def actor_WPO_loss_fn(
             entropy_lagrangian=_metric_scalar(entropy_lagrangian),
             temp_entropy_lagrangian=_metric_scalar(entropy_lagrangian),
             entropy_loss=target_entropy_loss,
+            wpo_temperature_objective=_metric_scalar(wpo_temperature_objective),
+            delta_t_sq=_metric_scalar(delta_t_sq_mean),
             entropy_penalty=entropy_penalty,
             kl_penalty=kl_penalty,
             kl_clip_ratio=clip_ratio,

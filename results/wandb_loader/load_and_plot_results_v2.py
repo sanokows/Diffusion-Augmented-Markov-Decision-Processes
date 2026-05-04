@@ -37,8 +37,8 @@ import wandb
 
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_REPPO_20_04", "_FR_PPO_14_04", "_FR_ME-WPO", "_FR_WPO"]
-# old DME PPO _FR_test_PPO --> new PPO _FR_PPO_14_04
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_REPPO_20_04", "_FR_PPO_27_04", "_FR_DPPO_29_04", "_FR_ME-WPO", "_FR_WPO"]
+# old DME PPO _FR_test_PPO --> new PPO _FR_PPO_14_04  --> very new PPO _FR_PPO_27_04
 # old DME REPPO _FR_30_01 --> new _FR_REPPO_14_04
 ENV_NAMES = [
         "FingerSpin",
@@ -77,7 +77,13 @@ RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
             "color": "#1b7f3a",
         },
     },
-    "_FR_30_01": {
+    # "_FR_30_01": {
+    #     "reppo-dmerl-debug-1-<env_name>-reparam": {
+    #         "alias": "DME-REPPO (ours)",
+    #         "color": "#8b1a1a",
+    #     },
+    # },
+    "_FR_REPPO_20_04": {
         "reppo-dmerl-debug-1-<env_name>-reparam": {
             "alias": "DME-REPPO (ours)",
             "color": "#8b1a1a",
@@ -85,6 +91,12 @@ RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     },
     "_FR_test_PPO": {
         "ppo-diff_ppo-<env_name>": {"alias": "DME-PPO (ours)", "color": "#3b528b"},
+    },
+    "_FR_PPO_27_04": {
+        "ppo-diff_ppo-<env_name>": {"alias": "DME-PPO (ours)", "color": "#3b528b"},
+    },
+    "_FR_DPPO_29_04": {
+        "ppo-diff_ppo-<env_name>": {"alias": "DPPO", "color": "#4c78a8"},
     },
     "_FR_ME-WPO": {
         "reppo-<env_name>-WPO": {"alias": "ME-WPO (ours)", "color": "#1b7f3a"},
@@ -118,6 +130,7 @@ METHOD_COLOR_OVERRIDES = {
 }
 METHOD_STYLE_OVERRIDES = {
     PPO_BRAX_LABEL: "--",
+    "DPPO": "--",
     "DME-PPO (ours)": "-",
     "ME-WPO (ours)": "--",
     "DME-WPO (ours)": "-",
@@ -163,6 +176,13 @@ REVIEWER_PALETTE = [
 ]
 MEAN_FIGURES_SUBDIR = "mean"
 IQM_FIGURES_SUBDIR = "IQM"
+AUX_LOSS_FILTER_BY_ENV_AND_SUFFIX = {
+    ("AcrobotSwingupSparse", "_FR_REPPO_20_04"): 0.1,
+}
+_AUX_LOSS_MULT_REGEX = re.compile(
+    r"(?:^|[\s,])(?:hyperparameters\.)?aux_loss_mult\s*=\s*"
+    r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -263,6 +283,49 @@ def resolve_project_suffix(project: str) -> str | None:
         if project.endswith(suffix):
             return suffix
     return None
+
+
+def _to_float_or_none(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _collect_aux_loss_mult_values(obj: object) -> list[float]:
+    values: list[float] = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if str(key) == "aux_loss_mult":
+                parsed = _to_float_or_none(value)
+                if parsed is not None:
+                    values.append(parsed)
+            values.extend(_collect_aux_loss_mult_values(value))
+        return values
+    if isinstance(obj, (list, tuple, set)):
+        for item in obj:
+            values.extend(_collect_aux_loss_mult_values(item))
+        return values
+    if isinstance(obj, str):
+        for match in _AUX_LOSS_MULT_REGEX.findall(obj):
+            parsed = _to_float_or_none(match)
+            if parsed is not None:
+                values.append(parsed)
+    return values
+
+
+def run_matches_aux_loss_mult(
+    run: wandb.apis.public.Run, target: float, tol: float = 1e-9
+) -> bool:
+    candidates = _collect_aux_loss_mult_values(getattr(run, "config", {}) or {})
+    json_config = getattr(run, "json_config", None)
+    if isinstance(json_config, str) and json_config:
+        candidates.extend(_collect_aux_loss_mult_values(json_config))
+    return any(abs(value - target) <= tol for value in candidates)
 
 
 def normalize_runs_by_suffix(
@@ -661,6 +724,9 @@ def main() -> int:
             project_path = resolve_project_path(api, args.entity, project)
             run_name_counts = defaultdict(int)
             project_suffix = resolve_project_suffix(project)
+            aux_loss_filter_target = AUX_LOSS_FILTER_BY_ENV_AND_SUFFIX.get(
+                (env_name, project_suffix or "")
+            )
             suffix_run_map = runs_by_suffix.get(project_suffix) if project_suffix else None
             expanded_suffix_map = (
                 expand_name_map(suffix_run_map, env_name) if suffix_run_map else None
@@ -688,6 +754,11 @@ def main() -> int:
                 if expanded_suffix_map is not None:
                     print(f"{env_name} - seen run name: {raw_name}")
                 if project.endswith("_FR_19_01") and raw_name.strip().endswith("WPO"):
+                    continue
+                if (
+                    aux_loss_filter_target is not None
+                    and not run_matches_aux_loss_mult(run, aux_loss_filter_target)
+                ):
                     continue
                 if expanded_suffix_map is None:
                     if args.run_name_exclude and any(
@@ -837,7 +908,7 @@ def main() -> int:
         for method in ordered_methods_present(merged, method_order):
             method_df = merged[merged["method"] == method].sort_values("step")
             run_count = len(method_run_counts[method])
-            label = f"{method}"# (n={run_count})"
+            label = f"{method} (n={run_count})"
             color = color_by_method.get(method)
             linestyle = style_by_method.get(method, "-")
             plt.plot(
@@ -890,7 +961,7 @@ def main() -> int:
         for method in ordered_methods_present(merged_iqm, method_order):
             method_df = merged_iqm[merged_iqm["method"] == method].sort_values("step")
             run_count = len(method_run_counts[method])
-            label = f"{method}"# (n={run_count})"
+            label = f"{method} (n={run_count})"
             color = color_by_method.get(method)
             linestyle = style_by_method.get(method, "-")
             plt.plot(

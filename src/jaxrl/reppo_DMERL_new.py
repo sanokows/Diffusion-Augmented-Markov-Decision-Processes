@@ -367,9 +367,6 @@ class ReppoDMERLTrainer:
 
             pass
 
-        if cfg.train_mode == "WPO" and bool(getattr(cfg, "new_temp_mode", False)):
-            cfg = cfg.replace(stop_grad_entropy=False)
-
         self.cfg = cfg
         self.use_langevin_param = bool(cfg.diffusion.score_model.langevin_param)
         self.env_params = env_params
@@ -1495,12 +1492,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 cfg.hyperparameters[name] = sampled_value
             else:
                 raise ValueError(f"Hyperparameter {name} not found in config.")
-
-    if (
-        cfg.hyperparameters.train_mode == "WPO"
-        and bool(getattr(cfg.hyperparameters, "new_temp_mode", False))
-    ):
-        cfg.hyperparameters.stop_grad_entropy = False
 
     try:
         with open("completed_trials.txt", "r") as f:
