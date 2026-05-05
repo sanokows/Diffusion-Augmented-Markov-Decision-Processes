@@ -8,6 +8,4 @@ exec python -m src.jaxrl.reppo_DiffPPO env.name=TurningDoubleWellEnv wandb.proje
 python -m src.jaxrl.reppo_DiffPPO env.name=PendulumSwingup DiffPPO_overrides=default env=mjx_dmc DiffPPO_overrides.hyperparameters.total_time_steps=25000000 wandb.project_suffix=_FR_13_04 DiffPPO_overrides.hyperparameters.lr=1e-3 DiffPPO_overrides.hyperparameters.entropy_coef=1e-5 DiffPPO_overrides.hyperparameters.num_envs=4048 DiffPPO_overrides.hyperparameters.temperature_lr=3e-4 DiffPPO_overrides.hyperparameters.update_entropy_lagrangian=true DiffPPO_overrides.hyperparameters.num_epochs=12 DiffPPO_overrides.hyperparameters.ent_target_mult=6 seed=0 trials=1
 
 
-  temperature_lr: 2e-4
-  entropy_coef: 0.00001 
-  update_entropy_lagrangian: false
+python -m src.jaxrl.reppo_DiffPPO env.name=PendulumSwingup DiffPPO_overrides=default env=mjx_dmc wandb.project_suffix=_FR_PPO_27_04_test trials=1 seed=0 hyperparameters.clip_ratio=0.1
