@@ -11,6 +11,18 @@ RUNS=(
 
 )
 
+# Step 2: Define seed sweep values
+SEEDS=(
+    0
+    1
+    2
+    3
+    5
+    8
+    13
+    21
+)
+
 # Step 4: Define GPU pool and round-robin scheduling
 NUM_GPUS=4
 GPU_INDEX=0
@@ -37,26 +49,30 @@ wait_for_gpu() {
 declare -a GPU_PIDS
 for RUN in "${RUNS[@]}"; do
     IFS='|' read -r ENV_NAME AUX_LOSS_MULT AUX_LOSS_ALPHA <<< "$RUN"
-    GPU_ID=$((GPU_INDEX % NUM_GPUS))
-    wait_for_gpu "$GPU_ID"
-    if [ -n "${GPU_PIDS[$GPU_ID]}" ]; then
-        echo "Waiting for previous run on GPU $GPU_ID (pid ${GPU_PIDS[$GPU_ID]})..."
-        wait "${GPU_PIDS[$GPU_ID]}"
-    fi
-    echo "Starting env.name=$ENV_NAME aux_loss_mult=$AUX_LOSS_MULT aux_loss_alpha=$AUX_LOSS_ALPHA on GPU $GPU_ID..."
-    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
-        env.name="$ENV_NAME" \
-        wandb.project_suffix="_aux_loss_WPO_29_04" \
-        hyperparameters.num_eval=50 \
-        hyperparameters.total_time_steps=50000000 \
-        hyperparameters.diffusion.diff_steps=8 \
-        hyperparameters.aux_loss_mult="$AUX_LOSS_MULT" \
-        hyperparameters.aux_loss_alpha="$AUX_LOSS_ALPHA" \
-        env=mjx_dmc \
-        num_trials=3 \
-        experiment_overrides=dmerl_WPO/mjx_dmc_large_data_dmerl_WPO_aux_loss &
-    GPU_PIDS[$GPU_ID]=$!
-    GPU_INDEX=$((GPU_INDEX + 1))
+    for SEED in "${SEEDS[@]}"; do
+        SEED="${SEED%,}"
+        GPU_ID=$((GPU_INDEX % NUM_GPUS))
+        wait_for_gpu "$GPU_ID"
+        if [ -n "${GPU_PIDS[$GPU_ID]}" ]; then
+            echo "Waiting for previous run on GPU $GPU_ID (pid ${GPU_PIDS[$GPU_ID]})..."
+            wait "${GPU_PIDS[$GPU_ID]}"
+        fi
+        echo "Starting env.name=$ENV_NAME seed=$SEED aux_loss_mult=$AUX_LOSS_MULT aux_loss_alpha=$AUX_LOSS_ALPHA on GPU $GPU_ID..."
+        CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
+            env.name="$ENV_NAME" \
+            wandb.project_suffix="_aux_loss_WPO_29_04" \
+            hyperparameters.num_eval=50 \
+            hyperparameters.total_time_steps=50000000 \
+            hyperparameters.diffusion.diff_steps=8 \
+            hyperparameters.aux_loss_mult="$AUX_LOSS_MULT" \
+            hyperparameters.aux_loss_alpha="$AUX_LOSS_ALPHA" \
+            env=mjx_dmc \
+            seed="$SEED" \
+            num_trials=1 \
+            experiment_overrides=dmerl_WPO/mjx_dmc_large_data_dmerl_WPO_aux_loss &
+        GPU_PIDS[$GPU_ID]=$!
+        GPU_INDEX=$((GPU_INDEX + 1))
+    done
 done
 
 # Step 7: Wait for all background runs to finish

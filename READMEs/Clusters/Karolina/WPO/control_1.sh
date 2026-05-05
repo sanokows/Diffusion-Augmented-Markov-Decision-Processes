@@ -2,7 +2,7 @@
 #SBATCH --job-name Karolina
 #SBATCH --account EU-25-100 
 #SBATCH --partition qgpu
-#SBATCH --time 24:00:00
+#SBATCH --time 30:00:00
 #SBATCH --nodes 1
 #SBATCH --gpus 4
 #SBATCH --ntasks=4
