@@ -3,7 +3,7 @@ hyperparameters:
   num_steps: 128
   num_mini_batches: 8 # *diff_steps = 64 -> same num of updates
   num_epochs: 8 
-  kl_bound: 0.03 # 0.2
+  kl_bound: 0.04 # 0.2
   kl_start: 0.3 # 0.15
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
@@ -23,7 +23,7 @@ hyperparameters:
   remove_fisher_precond: true
   new_temp_mode: false
   ent_start: 0.01
-  ent_target_mult: 7.
+  ent_target_mult: 8.
 
   entropy_lagrangian_start: 0.01
   
