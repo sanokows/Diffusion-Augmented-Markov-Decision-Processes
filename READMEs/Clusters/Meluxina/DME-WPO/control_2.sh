@@ -1,5 +1,4 @@
 
-
 #!/bin/bash -l
 #SBATCH --job-name=my_job_name             # optional: name of the job
 #SBATCH --nodes=1                          # request 1 node
