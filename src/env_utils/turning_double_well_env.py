@@ -701,9 +701,11 @@ class TurningDoubleWellEnv:
         span_y = 2.0 * float(y_extent)
         margin_x = 0.06 * span_x
         margin_y = 0.08 * span_y
-        x0 = -float(x_extent) + margin_x
+        # Anchor the scale bar to the lower-right corner for consistent placement
+        # in paper composites, then back-compute the left edge from the bar length.
+        x1 = float(x_extent) - margin_x
         y0 = -float(y_extent) + margin_y
-        x1 = min(x0 + float(bar_length), float(x_extent) - margin_x)
+        x0 = max(x1 - float(bar_length), -float(x_extent) + margin_x)
         if x1 <= x0:
             return
         tick_half = 0.018 * span_y
@@ -717,7 +719,8 @@ class TurningDoubleWellEnv:
             f"{(x1 - x0):g} units",
             ha="center",
             va="bottom",
-            fontsize=12.0 if label_fontsize is None else float(label_fontsize),
+            fontsize=18.0 if label_fontsize is None else max(18.0, float(label_fontsize)),
+            fontweight="semibold",
             color=bar_color,
             bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none", "pad": 1.5},
             zorder=7,
