@@ -23,13 +23,13 @@ hyperparameters:
   remove_fisher_precond: true
   new_temp_mode: false
   ent_start: 0.01
-  ent_target_mult: 8.
+  ent_target_mult: 7.
 
   entropy_lagrangian_start: 0.01
   
   lr: 1e-3
-  temperature_lr: 6e-4
-  lagrangian_lr: 6e-4
+  temperature_lr: 3e-4
+  lagrangian_lr: 3e-4
   tanh_transform: false
   gamma: 0.999
   lmbda: 0.98
