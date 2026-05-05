@@ -22,7 +22,7 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -61,6 +61,22 @@ class PreparedMethod:
     train_state: Any | None = None
     actor_model: Any | None = None
     entropy_coef: float | None = None
+
+
+FULL_METHOD_SLOTS: tuple[str, ...] = (
+    "reppo",
+    "diffppo_zero",
+    "diffppo",
+    "dmerl",
+    "dmerl_wpo",
+    "dime",
+)
+CORE4_METHOD_SLOTS: tuple[str, ...] = (
+    "reppo",
+    "diffppo_zero",
+    "diffppo",
+    "dmerl",
+)
 
 
 def _progress(msg: str) -> None:
@@ -1042,6 +1058,21 @@ def _compose_trajectory_figure(
     plt.close(fig)
 
 
+_T = TypeVar("_T")
+
+
+def _ordered_from_slots_by_slot(
+    by_slot: dict[str, _T],
+    slots: tuple[str, ...] | list[str],
+    *,
+    context: str,
+) -> list[_T]:
+    missing = [slot for slot in slots if slot not in by_slot]
+    if missing:
+        raise KeyError(f"Missing slots for {context}: {missing}")
+    return [by_slot[slot] for slot in slots]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
@@ -1149,26 +1180,33 @@ def main() -> None:
         f"(mode={diffppo_zero_mode}, entropy_coef={diffppo_zero_entropy if diffppo_zero_entropy is not None else 'unknown'})"
     )
 
-    specs = [
-        MethodSpec("reppo", "REPPO", args.checkpoint_reppo, args.sampler_reppo),
-        MethodSpec(
+    specs_by_slot = {
+        "reppo": MethodSpec("reppo", "REPPO", args.checkpoint_reppo, args.sampler_reppo),
+        "diffppo_zero": MethodSpec(
             "diffppo_zero",
             r"DPPO ($\mathcal{T}=0$)",
             diffppo_zero_ckpt,
             args.sampler_diffppo_zero,
         ),
-        MethodSpec("diffppo", "DiffPPO", diffppo_ckpt, args.sampler_diffppo),
-        MethodSpec("dmerl", "DMERL", args.checkpoint_dmerl, args.sampler_dmerl),
-        MethodSpec("dmerl_wpo", "DMERL-WPO", args.checkpoint_dmerl_wpo, args.sampler_dmerl_wpo),
-        MethodSpec("dime", "DIME", args.checkpoint_dime, args.sampler_dime),
-    ]
+        "diffppo": MethodSpec("diffppo", "DME-PPO", diffppo_ckpt, args.sampler_diffppo),
+        "dmerl": MethodSpec("dmerl", "DMERL", args.checkpoint_dmerl, args.sampler_dmerl),
+        "dmerl_wpo": MethodSpec("dmerl_wpo", "DMERL-WPO", args.checkpoint_dmerl_wpo, args.sampler_dmerl_wpo),
+        "dime": MethodSpec("dime", "DIME", args.checkpoint_dime, args.sampler_dime),
+    }
+    specs = _ordered_from_slots_by_slot(
+        specs_by_slot,
+        FULL_METHOD_SLOTS,
+        context="full method specs",
+    )
 
     _progress("Preparing models from checkpoints")
+    prepared_methods_by_slot: dict[str, PreparedMethod] = {}
     prepared_methods: list[PreparedMethod] = []
     for spec in specs:
         _progress(f"Loading {spec.label}: {spec.checkpoint}")
         prepared = _prepare_method(spec, args)
         prepared_methods.append(prepared)
+        prepared_methods_by_slot[spec.slot] = prepared
 
     _progress("Sampling action distributions per state")
     action_data: dict[str, dict[str, Any]] = {}
@@ -1240,6 +1278,15 @@ def main() -> None:
     traj_png_no_title = os.path.abspath(
         os.path.join(args.output_dir, f"{args.output_stem}__trajectory_row_no_title.png")
     )
+    core4_hist_png = os.path.abspath(
+        os.path.join(args.output_dir, f"{args.output_stem}__action_hist_row_core4.png")
+    )
+    core4_traj_png = os.path.abspath(
+        os.path.join(args.output_dir, f"{args.output_stem}__trajectory_row_core4.png")
+    )
+    core4_traj_png_no_title = os.path.abspath(
+        os.path.join(args.output_dir, f"{args.output_stem}__trajectory_row_core4_no_title.png")
+    )
 
     _progress(f"Composing action figure: {hist_png}")
     _compose_hist_figure(
@@ -1268,6 +1315,37 @@ def main() -> None:
         out_path=traj_png_no_title,
         dpi=int(args.dpi),
     )
+    prepared_core4_methods = _ordered_from_slots_by_slot(
+        prepared_methods_by_slot,
+        CORE4_METHOD_SLOTS,
+        context="core4 prepared methods",
+    )
+    _progress(f"Composing core4 action figure: {core4_hist_png}")
+    _compose_hist_figure(
+        prepared_core4_methods,
+        action_data,
+        out_path=core4_hist_png,
+        bins=int(args.analysis_bins),
+        state_cmap=str(args.state_cmap),
+        dpi=int(args.dpi),
+        legend_fontsize=float(args.hist_legend_fontsize),
+        axis_label_fontsize=float(args.hist_axis_label_fontsize),
+        axis_tick_fontsize=float(args.hist_axis_tick_fontsize),
+    )
+    _progress(f"Composing core4 trajectory figure: {core4_traj_png}")
+    _compose_trajectory_figure(
+        prepared_core4_methods,
+        trajectory_pngs,
+        out_path=core4_traj_png,
+        dpi=int(args.dpi),
+    )
+    _progress(f"Composing core4 no-title trajectory figure: {core4_traj_png_no_title}")
+    _compose_trajectory_figure(
+        prepared_core4_methods,
+        trajectory_pngs_no_title,
+        out_path=core4_traj_png_no_title,
+        dpi=int(args.dpi),
+    )
 
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1276,6 +1354,22 @@ def main() -> None:
         "action_hist_figure": hist_png,
         "trajectory_figure": traj_png,
         "trajectory_figure_no_title": traj_png_no_title,
+        "figures": {
+            "full6": {
+                "action_hist_figure": hist_png,
+                "trajectory_figure": traj_png,
+                "trajectory_figure_no_title": traj_png_no_title,
+            },
+            "core4": {
+                "action_hist_figure": core4_hist_png,
+                "trajectory_figure": core4_traj_png,
+                "trajectory_figure_no_title": core4_traj_png_no_title,
+            },
+        },
+        "method_groups": {
+            "full6": list(FULL_METHOD_SLOTS),
+            "core4": list(CORE4_METHOD_SLOTS),
+        },
         "methods": [
             {
                 "slot": m.spec.slot,
@@ -1320,6 +1414,9 @@ def main() -> None:
     _progress(f"Action figure: {hist_png}")
     _progress(f"Trajectory figure: {traj_png}")
     _progress(f"Trajectory figure (no title): {traj_png_no_title}")
+    _progress(f"Core4 action figure: {core4_hist_png}")
+    _progress(f"Core4 trajectory figure: {core4_traj_png}")
+    _progress(f"Core4 trajectory figure (no title): {core4_traj_png_no_title}")
     _progress(f"Manifest: {manifest_path}")
 
 

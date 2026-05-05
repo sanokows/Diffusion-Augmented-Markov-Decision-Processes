@@ -592,11 +592,11 @@ Outputs are written as PNG files into `artifacts/` (see `--tdw-action-analysis-o
 - Histogram + reward plot: `<basename>.png`
 - Q-function plot (when `--tdw-action-analysis-q` is set): `<basename>__q.png`
 
-## TurningDoubleWellEnv Paper Composites (6 Methods, 2 Rows)
+## TurningDoubleWellEnv Paper Composites (6 Methods + Core4 Variant)
 
 To auto-generate compact paper-ready composites in the fixed method order
 
-`REPPO | DiffPPO (zero temp) | DiffPPO | DMERL | DMERL-WPO | DIME`
+`REPPO | DPPO (zero temp) | DME-PPO | DMERL | DMERL-WPO | DIME`
 
 use:
 
@@ -639,5 +639,11 @@ This writes:
   One row (6 columns) of static trajectory snapshots (not GIFs), one per method, with in-panel scale bars and no x/y ticks.
 - `<output-dir>/<output-stem>__trajectory_row_no_title.png`  
   Same as above, but with no per-panel titles at all.
+- `<output-dir>/<output-stem>__action_hist_row_core4.png`  
+  Additional one-row (4 columns) action-hist composite for `REPPO | DPPO (T=0) | DME-PPO | DMERL`.
+- `<output-dir>/<output-stem>__trajectory_row_core4.png`  
+  Additional one-row (4 columns) trajectory composite for `REPPO | DPPO (T=0) | DME-PPO | DMERL`.
+- `<output-dir>/<output-stem>__trajectory_row_core4_no_title.png`  
+  Same core4 trajectory composite with no per-panel titles.
 - `<output-dir>/<output-stem>__manifest.json`  
-  Metadata with checkpoint paths, resolved samplers, and source render artifacts.
+  Metadata with checkpoint paths, resolved samplers, source render artifacts, and grouped figure paths (`full6` and `core4`).
