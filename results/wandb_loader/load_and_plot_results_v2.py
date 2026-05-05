@@ -117,34 +117,34 @@ ENV_NAMES = [
 #RUNS_BY_SUFFIX: dict[str, dict[str, str]] = {}
 RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     "_FR_16_01": {
-        "reppo-dime-debug-1-<env_name>": {"alias": "REPPO-DiME", "color": "#ff0000"},
+        "reppo-dime-debug-1-<env_name>": {"alias": "REPPO-DIME", "color": "#ff0000"},
     },
     "_FR_19_01": {
         "reppo-<env_name>-reparam": {"alias": "REPPO", "color": "#8b1a1a"},
     },
     "_FR_24_01": {
         "reppo-dmerl-debug-1-<env_name>-WPO": {
-            "alias": "DME-WPO (ours)",
+            "alias": "DA-MDP: WPO (ours)",
             "color": "#1b7f3a",
         },
     },
     # "_FR_30_01": {
     #     "reppo-dmerl-debug-1-<env_name>-reparam": {
-    #         "alias": "DME-REPPO (ours)",
+    #         "alias": "DA-MDP: REPPO (ours)",
     #         "color": "#8b1a1a",
     #     },
     # },
     "_FR_REPPO_20_04": {
         "reppo-dmerl-debug-1-<env_name>-reparam": {
-            "alias": "DME-REPPO (ours)",
+            "alias": "DA-MDP: REPPO (ours)",
             "color": "#8b1a1a",
         },
     },
     "_FR_test_PPO": {
-        "ppo-diff_ppo-<env_name>": {"alias": "DME-PPO (ours)", "color": "#3b528b"},
+        "ppo-diff_ppo-<env_name>": {"alias": "DA-MDP: PPO (ours)", "color": "#3b528b"},
     },
     "_FR_PPO_27_04": {
-        "ppo-diff_ppo-<env_name>": {"alias": "DME-PPO (ours)", "color": "#3b528b"},
+        "ppo-diff_ppo-<env_name>": {"alias": "DA-MDP: PPO (ours)", "color": "#3b528b"},
     },
     "_FR_DPPO_29_04": {
         "ppo-diff_ppo-<env_name>": {"alias": "DPPO", "color": "#4c78a8"},
@@ -182,12 +182,12 @@ METHOD_COLOR_OVERRIDES = {
 METHOD_STYLE_OVERRIDES = {
     PPO_BRAX_LABEL: "--",
     "DPPO": "--",
-    "DME-PPO (ours)": "-",
+    "DA-MDP: PPO (ours)": "-",
     "ME-WPO (ours)": "--",
-    "DME-WPO (ours)": "-",
+    "DA-MDP: WPO (ours)": "-",
     "REPPO": "--",
-    "DME-REPPO (ours)": "-",
-    "REPPO-DiME": "-",
+    "DA-MDP: REPPO (ours)": "-",
+    "REPPO-DIME": "-",
 }
 STYLE_VERSION_LEGACY = "legacy"
 STYLE_VERSION_REVIEWER = "reviewer"
@@ -203,9 +203,9 @@ REVIEWER_CATEGORY_ORDER = {
     "other_baseline": 2,
 }
 REVIEWER_PROPOSED_TO_BASELINES = {
-    "dme-ppo": {"ppo (r)", "ppo_brax", "ppo"},
-    "dme-reppo": {"reppo"},
-    "dme-wpo": {"wpo", "me-wpo"},
+    "da-mdp: ppo": {"ppo (r)", "ppo_brax", "ppo"},
+    "da-mdp: reppo": {"reppo"},
+    "da-mdp: wpo": {"wpo", "me-wpo"},
 }
 REVIEWER_EXTRA_PROPOSED = {"reppo-dime"}
 REVIEWER_SPECIAL_LINESTYLE = (0, (7, 2.2, 1.8, 2.2))
@@ -229,7 +229,7 @@ MEAN_FIGURES_SUBDIR = "mean"
 IQM_FIGURES_SUBDIR = "IQM"
 DPPO_DME_COMPARISON_DIR = "PPO_DPPO_comparison"
 RUNTIME_COMPARISON_DIR = "runtime_comparison"
-DPPO_ONLY_METHODS = {"DPPO", "DME-PPO (ours)"}
+DPPO_ONLY_METHODS = {"DPPO", "DA-MDP: PPO (ours)"}
 RUNTIME_TIME_UNIT_CHOICES = ("seconds", "minutes", "hours")
 AUX_LOSS_FILTER_BY_ENV_AND_SUFFIX = {
     ("AcrobotSwingupSparse", "_FR_REPPO_20_04"): 0.1,
@@ -485,7 +485,7 @@ def build_reviewer_categories(methods: set[str]) -> dict[str, str]:
         method
         for method in methods
         if "(ours)" in method.lower()
-        or canonical_by_method[method].startswith("dme-")
+        or canonical_by_method[method].startswith("da-mdp:")
         or canonical_by_method[method] in REVIEWER_EXTRA_PROPOSED
     }
 

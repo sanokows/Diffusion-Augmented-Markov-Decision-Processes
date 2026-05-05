@@ -10,7 +10,7 @@
     "samples_per_state": 5000,
     "seed": 0
   },
-  "created_at_utc": "2026-05-05T17:30:41Z",
+  "created_at_utc": "2026-05-05T18:11:48Z",
   "diffppo_zero_checkpoint_entropy_coef": 0.0,
   "diffppo_zero_checkpoint_mode": "auto_from_candidates",
   "env_overrides": [
@@ -55,14 +55,14 @@
       "slot": "reppo",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T172002Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T172002Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T172002Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T180106Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T180106Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T180106Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T172030Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T172030Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T172030Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T180132Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T180132Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T180132Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -74,14 +74,14 @@
       "slot": "diffppo_zero",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T172054Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T172054Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T172054Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T180157Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T180157Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T180157Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T172142Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T172142Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T172142Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T180244Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T180244Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T180244Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -93,14 +93,14 @@
       "slot": "diffppo",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T172225Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T172225Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T172225Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T180327Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T180327Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T180327Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T172324Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T172324Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T172324Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T180428Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T180428Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T180428Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -112,14 +112,14 @@
       "slot": "dmerl",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T172425Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T172425Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T172425Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T180529Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T180529Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T180529Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T172528Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T172528Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T172528Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T180634Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T180634Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T180634Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -131,14 +131,14 @@
       "slot": "dmerl_wpo",
       "train_mode": "WPO",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T172633Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T172633Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T172633Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T180740Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T180740Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T180740Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T172736Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T172736Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T172736Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T180844Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T180844Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T180844Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -150,14 +150,14 @@
       "slot": "dime",
       "train_mode": "",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T172837Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T172837Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T172837Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T180944Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T180944Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T180944Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T172937Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T172937Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T172937Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T181044Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T181044Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T181044Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif"
       }
     }
   ],

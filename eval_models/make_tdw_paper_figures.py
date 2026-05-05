@@ -938,7 +938,7 @@ def _render_snapshot(
         hide_axis_ticks=True,
         show_scale_bar=True,
         scale_bar_length=None,
-        scale_bar_fontsize=float(args.trajectory_scale_fontsize),
+        scale_bar_fontsize=max(18.0, float(args.trajectory_scale_fontsize)),
     )
     return outputs
 
@@ -1188,9 +1188,9 @@ def main() -> None:
             diffppo_zero_ckpt,
             args.sampler_diffppo_zero,
         ),
-        "diffppo": MethodSpec("diffppo", "DME-PPO", diffppo_ckpt, args.sampler_diffppo),
-        "dmerl": MethodSpec("dmerl", "DMERL", args.checkpoint_dmerl, args.sampler_dmerl),
-        "dmerl_wpo": MethodSpec("dmerl_wpo", "DMERL-WPO", args.checkpoint_dmerl_wpo, args.sampler_dmerl_wpo),
+        "diffppo": MethodSpec("diffppo", "DA-MDP: PPO", diffppo_ckpt, args.sampler_diffppo),
+        "dmerl": MethodSpec("dmerl", "DA-MDP: REPPO", args.checkpoint_dmerl, args.sampler_dmerl),
+        "dmerl_wpo": MethodSpec("dmerl_wpo", "DA-MDP: WPO", args.checkpoint_dmerl_wpo, args.sampler_dmerl_wpo),
         "dime": MethodSpec("dime", "DIME", args.checkpoint_dime, args.sampler_dime),
     }
     specs = _ordered_from_slots_by_slot(
