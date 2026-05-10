@@ -88,9 +88,18 @@ except Exception:
 
 DEFAULT_Y_KEY = "eval/episode_return"
 AUTO_X_KEYS = ["_step"]
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_REPPO_20_04", "_FR_PPO_27_04", "_FR_DPPO_29_04", "_FR_ME-WPO", "_FR_WPO"]
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_WPO_07_05", "_FR_REPPO_05_05", "_FR_PPO_27_04", "_FR_DPPO_29_04", "_FR_ME-WPO", "_FR_WPO"]
+# Optional runtime-only suffix filter.
+# Set to None (or []) to include all suffixes in runtime plots.
+# Example:
+# RUNTIME_PROJECT_SUFFIXES = ["_FR_REPPO_05_05", "_FR_PPO_27_04"]
+RUNTIME_PROJECT_SUFFIXES = [ "_FR_REPPO_05_05", "_FR_16_01"]
 # old DME PPO _FR_test_PPO --> new PPO _FR_PPO_14_04  --> very new PPO _FR_PPO_27_04
 # old DME REPPO _FR_30_01 --> new _FR_REPPO_14_04
+# _FR_16_01 REPPO-DIME
+# _FR_19_01 REPPO
+# _FR_24_01 DA-MDP: WPO 
+# olde DME-REPPO _FR_REPPO_20_04 # latest run _FR_REPPO_05_05
 ENV_NAMES = [
         "FingerSpin",
     "AcrobotSwingup",
@@ -122,7 +131,7 @@ RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     "_FR_19_01": {
         "reppo-<env_name>-reparam": {"alias": "REPPO", "color": "#8b1a1a"},
     },
-    "_FR_24_01": {
+    "_FR_WPO_07_05": {
         "reppo-dmerl-debug-1-<env_name>-WPO": {
             "alias": "DA-MDP: WPO (ours)",
             "color": "#1b7f3a",
@@ -135,6 +144,12 @@ RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     #     },
     # },
     "_FR_REPPO_20_04": {
+        "reppo-dmerl-debug-1-<env_name>-reparam": {
+            "alias": "DA-MDP: REPPO (ours)",
+            "color": "#8b1a1a",
+        },
+    },
+        "_FR_REPPO_05_05": {
         "reppo-dmerl-debug-1-<env_name>-reparam": {
             "alias": "DA-MDP: REPPO (ours)",
             "color": "#8b1a1a",
@@ -157,7 +172,12 @@ RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     },
 }
 PPO_BRAX_LABEL = "PPO (r)"
+FPO_LABEL = "FPO"
 CSV_RESULTS_DIR = Path("results")
+FPO_RESULTS_CSV = CSV_RESULTS_DIR / "FPO" / "fpo_full_results.csv"
+FPO_REQUIRED_COLUMNS = {"Environment", "Seed", "Step", "Reward"}
+FPO_MAX_INCLUDED_STEP = 50.0
+RUNTIME_EXCLUDED_METHODS = {FPO_LABEL}
 PLOT_MAX_STEPS = 5e7
 VIRIDIS_RANGE = (0.1, 0.95)
 LINE_STYLES = ["-", "--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 2))]
@@ -168,6 +188,8 @@ AXIS_LABEL_FONTSIZE = 20
 TICK_LABEL_FONTSIZE = 17
 LEGEND_FONTSIZE = 18
 LEGEND_FONTSIZE_all = 14
+ALL_ENV_LEGEND_ROWS = 2
+ALL_ENV_LEGEND_FONTSIZE = 12
 LEGEND_HANDLELENGTH = 4.0
 TITLE_FONTSIZE = 22
 GRID_ALPHA = 0.9
@@ -176,11 +198,14 @@ alpha_line = 0.7
 GRID_LINESTYLE = ":"
 GRID_LINEWIDTH = 2.0
 GRID_COLS = 3
+GRID_COLS_ALTERNATE = 4
 METHOD_COLOR_OVERRIDES = {
     PPO_BRAX_LABEL: "#414487",
+    FPO_LABEL: "#E60000",
 }
 METHOD_STYLE_OVERRIDES = {
     PPO_BRAX_LABEL: "--",
+    FPO_LABEL: ":",
     "DPPO": "--",
     "DA-MDP: PPO (ours)": "-",
     "ME-WPO (ours)": "--",
@@ -212,6 +237,10 @@ REVIEWER_SPECIAL_LINESTYLE = (0, (7, 2.2, 1.8, 2.2))
 REVIEWER_METHOD_STYLE_OVERRIDES = {
     "wpo": REVIEWER_SPECIAL_LINESTYLE,
     "reppo-dime": REVIEWER_SPECIAL_LINESTYLE,
+    "fpo": ":",
+}
+REVIEWER_METHOD_COLOR_OVERRIDES = {
+    "fpo": "#E60000",
 }
 REVIEWER_PALETTE = [
     "#0072B2",
@@ -352,6 +381,13 @@ def resolve_project_suffix(project: str) -> str | None:
         if project.endswith(suffix):
             return suffix
     return None
+
+
+def normalize_suffix_filter(suffixes: list[str] | None) -> set[str] | None:
+    if suffixes is None:
+        return None
+    normalized = {suffix.strip() for suffix in suffixes if suffix and suffix.strip()}
+    return normalized or None
 
 
 def _to_float_or_none(value: object) -> float | None:
@@ -555,6 +591,8 @@ def build_reviewer_style_maps(
         canonical = canonical_by_method[method]
         if canonical in REVIEWER_METHOD_STYLE_OVERRIDES:
             styles[method] = REVIEWER_METHOD_STYLE_OVERRIDES[canonical]
+        if canonical in REVIEWER_METHOD_COLOR_OVERRIDES:
+            colors[method] = REVIEWER_METHOD_COLOR_OVERRIDES[canonical]
 
     return colors, styles, categories
 
@@ -579,6 +617,42 @@ def make_legend_clearer(legend: object) -> None:
         return
     for line in legend.get_lines():
         line.set_alpha(1.0)
+
+
+def style_all_env_plot(
+    ax: Axes,
+    x_label: str,
+    y_label: str,
+    title: str,
+    grid_alpha: float,
+    grid_linewidth: float,
+) -> None:
+    fig = ax.figure
+    ax.set_xlabel(x_label, fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel(y_label, fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE)
+    ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+    ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+
+    top_rect = 0.92
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        legend_rows_target = 1 if len(handles) <= 2 else ALL_ENV_LEGEND_ROWS
+        legend_cols = max(1, math.ceil(len(handles) / legend_rows_target))
+        legend_rows = max(1, math.ceil(len(handles) / legend_cols))
+        legend_fontsize = 9 #ALL_ENV_LEGEND_FONTSIZE
+        top_rect = max(0.78, 0.90 - 0.05 * (legend_rows - 1))
+        legend = fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.98),
+            ncols=legend_cols,
+            fontsize=legend_fontsize,
+            handlelength=LEGEND_HANDLELENGTH,
+        )
+        make_legend_clearer(legend)
+    fig.tight_layout(rect=[0, 0, 1, top_rect])
 
 
 def build_distinct_palette(count: int) -> list[str]:
@@ -665,6 +739,96 @@ def _label_from_csv(path: Path, env_name: str) -> str:
         remainder = stem[len(env_name) :].lstrip("_- ")
         return remainder or "ppo"
     return stem
+
+
+def _load_fpo_seed_records(env_name: str) -> pd.DataFrame | None:
+    if not FPO_RESULTS_CSV.is_file():
+        print(f"Warning: FPO CSV not found: {FPO_RESULTS_CSV}", file=sys.stderr)
+        return None
+    try:
+        df = pd.read_csv(FPO_RESULTS_CSV)
+    except Exception as exc:
+        print(f"Warning: failed to read FPO CSV {FPO_RESULTS_CSV} ({exc}).", file=sys.stderr)
+        return None
+    missing = sorted(FPO_REQUIRED_COLUMNS.difference(df.columns))
+    if missing:
+        print(
+            f"Warning: FPO CSV missing required columns ({', '.join(missing)}): "
+            f"{FPO_RESULTS_CSV}",
+            file=sys.stderr,
+        )
+        return None
+
+    env_df = df[df["Environment"] == env_name].copy()
+    if env_df.empty:
+        return None
+    env_df["Step"] = pd.to_numeric(env_df["Step"], errors="coerce")
+    env_df["Reward"] = pd.to_numeric(env_df["Reward"], errors="coerce")
+    env_df["Seed"] = pd.to_numeric(env_df["Seed"], errors="coerce")
+    env_df = env_df.dropna(subset=["Step", "Reward", "Seed"])
+
+    target_step = float(FPO_MAX_INCLUDED_STEP)
+    synthetic_rows: list[dict[str, float]] = []
+    grouped_seed_frames: list[pd.DataFrame] = []
+    for seed, seed_df in env_df.groupby("Seed", sort=False):
+        collapsed = (
+            seed_df.groupby("Step", as_index=False)["Reward"].mean().sort_values("Step")
+        )
+        if collapsed.empty:
+            continue
+        grouped_seed_frames.append(
+            pd.DataFrame(
+                {
+                    "Environment": env_name,
+                    "Seed": float(seed),
+                    "Step": collapsed["Step"],
+                    "Reward": collapsed["Reward"],
+                }
+            )
+        )
+        if (collapsed["Step"] == target_step).any():
+            continue
+
+        lower = collapsed[collapsed["Step"] < target_step]
+        upper = collapsed[collapsed["Step"] > target_step]
+        if lower.empty or upper.empty:
+            continue
+        lo = lower.iloc[-1]
+        hi = upper.iloc[0]
+        lo_step = float(lo["Step"])
+        hi_step = float(hi["Step"])
+        if hi_step <= lo_step:
+            continue
+        lo_reward = float(lo["Reward"])
+        hi_reward = float(hi["Reward"])
+        interp_reward = lo_reward + (target_step - lo_step) * (hi_reward - lo_reward) / (
+            hi_step - lo_step
+        )
+        synthetic_rows.append(
+            {
+                "Environment": env_name,
+                "Seed": float(seed),
+                "Step": target_step,
+                "Reward": interp_reward,
+            }
+        )
+
+    if grouped_seed_frames:
+        env_df = pd.concat(grouped_seed_frames, ignore_index=True)
+    if synthetic_rows:
+        env_df = pd.concat([env_df, pd.DataFrame(synthetic_rows)], ignore_index=True)
+
+    env_df = env_df[env_df["Step"] <= target_step]
+    if env_df.empty:
+        return None
+
+    env_df["step"] = env_df["Step"] / target_step * float(PLOT_MAX_STEPS)
+    env_df["value"] = env_df["Reward"]
+    env_df["method"] = FPO_LABEL
+    env_df["run_id"] = env_df["Seed"].astype(int).map(
+        lambda seed: f"fpo:{env_name}:seed{seed}"
+    )
+    return env_df[["step", "value", "method", "run_id"]]
 
 
 def load_run_history(
@@ -767,10 +931,51 @@ def runtime_axis_label(unit: str) -> str:
     return "runtime (h)"
 
 
+def filter_positive_x(data: pd.DataFrame, x_column: str) -> pd.DataFrame:
+    if data.empty:
+        return data
+    return data[data[x_column] > 0].copy()
+
+
+def min_positive_x(data: pd.DataFrame, x_column: str) -> float | None:
+    if data.empty or x_column not in data.columns:
+        return None
+    positive = data[data[x_column] > 0][x_column]
+    if positive.empty:
+        return None
+    return float(positive.min())
+
+
 def filter_methods_frame(data: pd.DataFrame, allowed_methods: set[str]) -> pd.DataFrame:
     if data.empty:
         return data
     return data[data["method"].isin(allowed_methods)].copy()
+
+
+def exclude_methods_frame(data: pd.DataFrame, excluded_methods: set[str]) -> pd.DataFrame:
+    if data.empty:
+        return data
+    return data[~data["method"].isin(excluded_methods)].copy()
+
+
+def filter_records_by_project_suffix(
+    data: pd.DataFrame, allowed_suffixes: set[str] | None
+) -> pd.DataFrame:
+    if data.empty or allowed_suffixes is None:
+        return data
+    if "project_suffix" not in data.columns:
+        return data.iloc[0:0].copy()
+    return data[data["project_suffix"].isin(allowed_suffixes)].copy()
+
+
+def build_method_run_counts_from_records(data: pd.DataFrame) -> dict[str, set[str]]:
+    method_run_counts: dict[str, set[str]] = defaultdict(set)
+    if data.empty or "method" not in data.columns or "run_id" not in data.columns:
+        return method_run_counts
+    unique_pairs = data[["method", "run_id"]].drop_duplicates()
+    for row in unique_pairs.itertuples(index=False):
+        method_run_counts[str(row.method)].add(str(row.run_id))
+    return method_run_counts
 
 
 def _plot_method_curves(
@@ -813,6 +1018,112 @@ def _plot_method_curves(
                 alpha=alpha_fill,
             )
     return legend_handles
+
+
+def _save_multi_env_grid_plot(
+    env_results: list[dict[str, object]],
+    method_order: list[str],
+    color_by_method: dict[str, str],
+    style_by_method: dict[str, object],
+    method_run_counts_key: str,
+    merged_key: str,
+    x_column: str,
+    x_label: str,
+    y_label: str,
+    output_path: str,
+    ncols: int,
+    grid_alpha: float,
+    grid_linewidth: float,
+    xlim_left: float = 0.0,
+    xlim_right: float | None = None,
+    empty_text: str | None = None,
+    x_scale: str = "linear",
+    require_positive_x: bool = False,
+) -> None:
+    num_envs = len(env_results)
+    nrows = math.ceil(num_envs / ncols)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(ncols * 4.2, nrows * 3.2),
+        sharex=True,
+        sharey=False,
+    )
+    if isinstance(axes, Axes):
+        axes_list = [axes]
+    else:
+        axes_list = list(axes.ravel())
+    legend_handles: dict[str, Line2D] = {}
+
+    for idx, result in enumerate(env_results):
+        ax = axes_list[idx]
+        env_name = str(result["env_name"])
+        merged = result.get(merged_key, pd.DataFrame())
+        if not isinstance(merged, pd.DataFrame):
+            merged = pd.DataFrame()
+        if require_positive_x:
+            merged = filter_positive_x(merged, x_column)
+        method_run_counts = result.get(method_run_counts_key, {})
+        if merged.empty and empty_text is not None:
+            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
+            ax.text(0.5, 0.5, empty_text, ha="center", va="center", transform=ax.transAxes)
+            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+            if x_scale == "log":
+                ax.set_xscale("log")
+            if xlim_left is not None or xlim_right is not None:
+                ax.set_xlim(left=xlim_left, right=xlim_right)
+            continue
+        handles = _plot_method_curves(
+            ax,
+            merged,
+            method_order,
+            method_run_counts,
+            color_by_method,
+            style_by_method,
+            x_column=x_column,
+            use_run_counts_in_label=False,
+        )
+        for method, line in handles.items():
+            if method not in legend_handles:
+                legend_handles[method] = line
+
+        ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
+        ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+        ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+        if x_scale == "log":
+            ax.set_xscale("log")
+        subplot_xlim_left = xlim_left
+        if subplot_xlim_left is None and x_scale == "log":
+            subplot_xlim_left = min_positive_x(merged, x_column)
+        if subplot_xlim_left is not None or xlim_right is not None:
+            ax.set_xlim(left=subplot_xlim_left, right=xlim_right)
+
+    for idx in range(num_envs, len(axes_list)):
+        fig.delaxes(axes_list[idx])
+
+    fig.supxlabel(x_label, fontsize=AXIS_LABEL_FONTSIZE)
+    fig.supylabel(y_label, fontsize=AXIS_LABEL_FONTSIZE)
+    top_rect = 0.92
+    if legend_handles:
+        handles = [legend_handles[m] for m in method_order if m in legend_handles]
+        labels = [h.get_label() for h in handles]
+        legend_cols = max(1, math.ceil(len(handles) / 2))
+        legend_rows = max(1, math.ceil(len(handles) / legend_cols))
+        top_rect = max(0.78, 0.90 - 0.05 * (legend_rows - 1))
+        legend = fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.95),
+            ncol=legend_cols,
+            fontsize=LEGEND_FONTSIZE,
+            handlelength=LEGEND_HANDLELENGTH,
+        )
+        make_legend_clearer(legend)
+    fig.tight_layout(rect=[0, 0, 1, top_rect])
+    fig.savefig(output_path, dpi=800, bbox_inches="tight")
+    print(f"Saved grid plot to {output_path}")
+    plt.close(fig)
 
 
 def add_runtime_x(
@@ -885,6 +1196,10 @@ def main() -> int:
     args = parse_args()
     api = wandb.Api()
     runs_by_suffix = normalize_runs_by_suffix(RUNS_BY_SUFFIX)
+    runtime_project_suffixes = normalize_suffix_filter(RUNTIME_PROJECT_SUFFIXES)
+    if runtime_project_suffixes is not None:
+        selected_suffixes = ", ".join(sorted(runtime_project_suffixes))
+        print(f"Runtime plots: filtering to project suffixes: {selected_suffixes}")
     grid_alpha = args.grid_alpha
     grid_linewidth = args.grid_linewidth
 
@@ -1039,6 +1354,7 @@ def main() -> int:
                         method_color_overrides[method_name] = color_override
                 df["method"] = method_name
                 df["run_id"] = run.id
+                df["project_suffix"] = project_suffix or ""
                 records.append(df)
                 runtime_s = extract_runtime_seconds(_summary_dict(run), args.runtime_key)
                 if runtime_s is not None:
@@ -1047,6 +1363,7 @@ def main() -> int:
                             "env_name": env_name,
                             "method": method_name,
                             "run_id": run.id,
+                            "project_suffix": project_suffix or "",
                             "runtime_s": runtime_s,
                         }
                     )
@@ -1085,9 +1402,19 @@ def main() -> int:
                 csv_df = pd.DataFrame({"step": df["steps"], "value": df[col]})
                 csv_df["method"] = PPO_BRAX_LABEL
                 csv_df["run_id"] = f"{base_id}:seed{seed_idx}"
+                csv_df["project_suffix"] = "csv"
                 records.append(csv_df)
                 method_run_counts[PPO_BRAX_LABEL].add(csv_df["run_id"].iloc[0])
             all_methods.add(PPO_BRAX_LABEL)
+
+        fpo_df = _load_fpo_seed_records(env_name)
+        if fpo_df is not None and not fpo_df.empty:
+            fpo_df = fpo_df.copy()
+            fpo_df["project_suffix"] = "fpo"
+            records.append(fpo_df)
+            for run_id in fpo_df["run_id"].drop_duplicates():
+                method_run_counts[FPO_LABEL].add(str(run_id))
+            all_methods.add(FPO_LABEL)
 
         if not records:
             print(
@@ -1110,6 +1437,7 @@ def main() -> int:
     runtime_mean_by_method_s: dict[str, float] = {}
     if runtime_records:
         runtime_df = pd.DataFrame.from_records(runtime_records)
+        runtime_df = filter_records_by_project_suffix(runtime_df, runtime_project_suffixes)
         grouped_runtime = runtime_df.groupby(["env_name", "method"])["runtime_s"]
         runtime_mean_by_env_method = grouped_runtime.mean().to_dict()
         runtime_count_by_env_method = grouped_runtime.count().to_dict()
@@ -1148,18 +1476,25 @@ def main() -> int:
 
         merged = aggregate_method_step(data, use_iqm=False)
         merged_iqm = aggregate_method_step(data, use_iqm=True)
+        runtime_data = filter_records_by_project_suffix(data, runtime_project_suffixes)
+        runtime_method_run_counts = build_method_run_counts_from_records(runtime_data)
+        merged_runtime_source = aggregate_method_step(runtime_data, use_iqm=False)
+        merged_iqm_runtime_source = aggregate_method_step(runtime_data, use_iqm=True)
+        merged_runtime_source = exclude_methods_frame(merged_runtime_source, RUNTIME_EXCLUDED_METHODS)
+        merged_iqm_runtime_source = exclude_methods_frame(merged_iqm_runtime_source, RUNTIME_EXCLUDED_METHODS)
 
         result["merged"] = merged
         result["merged_iqm"] = merged_iqm
+        result["runtime_method_run_counts"] = runtime_method_run_counts
         merged_runtime, _ = add_runtime_x(
-            merged,
+            merged_runtime_source,
             runtime_mean_by_env_method,
             env_name,
             args.runtime_time_unit,
             verbose=True,
         )
         merged_iqm_runtime, _ = add_runtime_x(
-            merged_iqm,
+            merged_iqm_runtime_source,
             runtime_mean_by_env_method,
             env_name,
             args.runtime_time_unit,
@@ -1316,7 +1651,7 @@ def main() -> int:
                 plt.gca(),
                 merged_runtime,
                 method_order,
-                method_run_counts,
+                runtime_method_run_counts,
                 color_by_method,
                 style_by_method,
                 x_column="runtime_x",
@@ -1341,13 +1676,52 @@ def main() -> int:
             print(f"Saved runtime-x plot to {runtime_mean_output}")
             plt.close()
 
+            merged_runtime_log = filter_positive_x(merged_runtime, "runtime_x")
+            if not merged_runtime_log.empty:
+                plt.figure(figsize=(9, 5))
+                _plot_method_curves(
+                    plt.gca(),
+                    merged_runtime_log,
+                    method_order,
+                    runtime_method_run_counts,
+                    color_by_method,
+                    style_by_method,
+                    x_column="runtime_x",
+                )
+                plt.xlabel(runtime_axis_label(args.runtime_time_unit), fontsize=AXIS_LABEL_FONTSIZE)
+                plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
+                plt.title(env_name, fontsize=TITLE_FONTSIZE)
+                legend = plt.legend(
+                    loc="lower right",
+                    ncol=2,
+                    fontsize=LEGEND_FONTSIZE,
+                    handlelength=LEGEND_HANDLELENGTH,
+                )
+                make_legend_clearer(legend)
+                plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+                plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+                plt.xscale("log")
+                left = min_positive_x(merged_runtime_log, "runtime_x")
+                if left is not None:
+                    plt.xlim(left=left)
+                plt.tight_layout()
+                runtime_mean_log_name = (
+                    f"dime_{env_name}_methods_avg_eval_return_runtime_logx.png"
+                )
+                runtime_mean_log_output = os.path.join(
+                    runtime_mean_figures_dir, runtime_mean_log_name
+                )
+                plt.savefig(runtime_mean_log_output, dpi=800)
+                print(f"Saved runtime-x log plot to {runtime_mean_log_output}")
+                plt.close()
+
         if not merged_iqm_runtime.empty:
             plt.figure(figsize=(9, 5))
             _plot_method_curves(
                 plt.gca(),
                 merged_iqm_runtime,
                 method_order,
-                method_run_counts,
+                runtime_method_run_counts,
                 color_by_method,
                 style_by_method,
                 x_column="runtime_x",
@@ -1372,294 +1746,226 @@ def main() -> int:
             print(f"Saved runtime-x IQM plot to {runtime_iqm_output}")
             plt.close()
 
+            merged_iqm_runtime_log = filter_positive_x(merged_iqm_runtime, "runtime_x")
+            if not merged_iqm_runtime_log.empty:
+                plt.figure(figsize=(9, 5))
+                _plot_method_curves(
+                    plt.gca(),
+                    merged_iqm_runtime_log,
+                    method_order,
+                    runtime_method_run_counts,
+                    color_by_method,
+                    style_by_method,
+                    x_column="runtime_x",
+                )
+                plt.xlabel(runtime_axis_label(args.runtime_time_unit), fontsize=AXIS_LABEL_FONTSIZE)
+                plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
+                plt.title(env_name, fontsize=TITLE_FONTSIZE)
+                legend = plt.legend(
+                    loc="lower right",
+                    ncol=2,
+                    fontsize=LEGEND_FONTSIZE,
+                    handlelength=LEGEND_HANDLELENGTH,
+                )
+                make_legend_clearer(legend)
+                plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
+                plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
+                plt.xscale("log")
+                left = min_positive_x(merged_iqm_runtime_log, "runtime_x")
+                if left is not None:
+                    plt.xlim(left=left)
+                plt.tight_layout()
+                runtime_iqm_log_name = (
+                    f"dime_{env_name}_methods_iqm_eval_return_runtime_logx.png"
+                )
+                runtime_iqm_log_output = os.path.join(
+                    runtime_iqm_figures_dir, runtime_iqm_log_name
+                )
+                plt.savefig(runtime_iqm_log_output, dpi=800)
+                print(f"Saved runtime-x IQM log plot to {runtime_iqm_log_output}")
+                plt.close()
+
         if skipped:
             print(f"Skipped {skipped} runs without usable data in {env_name}.")
 
     if multi_env and env_results:
         num_envs = len(env_results)
-        ncols = min(GRID_COLS, num_envs)
-        nrows = math.ceil(num_envs / ncols)
-        fig, axes = plt.subplots(
-            nrows,
-            ncols,
-            figsize=(ncols * 4.2, nrows * 3.2),
-            sharex=True,
-            sharey=False,
-        )
-        if isinstance(axes, Axes):
-            axes_list = [axes]
-        else:
-            axes_list = list(axes.ravel())
-        legend_handles: dict[str, Line2D] = {}
+        default_cols = min(GRID_COLS, num_envs)
+        layout_cols = [default_cols]
+        alt_cols = min(GRID_COLS_ALTERNATE, num_envs)
+        if alt_cols not in layout_cols:
+            layout_cols.append(alt_cols)
 
-        for idx, result in enumerate(env_results):
-            ax = axes_list[idx]
-            env_name = result["env_name"]
-            merged = result["merged"]
-            method_run_counts = result["method_run_counts"]
-            handles = _plot_method_curves(
-                ax,
-                merged,
-                method_order,
-                method_run_counts,
-                color_by_method,
-                style_by_method,
+        for ncols in layout_cols:
+            layout_suffix = "" if ncols == default_cols else f"_{ncols}cols"
+            if out_stem is not None:
+                grid_output = os.path.join(
+                    mean_figures_dir, f"{out_stem}_grid{layout_suffix}{out_ext}"
+                )
+                grid_iqm_output = os.path.join(
+                    iqm_figures_dir, f"{out_stem}_grid_iqm{layout_suffix}{out_ext}"
+                )
+            else:
+                grid_output = os.path.join(
+                    mean_figures_dir, f"all_envs_methods_grid_eval_return{layout_suffix}.png"
+                )
+                grid_iqm_output = os.path.join(
+                    iqm_figures_dir,
+                    f"all_envs_methods_grid_iqm_eval_return{layout_suffix}.png",
+                )
+
+            runtime_grid_output = os.path.join(
+                runtime_mean_figures_dir,
+                f"all_envs_methods_grid_eval_return_runtime{layout_suffix}.png",
+            )
+            runtime_grid_log_output = os.path.join(
+                runtime_mean_figures_dir,
+                f"all_envs_methods_grid_eval_return_runtime_logx{layout_suffix}.png",
+            )
+            runtime_grid_iqm_output = os.path.join(
+                runtime_iqm_figures_dir,
+                f"all_envs_methods_grid_iqm_eval_return_runtime{layout_suffix}.png",
+            )
+            runtime_grid_iqm_log_output = os.path.join(
+                runtime_iqm_figures_dir,
+                f"all_envs_methods_grid_iqm_eval_return_runtime_logx{layout_suffix}.png",
+            )
+
+            _save_multi_env_grid_plot(
+                env_results=env_results,
+                method_order=method_order,
+                color_by_method=color_by_method,
+                style_by_method=style_by_method,
+                method_run_counts_key="method_run_counts",
+                merged_key="merged",
                 x_column="step",
-                use_run_counts_in_label=False,
+                x_label="env calls",
+                y_label="episode return",
+                output_path=grid_output,
+                ncols=ncols,
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+                xlim_left=0,
+                xlim_right=PLOT_MAX_STEPS,
             )
-            for method, line in handles.items():
-                if method not in legend_handles:
-                    legend_handles[method] = line
-
-            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
-            ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-            ax.set_xlim(left=0, right=PLOT_MAX_STEPS)
-
-        for idx in range(num_envs, len(axes_list)):
-            fig.delaxes(axes_list[idx])
-        fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
-        fig.supylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
-        if legend_handles:
-            handles = [
-                legend_handles[m] for m in method_order if m in legend_handles
-            ]
-            labels = [h.get_label() for h in handles]
-            legend_cols = max(1, math.ceil(len(handles) / 2))
-            legend = fig.legend(
-                handles,
-                labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.995),
-                ncol=legend_cols,
-                fontsize=LEGEND_FONTSIZE,
-                handlelength=LEGEND_HANDLELENGTH,
-            )
-            make_legend_clearer(legend)
-        fig.tight_layout(rect=[0, 0, 1, 0.92])
-
-        if out_stem is not None:
-            grid_output = os.path.join(mean_figures_dir, f"{out_stem}_grid{out_ext}")
-        else:
-            grid_output = os.path.join(
-                mean_figures_dir, "all_envs_methods_grid_eval_return.png"
-            )
-        fig.savefig(grid_output, dpi=800, bbox_inches="tight")
-        print(f"Saved plot to {grid_output}")
-        plt.close(fig)
-
-        fig, axes = plt.subplots(
-            nrows,
-            ncols,
-            figsize=(ncols * 4.2, nrows * 3.2),
-            sharex=True,
-            sharey=False,
-        )
-        if isinstance(axes, Axes):
-            axes_list = [axes]
-        else:
-            axes_list = list(axes.ravel())
-        legend_handles = {}
-
-        for idx, result in enumerate(env_results):
-            ax = axes_list[idx]
-            env_name = result["env_name"]
-            merged_iqm = result["merged_iqm"]
-            method_run_counts = result["method_run_counts"]
-            handles = _plot_method_curves(
-                ax,
-                merged_iqm,
-                method_order,
-                method_run_counts,
-                color_by_method,
-                style_by_method,
+            _save_multi_env_grid_plot(
+                env_results=env_results,
+                method_order=method_order,
+                color_by_method=color_by_method,
+                style_by_method=style_by_method,
+                method_run_counts_key="method_run_counts",
+                merged_key="merged_iqm",
                 x_column="step",
-                use_run_counts_in_label=False,
+                x_label="env calls",
+                y_label="episode return (IQM)",
+                output_path=grid_iqm_output,
+                ncols=ncols,
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+                xlim_left=0,
+                xlim_right=PLOT_MAX_STEPS,
             )
-            for method, line in handles.items():
-                if method not in legend_handles:
-                    legend_handles[method] = line
-
-            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
-            ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-            ax.set_xlim(left=0, right=PLOT_MAX_STEPS)
-
-        for idx in range(num_envs, len(axes_list)):
-            fig.delaxes(axes_list[idx])
-        fig.supxlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
-        fig.supylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
-        if legend_handles:
-            handles = [
-                legend_handles[m] for m in method_order if m in legend_handles
-            ]
-            labels = [h.get_label() for h in handles]
-            legend_cols = max(1, math.ceil(len(handles) / 2))
-            legend = fig.legend(
-                handles,
-                labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.995),
-                ncol=legend_cols,
-                fontsize=LEGEND_FONTSIZE,
-                handlelength=LEGEND_HANDLELENGTH,
-            )
-            make_legend_clearer(legend)
-        fig.tight_layout(rect=[0, 0, 1, 0.92])
-
-        if out_stem is not None:
-            grid_iqm_output = os.path.join(iqm_figures_dir, f"{out_stem}_grid_iqm{out_ext}")
-        else:
-            grid_iqm_output = os.path.join(
-                iqm_figures_dir, "all_envs_methods_grid_iqm_eval_return.png"
-            )
-        fig.savefig(grid_iqm_output, dpi=800, bbox_inches="tight")
-        print(f"Saved IQM plot to {grid_iqm_output}")
-        plt.close(fig)
-
-        fig, axes = plt.subplots(
-            nrows,
-            ncols,
-            figsize=(ncols * 4.2, nrows * 3.2),
-            sharex=True,
-            sharey=False,
-        )
-        if isinstance(axes, Axes):
-            axes_list = [axes]
-        else:
-            axes_list = list(axes.ravel())
-        legend_handles = {}
-
-        for idx, result in enumerate(env_results):
-            ax = axes_list[idx]
-            env_name = result["env_name"]
-            merged_runtime = result.get("merged_runtime", pd.DataFrame())
-            method_run_counts = result["method_run_counts"]
-            if merged_runtime.empty:
-                ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
-                ax.text(0.5, 0.5, "no runtime", ha="center", va="center", transform=ax.transAxes)
-                ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-                continue
-            handles = _plot_method_curves(
-                ax,
-                merged_runtime,
-                method_order,
-                method_run_counts,
-                color_by_method,
-                style_by_method,
+            _save_multi_env_grid_plot(
+                env_results=env_results,
+                method_order=method_order,
+                color_by_method=color_by_method,
+                style_by_method=style_by_method,
+                method_run_counts_key="runtime_method_run_counts",
+                merged_key="merged_runtime",
                 x_column="runtime_x",
-                use_run_counts_in_label=False,
+                x_label=runtime_axis_label(args.runtime_time_unit),
+                y_label="episode return",
+                output_path=runtime_grid_output,
+                ncols=ncols,
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+                xlim_left=0,
+                xlim_right=None,
+                empty_text="no runtime",
             )
-            for method, line in handles.items():
-                if method not in legend_handles:
-                    legend_handles[method] = line
-            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
-            ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-            ax.set_xlim(left=0)
-
-        for idx in range(num_envs, len(axes_list)):
-            fig.delaxes(axes_list[idx])
-        fig.supxlabel(runtime_axis_label(args.runtime_time_unit), fontsize=AXIS_LABEL_FONTSIZE)
-        fig.supylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
-        if legend_handles:
-            handles = [legend_handles[m] for m in method_order if m in legend_handles]
-            labels = [h.get_label() for h in handles]
-            legend_cols = max(1, math.ceil(len(handles) / 2))
-            legend = fig.legend(
-                handles,
-                labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.995),
-                ncol=legend_cols,
-                fontsize=LEGEND_FONTSIZE,
-                handlelength=LEGEND_HANDLELENGTH,
-            )
-            make_legend_clearer(legend)
-        fig.tight_layout(rect=[0, 0, 1, 0.92])
-        runtime_grid_output = os.path.join(
-            runtime_mean_figures_dir, "all_envs_methods_grid_eval_return_runtime.png"
-        )
-        fig.savefig(runtime_grid_output, dpi=800, bbox_inches="tight")
-        print(f"Saved runtime-x grid plot to {runtime_grid_output}")
-        plt.close(fig)
-
-        fig, axes = plt.subplots(
-            nrows,
-            ncols,
-            figsize=(ncols * 4.2, nrows * 3.2),
-            sharex=True,
-            sharey=False,
-        )
-        if isinstance(axes, Axes):
-            axes_list = [axes]
-        else:
-            axes_list = list(axes.ravel())
-        legend_handles = {}
-
-        for idx, result in enumerate(env_results):
-            ax = axes_list[idx]
-            env_name = result["env_name"]
-            merged_iqm_runtime = result.get("merged_iqm_runtime", pd.DataFrame())
-            method_run_counts = result["method_run_counts"]
-            if merged_iqm_runtime.empty:
-                ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
-                ax.text(0.5, 0.5, "no runtime", ha="center", va="center", transform=ax.transAxes)
-                ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-                continue
-            handles = _plot_method_curves(
-                ax,
-                merged_iqm_runtime,
-                method_order,
-                method_run_counts,
-                color_by_method,
-                style_by_method,
+            _save_multi_env_grid_plot(
+                env_results=env_results,
+                method_order=method_order,
+                color_by_method=color_by_method,
+                style_by_method=style_by_method,
+                method_run_counts_key="runtime_method_run_counts",
+                merged_key="merged_iqm_runtime",
                 x_column="runtime_x",
-                use_run_counts_in_label=False,
+                x_label=runtime_axis_label(args.runtime_time_unit),
+                y_label="episode return (IQM)",
+                output_path=runtime_grid_iqm_output,
+                ncols=ncols,
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+                xlim_left=0,
+                xlim_right=None,
+                empty_text="no runtime",
             )
-            for method, line in handles.items():
-                if method not in legend_handles:
-                    legend_handles[method] = line
-            ax.set_title(env_name, fontsize=TITLE_FONTSIZE)
-            ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            ax.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-            ax.set_xlim(left=0)
-
-        for idx in range(num_envs, len(axes_list)):
-            fig.delaxes(axes_list[idx])
-        fig.supxlabel(runtime_axis_label(args.runtime_time_unit), fontsize=AXIS_LABEL_FONTSIZE)
-        fig.supylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
-        if legend_handles:
-            handles = [legend_handles[m] for m in method_order if m in legend_handles]
-            labels = [h.get_label() for h in handles]
-            legend_cols = max(1, math.ceil(len(handles) / 2))
-            legend = fig.legend(
-                handles,
-                labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.995),
-                ncol=legend_cols,
-                fontsize=LEGEND_FONTSIZE,
-                handlelength=LEGEND_HANDLELENGTH,
+            _save_multi_env_grid_plot(
+                env_results=env_results,
+                method_order=method_order,
+                color_by_method=color_by_method,
+                style_by_method=style_by_method,
+                method_run_counts_key="runtime_method_run_counts",
+                merged_key="merged_runtime",
+                x_column="runtime_x",
+                x_label=runtime_axis_label(args.runtime_time_unit),
+                y_label="episode return",
+                output_path=runtime_grid_log_output,
+                ncols=ncols,
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+                xlim_left=None,
+                xlim_right=None,
+                empty_text="no runtime",
+                x_scale="log",
+                require_positive_x=True,
             )
-            make_legend_clearer(legend)
-        fig.tight_layout(rect=[0, 0, 1, 0.92])
-        runtime_grid_iqm_output = os.path.join(
-            runtime_iqm_figures_dir, "all_envs_methods_grid_iqm_eval_return_runtime.png"
-        )
-        fig.savefig(runtime_grid_iqm_output, dpi=800, bbox_inches="tight")
-        print(f"Saved runtime-x IQM grid plot to {runtime_grid_iqm_output}")
-        plt.close(fig)
+            _save_multi_env_grid_plot(
+                env_results=env_results,
+                method_order=method_order,
+                color_by_method=color_by_method,
+                style_by_method=style_by_method,
+                method_run_counts_key="runtime_method_run_counts",
+                merged_key="merged_iqm_runtime",
+                x_column="runtime_x",
+                x_label=runtime_axis_label(args.runtime_time_unit),
+                y_label="episode return (IQM)",
+                output_path=runtime_grid_iqm_log_output,
+                ncols=ncols,
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+                xlim_left=None,
+                xlim_right=None,
+                empty_text="no runtime",
+                x_scale="log",
+                require_positive_x=True,
+            )
 
     if multi_env and env_results:
         overall_records = pd.concat([r["records"] for r in env_results], ignore_index=True)
         overall_merged = aggregate_method_step(overall_records, use_iqm=False)
         overall_merged_iqm = aggregate_method_step(overall_records, use_iqm=True)
+        overall_runtime_records = filter_records_by_project_suffix(
+            overall_records, runtime_project_suffixes
+        )
+        overall_runtime_source = aggregate_method_step(overall_runtime_records, use_iqm=False)
+        overall_iqm_runtime_source = aggregate_method_step(overall_runtime_records, use_iqm=True)
+        overall_runtime_source = exclude_methods_frame(overall_runtime_source, RUNTIME_EXCLUDED_METHODS)
+        overall_iqm_runtime_source = exclude_methods_frame(
+            overall_iqm_runtime_source, RUNTIME_EXCLUDED_METHODS
+        )
         overall_merged_runtime, _ = add_runtime_x_overall(
-            overall_merged, runtime_mean_by_method_s, args.runtime_time_unit, verbose=True
+            overall_runtime_source,
+            runtime_mean_by_method_s,
+            args.runtime_time_unit,
+            verbose=True,
         )
         overall_merged_iqm_runtime, _ = add_runtime_x_overall(
-            overall_merged_iqm, runtime_mean_by_method_s, args.runtime_time_unit, verbose=True
+            overall_iqm_runtime_source,
+            runtime_mean_by_method_s,
+            args.runtime_time_unit,
+            verbose=True,
         )
 
         overall_method_runs: dict[str, set[str]] = defaultdict(set)
@@ -1667,6 +1973,11 @@ def main() -> int:
             for method, runs in result["method_run_counts"].items():
                 overall_method_runs[method].update(runs)
         overall_run_counts = {method: len(runs) for method, runs in overall_method_runs.items()}
+        overall_runtime_method_runs: dict[str, set[str]] = defaultdict(set)
+        for result in env_results:
+            runtime_method_runs = result.get("runtime_method_run_counts", {})
+            for method, runs in runtime_method_runs.items():
+                overall_runtime_method_runs[method].update(runs)
 
         plt.figure(figsize=(9, 5))
         _plot_method_curves(
@@ -1680,19 +1991,14 @@ def main() -> int:
             use_run_counts_in_label=False,
         )
 
-        plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.title(f"All environments", fontsize=TITLE_FONTSIZE)
-        legend = plt.legend(
-            loc="lower right",
-            ncol=2,
-            fontsize=LEGEND_FONTSIZE_all,
-            handlelength=LEGEND_HANDLELENGTH,
+        style_all_env_plot(
+            plt.gca(),
+            x_label="env calls",
+            y_label="episode return",
+            title="All environments",
+            grid_alpha=grid_alpha,
+            grid_linewidth=grid_linewidth,
         )
-        make_legend_clearer(legend)
-        plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-        plt.tight_layout()
 
         output_path = os.path.join(mean_figures_dir, "all_envs_methods_avg_eval_return.png")
         plt.savefig(output_path, dpi=800)
@@ -1711,19 +2017,14 @@ def main() -> int:
             use_run_counts_in_label=False,
         )
 
-        plt.xlabel("env calls", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
-        plt.title("All environments", fontsize=TITLE_FONTSIZE)
-        legend = plt.legend(
-            loc="lower right",
-            ncol=2,
-            fontsize=LEGEND_FONTSIZE_all,
-            handlelength=LEGEND_HANDLELENGTH,
+        style_all_env_plot(
+            plt.gca(),
+            x_label="env calls",
+            y_label="episode return (IQM)",
+            title="All environments",
+            grid_alpha=grid_alpha,
+            grid_linewidth=grid_linewidth,
         )
-        make_legend_clearer(legend)
-        plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-        plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
-        plt.tight_layout()
 
         output_iqm_path = os.path.join(iqm_figures_dir, "all_envs_methods_iqm_eval_return.png")
         plt.savefig(output_iqm_path, dpi=800)
@@ -1736,26 +2037,21 @@ def main() -> int:
                 plt.gca(),
                 overall_merged_runtime,
                 method_order,
-                overall_method_runs,
+                overall_runtime_method_runs,
                 color_by_method,
                 style_by_method,
                 x_column="runtime_x",
                 use_run_counts_in_label=False,
             )
-            plt.xlabel(runtime_axis_label(args.runtime_time_unit), fontsize=AXIS_LABEL_FONTSIZE)
-            plt.ylabel("episode return", fontsize=AXIS_LABEL_FONTSIZE)
-            plt.title("All environments", fontsize=TITLE_FONTSIZE)
-            legend = plt.legend(
-                loc="lower right",
-                ncol=2,
-                fontsize=LEGEND_FONTSIZE_all,
-                handlelength=LEGEND_HANDLELENGTH,
-            )
-            make_legend_clearer(legend)
-            plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
             plt.xlim(left=0)
-            plt.tight_layout()
+            style_all_env_plot(
+                plt.gca(),
+                x_label=runtime_axis_label(args.runtime_time_unit),
+                y_label="episode return",
+                title="All environments",
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+            )
             output_runtime_path = os.path.join(
                 runtime_mean_figures_dir, "all_envs_methods_avg_eval_return_runtime.png"
             )
@@ -1763,38 +2059,103 @@ def main() -> int:
             print(f"Saved runtime-x overall plot to {output_runtime_path}")
             plt.close()
 
+            overall_merged_runtime_log = filter_positive_x(
+                overall_merged_runtime, "runtime_x"
+            )
+            if not overall_merged_runtime_log.empty:
+                plt.figure(figsize=(9, 5))
+                _plot_method_curves(
+                    plt.gca(),
+                    overall_merged_runtime_log,
+                    method_order,
+                    overall_runtime_method_runs,
+                    color_by_method,
+                    style_by_method,
+                    x_column="runtime_x",
+                    use_run_counts_in_label=False,
+                )
+                plt.xscale("log")
+                left = min_positive_x(overall_merged_runtime_log, "runtime_x")
+                if left is not None:
+                    plt.xlim(left=left)
+                style_all_env_plot(
+                    plt.gca(),
+                    x_label=runtime_axis_label(args.runtime_time_unit),
+                    y_label="episode return",
+                    title="All environments",
+                    grid_alpha=grid_alpha,
+                    grid_linewidth=grid_linewidth,
+                )
+                output_runtime_log_path = os.path.join(
+                    runtime_mean_figures_dir,
+                    "all_envs_methods_avg_eval_return_runtime_logx.png",
+                )
+                plt.savefig(output_runtime_log_path, dpi=800)
+                print(f"Saved runtime-x overall log plot to {output_runtime_log_path}")
+                plt.close()
+
         if not overall_merged_iqm_runtime.empty:
             plt.figure(figsize=(9, 5))
             _plot_method_curves(
                 plt.gca(),
                 overall_merged_iqm_runtime,
                 method_order,
-                overall_method_runs,
+                overall_runtime_method_runs,
                 color_by_method,
                 style_by_method,
                 x_column="runtime_x",
                 use_run_counts_in_label=False,
             )
-            plt.xlabel(runtime_axis_label(args.runtime_time_unit), fontsize=AXIS_LABEL_FONTSIZE)
-            plt.ylabel("episode return (IQM)", fontsize=AXIS_LABEL_FONTSIZE)
-            plt.title("All environments", fontsize=TITLE_FONTSIZE)
-            legend = plt.legend(
-                loc="lower right",
-                ncol=2,
-                fontsize=LEGEND_FONTSIZE_all,
-                handlelength=LEGEND_HANDLELENGTH,
-            )
-            make_legend_clearer(legend)
-            plt.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
-            plt.grid(True, linestyle=GRID_LINESTYLE, alpha=grid_alpha, linewidth=grid_linewidth)
             plt.xlim(left=0)
-            plt.tight_layout()
+            style_all_env_plot(
+                plt.gca(),
+                x_label=runtime_axis_label(args.runtime_time_unit),
+                y_label="episode return (IQM)",
+                title="All environments",
+                grid_alpha=grid_alpha,
+                grid_linewidth=grid_linewidth,
+            )
             output_runtime_iqm_path = os.path.join(
                 runtime_iqm_figures_dir, "all_envs_methods_iqm_eval_return_runtime.png"
             )
             plt.savefig(output_runtime_iqm_path, dpi=800)
             print(f"Saved runtime-x overall IQM plot to {output_runtime_iqm_path}")
             plt.close()
+
+            overall_merged_iqm_runtime_log = filter_positive_x(
+                overall_merged_iqm_runtime, "runtime_x"
+            )
+            if not overall_merged_iqm_runtime_log.empty:
+                plt.figure(figsize=(9, 5))
+                _plot_method_curves(
+                    plt.gca(),
+                    overall_merged_iqm_runtime_log,
+                    method_order,
+                    overall_runtime_method_runs,
+                    color_by_method,
+                    style_by_method,
+                    x_column="runtime_x",
+                    use_run_counts_in_label=False,
+                )
+                plt.xscale("log")
+                left = min_positive_x(overall_merged_iqm_runtime_log, "runtime_x")
+                if left is not None:
+                    plt.xlim(left=left)
+                style_all_env_plot(
+                    plt.gca(),
+                    x_label=runtime_axis_label(args.runtime_time_unit),
+                    y_label="episode return (IQM)",
+                    title="All environments",
+                    grid_alpha=grid_alpha,
+                    grid_linewidth=grid_linewidth,
+                )
+                output_runtime_iqm_log_path = os.path.join(
+                    runtime_iqm_figures_dir,
+                    "all_envs_methods_iqm_eval_return_runtime_logx.png",
+                )
+                plt.savefig(output_runtime_iqm_log_path, dpi=800)
+                print(f"Saved runtime-x overall IQM log plot to {output_runtime_iqm_log_path}")
+                plt.close()
 
     return 0
 

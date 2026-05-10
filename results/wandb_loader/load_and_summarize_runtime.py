@@ -13,7 +13,13 @@ import pandas as pd
 import wandb
 
 
-PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_24_01", "_FR_30_01", "_FR_test_PPO", "_FR_ME-WPO", "_FR_WPO"]
+PROJECT_SUFFIXES = ["_FR_16_01", "_FR_19_01", "_FR_WPO_07_05", "_FR_REPPO_20_04", "_FR_PPO_27_04", "_FR_DPPO_29_04", "_FR_ME-WPO", "_FR_WPO"]
+# old DME PPO _FR_test_PPO --> new PPO _FR_PPO_14_04  --> very new PPO _FR_PPO_27_04
+# old DME REPPO _FR_30_01 --> new _FR_REPPO_14_04
+# _FR_16_01 REPPO-DIME
+# _FR_19_01 REPPO
+# _FR_24_01 DA-MDP: WPO 
+# olde DME-REPPO _FR_REPPO_20_04 # latest run _FR_REPPO_05_05
 ENV_NAMES = [
     "FingerSpin",
     "AcrobotSwingup",
@@ -44,25 +50,37 @@ ENV_HEADER_SHORT = {
 }
 RUNS_BY_SUFFIX: dict[str, dict[str, str | dict[str, str]]] = {
     "_FR_16_01": {
-        "reppo-dime-debug-1-<env_name>": {"alias": "REPPO-DiME", "color": "#ff0000"},
+        "reppo-dime-debug-1-<env_name>": {"alias": "REPPO-DIME", "color": "#ff0000"},
     },
     "_FR_19_01": {
         "reppo-<env_name>-reparam": {"alias": "REPPO", "color": "#8b1a1a"},
     },
-    "_FR_24_01": {
+    "_FR_WPO_07_05": {
         "reppo-dmerl-debug-1-<env_name>-WPO": {
-            "alias": "DME-WPO (ours)",
+            "alias": "DA-MDP: WPO (ours)",
             "color": "#1b7f3a",
         },
     },
-    "_FR_30_01": {
+    # "_FR_30_01": {
+    #     "reppo-dmerl-debug-1-<env_name>-reparam": {
+    #         "alias": "DA-MDP: REPPO (ours)",
+    #         "color": "#8b1a1a",
+    #     },
+    # },
+    "_FR_REPPO_20_04": {
         "reppo-dmerl-debug-1-<env_name>-reparam": {
-            "alias": "DME-REPPO (ours)",
+            "alias": "DA-MDP: REPPO (ours)",
             "color": "#8b1a1a",
         },
     },
     "_FR_test_PPO": {
-        "ppo-diff_ppo-<env_name>": {"alias": "DME-PPO (ours)", "color": "#3b528b"},
+        "ppo-diff_ppo-<env_name>": {"alias": "DA-MDP: PPO (ours)", "color": "#3b528b"},
+    },
+    "_FR_PPO_27_04": {
+        "ppo-diff_ppo-<env_name>": {"alias": "DA-MDP: PPO (ours)", "color": "#3b528b"},
+    },
+    "_FR_DPPO_29_04": {
+        "ppo-diff_ppo-<env_name>": {"alias": "DPPO", "color": "#4c78a8"},
     },
     "_FR_ME-WPO": {
         "reppo-<env_name>-WPO": {"alias": "ME-WPO (ours)", "color": "#1b7f3a"},

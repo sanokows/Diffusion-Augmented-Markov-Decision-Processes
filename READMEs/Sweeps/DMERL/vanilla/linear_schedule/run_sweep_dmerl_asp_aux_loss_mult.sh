@@ -23,23 +23,9 @@ SEEDS=(
 NUM_GPUS=2
 GPU_INDEX=0
 
-# Step 4: Wait until a GPU is free (no active compute processes)
-wait_for_gpu() {
-    local GPU_ID=$1
-    while true; do
-        # nvidia-smi returns empty output when no compute processes are running
-        if command -v rg >/dev/null 2>&1; then
-            BUSY_CHECK_CMD="rg -q '\\S'"
-        else
-            BUSY_CHECK_CMD="grep -q '[^[:space:]]'"
-        fi
-        if ! nvidia-smi -i "$GPU_ID" --query-compute-apps=pid --format=csv,noheader | eval "$BUSY_CHECK_CMD"; then
-            break
-        fi
-        echo "GPU $GPU_ID busy, waiting..."
-        sleep 30
-    done
-}
+# Step 4: Shared helpers for GPU polling and run directories
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../lib/gpu_sweep_helpers.sh"
 
 # Step 5: Launch one run per aux_loss_mult x seed
 declare -a GPU_PIDS
@@ -54,7 +40,9 @@ for AUX_LOSS_MULT in "${AUX_LOSS_MULT_VALUES[@]}"; do
             wait "${GPU_PIDS[$GPU_ID]}"
         fi
         echo "Starting env.name=$ENV_NAME seed=$SEED aux_loss_mult=$AUX_LOSS_MULT on GPU $GPU_ID..."
-        CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
+        build_run_paths "$GPU_ID" "$ENV_NAME" "$SEED"
+        echo "Run directory: $RUN_DIR"
+        WANDB_DIR="$WANDB_RUN_DIR" CUDA_VISIBLE_DEVICES="$GPU_ID" python -m src.jaxrl.reppo_DMERL_new \
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_REPPO_20_04" \
             hyperparameters.num_eval=50 \
@@ -64,6 +52,7 @@ for AUX_LOSS_MULT in "${AUX_LOSS_MULT_VALUES[@]}"; do
             env=mjx_dmc \
             seed="$SEED" \
             num_trials=1 \
+            hydra.run.dir="$RUN_DIR" \
             experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))

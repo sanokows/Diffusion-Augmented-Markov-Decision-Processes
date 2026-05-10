@@ -53,4 +53,10 @@ sbatch ./READMEs/Clusters/Karolina/WPO/control_1.sh
 sbatch ./READMEs/Clusters/Karolina/WPO/control_2.sh
 sbatch ./READMEs/Clusters/Karolina/WPO/low_dim.sh
 
+sbatch ./READMEs/Clusters/Karolina/WPO/control_1_Finger.sh
+sbatch ./READMEs/Clusters/Karolina/WPO/control_1_Walk.sh
+sbatch ./READMEs/Clusters/Karolina/DME_REPPO/control_1.sh
+sbatch ./READMEs/Clusters/Karolina/DME_REPPO/control_2.sh
+sbatch ./READMEs/Clusters/Karolina/DME_REPPO/low_dim.sh
+
 ```

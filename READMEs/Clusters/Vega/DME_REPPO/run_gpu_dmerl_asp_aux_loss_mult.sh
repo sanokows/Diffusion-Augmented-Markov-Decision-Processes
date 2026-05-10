@@ -19,4 +19,4 @@ python -c "import sys; print(sys.executable)"
 python -c "import jax; print(jax.__file__)"
 # run your code
 chmod +x ./READMEs/Sweeps/DMERL/vanilla/linear_schedule/run_sweep_dmerl_asp_aux_loss_mult.sh
-sh ./READMEs/Sweeps/DMERL/vanilla/linear_schedule/run_sweep_dmerl_asp_aux_loss_mult.sh
+bash ./READMEs/Sweeps/DMERL/vanilla/linear_schedule/run_sweep_dmerl_asp_aux_loss_mult.sh

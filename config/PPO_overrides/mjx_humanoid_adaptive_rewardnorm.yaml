@@ -1,0 +1,15 @@
+hyperparameters:
+  gamma: 0.97
+  num_envs: 128
+  num_steps: 32
+  num_mini_batches: 8
+  num_epochs: 4
+  entropy_coef: 0.002
+  normalize_rewards: true
+  reward_norm_epsilon: 1e-8
+  reward_norm_clip: 10.0
+  adaptive_lr: true
+  desired_kl: 0.01
+  adaptive_lr_factor: 1.5
+  adaptive_lr_min: 1e-5
+  adaptive_lr_max: 1e-2

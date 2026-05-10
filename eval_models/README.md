@@ -599,14 +599,16 @@ To auto-generate compact paper-ready composites in the fixed method order
 `REPPO | DPPO (zero temp) | DME-PPO | DMERL | DMERL-WPO | DIME`
 
 use:
+#reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T151614
+# old_weights saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl
 
 ```bash
-python eval_models/make_tdw_paper_figures.py \
+exec python eval_models/make_tdw_paper_figures.py \
   --checkpoint-reppo saved_models/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744.pkl \
   --checkpoint-diffppo saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl  \
   --checkpoint-diffppo saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
   --checkpoint-dmerl saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
-  --checkpoint-dmerl-wpo saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl \
+  --checkpoint-dmerl-wpo saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T155839.pkl \
   --checkpoint-dime saved_models/reppo_dime__TurningDoubleWellEnv__seed0__trial0__ts20260326T110236.pkl \
   --sampler-diffppo sde \
   --sampler-diffppo-zero ode \

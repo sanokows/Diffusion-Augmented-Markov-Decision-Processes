@@ -1,0 +1,13 @@
+hyperparameters:
+  normalize_rewards: true
+  reward_norm_epsilon: 1e-8
+  reward_norm_clip: 10.0
+  normalize_reward: false
+  normalize_soft_reward: false
+  adaptive_lr: true
+  desired_kl: 0.01
+  adaptive_lr_factor: 1.5
+  adaptive_lr_min: 1e-5
+  adaptive_lr_max: 1e-2
+  use_categorical_value: false
+  hl_gauss: false

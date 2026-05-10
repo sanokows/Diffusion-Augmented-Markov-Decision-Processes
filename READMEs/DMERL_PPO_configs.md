@@ -9,3 +9,54 @@ python -m src.jaxrl.reppo_DiffPPO env.name=PendulumSwingup DiffPPO_overrides=def
 
 
 python -m src.jaxrl.reppo_DiffPPO env.name=PendulumSwingup DiffPPO_overrides=default env=mjx_dmc wandb.project_suffix=_FR_PPO_27_04_test trials=1 seed=0 hyperparameters.clip_ratio=0.1
+
+
+## CheetahRun DiffPPO comparison (plain value)
+
+### 1) Old baseline config (default) in plain-value mode
+python -m src.jaxrl.reppo_DiffPPO \
+  env=mjx_dmc \
+  env.name=CheetahRun \
+  DiffPPO_overrides=default \
+  hyperparameters.use_categorical_value=false \
+  hyperparameters.hl_gauss=false
+
+### 2) Old DPPO config in plain-value mode
+python -m src.jaxrl.reppo_DiffPPO \
+  env=mjx_dmc \
+  env.name=CheetahRun \
+  DiffPPO_overrides=DPPO \
+  hyperparameters.use_categorical_value=false \
+  hyperparameters.hl_gauss=false
+
+### 3) New features enabled (reward normalization + adaptive LR), plain-value preset
+python -m src.jaxrl.reppo_DiffPPO \
+  env=mjx_dmc \
+  env.name=CheetahRun \
+  DiffPPO_overrides=adaptive_rewardnorm_adaptivelr_plain_value
+
+### Optional dry-run sanity checks (no training)
+python -m src.jaxrl.reppo_DiffPPO \
+  env=mjx_dmc \
+  env.name=CheetahRun \
+  DiffPPO_overrides=default \
+  hyperparameters.use_categorical_value=false \
+  hyperparameters.hl_gauss=false \
+  trials=0 \
+  wandb.mode=disabled
+
+python -m src.jaxrl.reppo_DiffPPO \
+  env=mjx_dmc \
+  env.name=CheetahRun \
+  DiffPPO_overrides=DPPO \
+  hyperparameters.use_categorical_value=false \
+  hyperparameters.hl_gauss=false \
+  trials=0 \
+  wandb.mode=disabled
+
+python -m src.jaxrl.reppo_DiffPPO \
+  env=mjx_dmc \
+  env.name=CheetahRun \
+  DiffPPO_overrides=adaptive_rewardnorm_adaptivelr_plain_value \
+  trials=0 \
+  wandb.mode=disabled

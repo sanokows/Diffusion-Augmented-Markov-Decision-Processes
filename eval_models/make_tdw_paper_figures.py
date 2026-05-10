@@ -948,6 +948,112 @@ def _state_angle_label(theta_radians: float) -> str:
     return rf"$\theta_0={theta_deg:.1f}^\circ$"
 
 
+def _state_angle_tick_label(theta_radians: float) -> str:
+    theta_deg = (float(np.rad2deg(float(theta_radians))) + 360.0) % 360.0
+    return f"{theta_deg:.1f} deg"
+
+
+def _collect_trajectory_samples_for_method(
+    method: PreparedMethod,
+    *,
+    num_envs: int,
+    repeats: int,
+    seed: int,
+) -> dict[str, np.ndarray]:
+    cfg_collect = (
+        esm._cfg_with_num_envs(method.cfg, int(num_envs))
+        if int(num_envs) != int(method.cfg.hyperparameters.num_envs)
+        else method.cfg
+    )
+    method_name_lower = method.method_name.lower()
+
+    if method_name_lower == "reppo_dmerl_new":
+        if method.train_state is None:
+            raise ValueError(f"Missing train_state for DMERL method: {method.spec.slot}")
+        return esm._collect_dmerl_trajectories(
+            cfg=cfg_collect,
+            train_state=method.train_state,
+            norm_state=method.norm_state,
+            horizon=int(cfg_collect.env.max_episode_steps),
+            num_envs=int(num_envs),
+            repeats=int(repeats),
+            seed=int(seed),
+            diffusion_sampler=_resolve_sampler(method),
+            train_mode=method.train_mode,
+        )
+
+    if method_name_lower == "reppo_diffppo":
+        if method.train_state is None:
+            raise ValueError(f"Missing train_state for DiffPPO method: {method.spec.slot}")
+        return esm._collect_diffppo_trajectories(
+            cfg=cfg_collect,
+            train_state=method.train_state,
+            horizon=int(cfg_collect.env.max_episode_steps),
+            num_envs=int(num_envs),
+            repeats=int(repeats),
+            seed=int(seed),
+            diffusion_sampler=_resolve_sampler(method),
+        )
+
+    if "dime" in method_name_lower:
+        if method.actor_graphdef is None or method.actor_params is None:
+            raise ValueError(f"Missing actor graph/params for DIME method: {method.spec.slot}")
+        return esm._collect_dime_trajectories(
+            cfg=cfg_collect,
+            actor_graphdef=method.actor_graphdef,
+            actor_params=method.actor_params,
+            norm_state=method.norm_state,
+            horizon=int(cfg_collect.env.max_episode_steps),
+            num_envs=int(num_envs),
+            repeats=int(repeats),
+            seed=int(seed),
+            diffusion_sampler=_resolve_sampler(method),
+        )
+
+    if method.actor_graphdef is None or method.actor_params is None:
+        raise ValueError(f"Missing actor graph/params for REPPO method: {method.spec.slot}")
+    return esm._collect_reppo_trajectories(
+        cfg=cfg_collect,
+        actor_graphdef=method.actor_graphdef,
+        actor_params=method.actor_params,
+        norm_state=method.norm_state,
+        horizon=int(cfg_collect.env.max_episode_steps),
+        num_envs=int(num_envs),
+        repeats=int(repeats),
+        seed=int(seed),
+        train_mode=method.train_mode,
+    )
+
+
+def _normalized_state_visitation_from_trajectories(
+    trajectories: dict[str, np.ndarray],
+    *,
+    canonical_angles: np.ndarray,
+) -> np.ndarray:
+    states = np.asarray(trajectories["state_trajectories"], dtype=np.float32)
+    if states.ndim != 4:
+        raise ValueError(f"Expected state trajectories with shape [R, T+1, X, D], got {states.shape}")
+    if states.shape[-1] < 2:
+        raise ValueError(
+            "State trajectory observations must have at least 2 dims for heading mapping "
+            f"(got D={states.shape[-1]})."
+        )
+
+    flat_obs = states[..., :2].reshape(-1, 2)
+    sample_angles = np.arctan2(flat_obs[:, 1], flat_obs[:, 0])
+    canonical = np.asarray(canonical_angles, dtype=np.float32).reshape(-1)
+    if canonical.size == 0:
+        raise ValueError("Canonical angle list is empty.")
+
+    diffs = ((sample_angles[:, None] - canonical[None, :] + np.pi) % (2.0 * np.pi)) - np.pi
+    nearest_idx = np.argmin(np.abs(diffs), axis=1)
+    counts = np.bincount(nearest_idx, minlength=canonical.shape[0]).astype(np.float64)
+    total = float(np.sum(counts))
+    if total <= 0.0:
+        return np.zeros((canonical.shape[0],), dtype=np.float64)
+    return counts / total
+
+
 def _compose_hist_figure(
     methods: list[PreparedMethod],
     action_data: dict[str, dict[str, Any]],
@@ -1032,6 +1138,75 @@ def _compose_hist_figure(
     )
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.89))
     fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
+    plt.close(fig)
+
+
+def _compose_state_visitation_grouped_figure(
+    methods: list[PreparedMethod],
+    visitation_data: dict[str, dict[str, Any]],
+    *,
+    out_path: str,
+    dpi: int,
+    axis_label_fontsize: float,
+    axis_tick_fontsize: float,
+) -> None:
+    n_methods = len(methods)
+    if n_methods == 0:
+        raise ValueError("No methods provided for visitation figure.")
+
+    ref_angles = np.asarray(visitation_data[methods[0].spec.slot]["angles"], dtype=np.float32).reshape(-1)
+    n_states = int(ref_angles.shape[0])
+    if n_states <= 0:
+        raise ValueError("No states available for visitation figure.")
+
+    fig, ax = plt.subplots(1, 1, figsize=(max(8.8, 1.3 * n_states), 5.6))
+    x = np.arange(n_states, dtype=np.float64)
+    bar_width = min(0.8 / max(n_methods, 1), 0.2)
+    offsets = (np.arange(n_methods, dtype=np.float64) - (n_methods - 1) / 2.0) * bar_width
+
+    for idx, method in enumerate(methods):
+        slot = method.spec.slot
+        counts = np.asarray(visitation_data[slot]["normalized_counts"], dtype=np.float64).reshape(-1)
+        if counts.shape[0] != n_states:
+            raise ValueError(
+                f"Method {slot} has {counts.shape[0]} visitation states, expected {n_states}."
+            )
+        ax.bar(
+            x + offsets[idx],
+            counts,
+            width=bar_width,
+            label=method.spec.label,
+            alpha=0.9,
+            linewidth=0.35,
+            edgecolor="black",
+        )
+
+    #ax.set_xlabel("state (discrete heading angle)", fontsize=float(axis_label_fontsize))
+    ax.set_ylabel("normalized visitation count", fontsize=2*float(axis_label_fontsize))
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [_state_angle_tick_label(theta) for theta in ref_angles],
+        rotation=35,
+        ha="right",
+        fontsize=float(axis_tick_fontsize),
+    )
+    ax.tick_params(axis="y", labelsize=float(axis_tick_fontsize))
+    ax.grid(True, axis="y", linestyle="--", linewidth=0.55, alpha=0.28)
+    ax.set_ylim(bottom=0.0)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles=handles,
+            labels=labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.03),
+            bbox_transform=fig.transFigure,
+            ncol=min(max(2, n_methods // 2 + 1), n_methods),
+            frameon=False,
+            fontsize=max(8.0, float(axis_tick_fontsize)),
+        )
+    fig.subplots_adjust(top=0.80, bottom=0.20)
+    fig.savefig(out_path, dpi=int(dpi))
     plt.close(fig)
 
 
@@ -1121,6 +1296,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--analysis-bins", type=int, default=60)
     p.add_argument("--analysis-max-states", type=int, default=None)
     p.add_argument("--analysis-seed", type=int, default=0)
+    p.add_argument(
+        "--visitation-num-envs",
+        type=int,
+        default=None,
+        help="Number of parallel envs for trajectory-based visitation estimation. "
+        "Defaults to --render-num-envs.",
+    )
+    p.add_argument(
+        "--visitation-repeats",
+        type=int,
+        default=1,
+        help="Number of repeated trajectory batches for visitation estimation.",
+    )
+    p.add_argument(
+        "--visitation-seed",
+        type=int,
+        default=None,
+        help="Base seed for trajectory-based visitation estimation. Defaults to --analysis-seed.",
+    )
 
     p.add_argument("--render-num-envs", type=int, default=20)
     p.add_argument("--render-width", type=int, default=1200)
@@ -1281,6 +1475,12 @@ def main() -> None:
     core4_hist_png = os.path.abspath(
         os.path.join(args.output_dir, f"{args.output_stem}__action_hist_row_core4.png")
     )
+    visitation_png = os.path.abspath(
+        os.path.join(args.output_dir, f"{args.output_stem}__state_visitation_grouped.png")
+    )
+    core4_visitation_png = os.path.abspath(
+        os.path.join(args.output_dir, f"{args.output_stem}__state_visitation_grouped_core4.png")
+    )
     core4_traj_png = os.path.abspath(
         os.path.join(args.output_dir, f"{args.output_stem}__trajectory_row_core4.png")
     )
@@ -1315,6 +1515,67 @@ def main() -> None:
         out_path=traj_png_no_title,
         dpi=int(args.dpi),
     )
+
+    visitation_num_envs = int(
+        args.visitation_num_envs
+        if args.visitation_num_envs is not None
+        else args.render_num_envs
+    )
+    visitation_repeats = max(1, int(args.visitation_repeats))
+    visitation_seed = int(
+        args.visitation_seed
+        if args.visitation_seed is not None
+        else args.analysis_seed
+    )
+    _progress(
+        "Collecting trajectories for visitation estimation "
+        f"(num_envs={visitation_num_envs}, repeats={visitation_repeats}, seed={visitation_seed})"
+    )
+    visitation_data: dict[str, dict[str, Any]] = {}
+    visitation_ref_angles: np.ndarray | None = None
+    for method in prepared_methods:
+        env_for_states = esm._tdw_build_env_for_analysis(method.cfg)
+        canonical_angles = np.asarray(jax.device_get(esm._tdw_discrete_starting_angles(env_for_states)))
+
+        if visitation_ref_angles is None:
+            visitation_ref_angles = canonical_angles
+        else:
+            if len(visitation_ref_angles) != len(canonical_angles) or not np.allclose(
+                visitation_ref_angles,
+                canonical_angles,
+                atol=1e-6,
+                rtol=0.0,
+            ):
+                raise ValueError(
+                    "Canonical TDW state angle sets differ between methods. "
+                    "Use consistent env overrides / checkpoints for comparable visitation panels."
+                )
+
+        trajectories = _collect_trajectory_samples_for_method(
+            method,
+            num_envs=visitation_num_envs,
+            repeats=visitation_repeats,
+            seed=visitation_seed,
+        )
+        normalized_counts = _normalized_state_visitation_from_trajectories(
+            trajectories,
+            canonical_angles=canonical_angles,
+        )
+        visitation_data[method.spec.slot] = {
+            "angles": canonical_angles,
+            "normalized_counts": normalized_counts,
+        }
+
+    _progress(f"Composing visitation figure: {visitation_png}")
+    _compose_state_visitation_grouped_figure(
+        prepared_methods,
+        visitation_data,
+        out_path=visitation_png,
+        dpi=int(args.dpi),
+        axis_label_fontsize=float(args.hist_axis_label_fontsize),
+        axis_tick_fontsize=float(args.hist_axis_tick_fontsize),
+    )
+
     prepared_core4_methods = _ordered_from_slots_by_slot(
         prepared_methods_by_slot,
         CORE4_METHOD_SLOTS,
@@ -1346,22 +1607,34 @@ def main() -> None:
         out_path=core4_traj_png_no_title,
         dpi=int(args.dpi),
     )
+    _progress(f"Composing core4 visitation figure: {core4_visitation_png}")
+    _compose_state_visitation_grouped_figure(
+        prepared_core4_methods,
+        visitation_data,
+        out_path=core4_visitation_png,
+        dpi=int(args.dpi),
+        axis_label_fontsize=float(args.hist_axis_label_fontsize),
+        axis_tick_fontsize=float(args.hist_axis_tick_fontsize),
+    )
 
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "output_dir": os.path.abspath(args.output_dir),
         "output_stem": str(args.output_stem),
         "action_hist_figure": hist_png,
+        "state_visitation_figure": visitation_png,
         "trajectory_figure": traj_png,
         "trajectory_figure_no_title": traj_png_no_title,
         "figures": {
             "full6": {
                 "action_hist_figure": hist_png,
+                "state_visitation_figure": visitation_png,
                 "trajectory_figure": traj_png,
                 "trajectory_figure_no_title": traj_png_no_title,
             },
             "core4": {
                 "action_hist_figure": core4_hist_png,
+                "state_visitation_figure": core4_visitation_png,
                 "trajectory_figure": core4_traj_png,
                 "trajectory_figure_no_title": core4_traj_png_no_title,
             },
@@ -1396,6 +1669,13 @@ def main() -> None:
             "hist_axis_label_fontsize": float(args.hist_axis_label_fontsize),
             "hist_axis_tick_fontsize": float(args.hist_axis_tick_fontsize),
         },
+        "visitation_analysis": {
+            "num_envs": int(visitation_num_envs),
+            "repeats": int(visitation_repeats),
+            "seed": int(visitation_seed),
+            "state_definition": "nearest discrete heading angle from (dx,dy) via atan2 with circular distance",
+            "normalization": "counts per method normalized to sum=1 over canonical states",
+        },
         "render": {
             "num_envs": int(args.render_num_envs),
             "width": int(args.render_width),
@@ -1412,9 +1692,11 @@ def main() -> None:
 
     _progress("Done")
     _progress(f"Action figure: {hist_png}")
+    _progress(f"State visitation figure: {visitation_png}")
     _progress(f"Trajectory figure: {traj_png}")
     _progress(f"Trajectory figure (no title): {traj_png_no_title}")
     _progress(f"Core4 action figure: {core4_hist_png}")
+    _progress(f"Core4 state visitation figure: {core4_visitation_png}")
     _progress(f"Core4 trajectory figure: {core4_traj_png}")
     _progress(f"Core4 trajectory figure (no title): {core4_traj_png_no_title}")
     _progress(f"Manifest: {manifest_path}")

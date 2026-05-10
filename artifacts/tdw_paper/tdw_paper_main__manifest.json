@@ -10,7 +10,7 @@
     "samples_per_state": 5000,
     "seed": 0
   },
-  "created_at_utc": "2026-05-05T19:22:07Z",
+  "created_at_utc": "2026-05-07T08:28:06Z",
   "diffppo_zero_checkpoint_entropy_coef": 0.0,
   "diffppo_zero_checkpoint_mode": "auto_from_candidates",
   "env_overrides": [
@@ -20,11 +20,13 @@
   "figures": {
     "core4": {
       "action_hist_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__action_hist_row_core4.png",
+      "state_visitation_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__state_visitation_grouped_core4.png",
       "trajectory_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row_core4.png",
       "trajectory_figure_no_title": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row_core4_no_title.png"
     },
     "full6": {
       "action_hist_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__action_hist_row.png",
+      "state_visitation_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__state_visitation_grouped.png",
       "trajectory_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row.png",
       "trajectory_figure_no_title": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row_no_title.png"
     }
@@ -55,14 +57,14 @@
       "slot": "reppo",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T191021Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T191021Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260505T191021Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260507T081415Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260507T081415Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__turning_double_well_traj__20260507T081415Z/REPPO__tdw_paper_main__reppo__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T191047Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T191047Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260505T191047Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260507T081442Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260507T081442Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj__20260507T081442Z/REPPO__tdw_paper_main__reppo__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -74,14 +76,14 @@
       "slot": "diffppo_zero",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T191114Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T191114Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260505T191114Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260507T081507Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260507T081507Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj__20260507T081507Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T191200Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T191200Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260505T191200Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260507T081552Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260507T081552Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DPPO_DME-PPO_temp_0___entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj__20260507T081552Z/DPPO (DME-PPO temp = 0)__entcoef0__ode__tdw_paper_main__diffppo_zero__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -93,14 +95,14 @@
       "slot": "diffppo",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T191244Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T191244Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260505T191244Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260507T081635Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260507T081635Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj__20260507T081635Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T191352Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T191352Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260505T191352Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260507T081735Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260507T081735Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj__20260507T081735Z/DME-PPO__entcoef0p05__sde__tdw_paper_main__diffppo__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -112,18 +114,18 @@
       "slot": "dmerl",
       "train_mode": "reparam",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T191507Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T191507Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260505T191507Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260507T081836Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260507T081836Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj__20260507T081836Z/DME-REPPO__tdw_paper_main__dmerl__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T191617Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T191617Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260505T191617Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260507T081941Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260507T081941Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj__20260507T081941Z/DME-REPPO__tdw_paper_main__dmerl__no_title__turning_double_well_traj.gif"
       }
     },
     {
-      "checkpoint": "/home/it4i-sanokows/code/DIMEReppo/saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl",
+      "checkpoint": "/home/it4i-sanokows/code/DIMEReppo/saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T155839.pkl",
       "label": "DA-MDP: WPO",
       "method_name": "reppo_DMERL_new",
       "sampler_arg": "auto",
@@ -131,14 +133,14 @@
       "slot": "dmerl_wpo",
       "train_mode": "WPO",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T191732Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T191732Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260505T191732Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260507T082052Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260507T082052Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj__20260507T082052Z/DME-WPO__tdw_paper_main__dmerl_wpo__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T191853Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T191853Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260505T191853Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260507T082200Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260507T082200Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj__20260507T082200Z/DME-WPO__tdw_paper_main__dmerl_wpo__no_title__turning_double_well_traj.gif"
       }
     },
     {
@@ -150,14 +152,14 @@
       "slot": "dime",
       "train_mode": "",
       "trajectory_outputs": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T192000Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T192000Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260505T192000Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260507T082303Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260507T082303Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj__20260507T082303Z/REPPO-DIME__tdw_paper_main__dime__turning_double_well_traj.gif"
       },
       "trajectory_outputs_no_title": {
-        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T192100Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif",
-        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T192100Z/last_frame.png",
-        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260505T192100Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif"
+        "gif": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260507T082404Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif",
+        "last_frame_png": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260507T082404Z/last_frame.png",
+        "primary": "/home/it4i-sanokows/code/DIMEReppo/artifacts/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj__20260507T082404Z/REPPO-DIME__tdw_paper_main__dime__no_title__turning_double_well_traj.gif"
       }
     }
   ],
@@ -171,6 +173,14 @@
     "seed": 0,
     "width": 1200
   },
+  "state_visitation_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__state_visitation_grouped.png",
   "trajectory_figure": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row.png",
-  "trajectory_figure_no_title": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row_no_title.png"
+  "trajectory_figure_no_title": "/home/it4i-sanokows/code/DIMEReppo/artifacts/tdw_paper/tdw_paper_main__trajectory_row_no_title.png",
+  "visitation_analysis": {
+    "normalization": "counts per method normalized to sum=1 over canonical states",
+    "num_envs": 20,
+    "repeats": 1,
+    "seed": 0,
+    "state_definition": "nearest discrete heading angle from (dx,dy) via atan2 with circular distance"
+  }
 }

@@ -14,6 +14,7 @@ import hydra
 import jax
 import optax
 import plotly.graph_objs as go
+from hydra.core.hydra_config import HydraConfig
 from flax import nnx, struct
 from flax.struct import PyTreeNode
 from flax.traverse_util import flatten_dict, unflatten_dict
@@ -173,6 +174,132 @@ def _weighted_batch_mean_axis0(
     return jnp.mean(ratio * values, axis=0)
 
 
+def _rsl_gaussian_kl(
+    old_mu: jax.Array,
+    old_sigma: jax.Array,
+    mu: jax.Array,
+    sigma: jax.Array,
+) -> jax.Array:
+    sigma = jnp.maximum(sigma, 1e-8)
+    old_sigma = jnp.maximum(old_sigma, 1e-8)
+    return jnp.sum(
+        jnp.log(sigma / old_sigma + 1e-5)
+        + (jnp.square(old_sigma) + jnp.square(old_mu - mu)) / (2.0 * jnp.square(sigma))
+        - 0.5,
+        axis=-1,
+    )
+
+
+def _replace_learning_rate_in_opt_state(
+    opt_state: Any,
+    learning_rate: jax.Array,
+    *,
+    transform_names: set[str] | None = None,
+) -> Any:
+    if isinstance(opt_state, tuple) and hasattr(opt_state, "_fields"):
+        updated = tuple(
+            _replace_learning_rate_in_opt_state(
+                state, learning_rate, transform_names=transform_names
+            )
+            for state in opt_state
+        )
+        try:
+            return type(opt_state)(*updated)
+        except TypeError:
+            return opt_state._replace(**dict(zip(opt_state._fields, updated)))
+
+    if isinstance(opt_state, tuple):
+        return tuple(
+            _replace_learning_rate_in_opt_state(
+                state, learning_rate, transform_names=transform_names
+            )
+            for state in opt_state
+        )
+
+    if hasattr(opt_state, "inner_states") and hasattr(opt_state, "_replace"):
+        inner_states = dict(opt_state.inner_states)
+        updated = {}
+        for name, state in inner_states.items():
+            if transform_names is None or name in transform_names:
+                updated[name] = _replace_learning_rate_in_opt_state(
+                    state, learning_rate, transform_names=None
+                )
+            else:
+                updated[name] = state
+        return opt_state._replace(inner_states=updated)
+
+    if hasattr(opt_state, "inner_state") and hasattr(opt_state, "_replace"):
+        return opt_state._replace(
+            inner_state=_replace_learning_rate_in_opt_state(
+                opt_state.inner_state,
+                learning_rate,
+                transform_names=transform_names,
+            )
+        )
+
+    if hasattr(opt_state, "hyperparams") and hasattr(opt_state, "_replace"):
+        hyperparams = dict(opt_state.hyperparams)
+        if "learning_rate" in hyperparams:
+            hyperparams["learning_rate"] = jnp.asarray(learning_rate, dtype=jnp.float32)
+            return opt_state._replace(hyperparams=hyperparams)
+
+    return opt_state
+
+
+def _update_adaptive_lr(cfg: "PPOConfig", current_lr: jax.Array, kl_mean: jax.Array) -> jax.Array:
+    if not cfg.adaptive_lr:
+        return current_lr
+    decreased_lr = jnp.maximum(
+        jnp.asarray(cfg.adaptive_lr_min, dtype=jnp.float32),
+        current_lr / jnp.asarray(cfg.adaptive_lr_factor, dtype=jnp.float32),
+    )
+    increased_lr = jnp.minimum(
+        jnp.asarray(cfg.adaptive_lr_max, dtype=jnp.float32),
+        current_lr * jnp.asarray(cfg.adaptive_lr_factor, dtype=jnp.float32),
+    )
+    current_lr = jnp.where(kl_mean > cfg.desired_kl * 2.0, decreased_lr, current_lr)
+    current_lr = jnp.where(
+        (kl_mean < cfg.desired_kl / 2.0) & (kl_mean > 0.0),
+        increased_lr,
+        current_lr,
+    )
+    return current_lr
+
+
+def _compute_forward_kernel_moments(actor_module: DMERLActor, obs: dict[str, jax.Array]) -> tuple[jax.Array, jax.Array]:
+    diffusion_model = actor_module.diffusion_model
+    current_x = obs["orig_actions"]
+    step = obs["diff_time_step"][..., 0]
+
+    def _single_step_moments(step_i, x_i, obs_i):
+        mu_i, sigma_i, eta_i = diffusion_model.compute_diffusion_stuff(
+            step_i, x_i, obs_i, model=diffusion_model.forward_model
+        )
+        return x_i + eta_i * mu_i, jnp.maximum(sigma_i, 1e-8)
+
+    return jax.vmap(_single_step_moments)(step, current_x, obs)
+
+
+def _reapply_cli_hyperparameter_overrides(cfg: DictConfig) -> DictConfig:
+    try:
+        task_overrides = HydraConfig.get().overrides.task
+    except Exception:
+        return cfg
+
+    hyperparam_dotlist = []
+    for override in task_overrides:
+        cleaned = override.lstrip("+")
+        if "=" not in cleaned:
+            continue
+        key, _ = cleaned.split("=", 1)
+        if key.startswith("hyperparameters."):
+            hyperparam_dotlist.append(cleaned)
+
+    if hyperparam_dotlist:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(hyperparam_dotlist))
+    return cfg
+
+
 def require(cfg, key):
     if cfg is None:
         raise KeyError(f"Missing required config key '{key}'")
@@ -216,8 +343,16 @@ class PPOConfig(struct.PyTreeNode):
     normalize_advantages: bool
     normalize_env: bool
     anneal_lr: bool
+    normalize_rewards: bool = False
+    reward_norm_epsilon: float = 1e-8
+    reward_norm_clip: float = 10.0
     normalize_reward: bool = False
     normalize_soft_reward: bool = False
+    adaptive_lr: bool = False
+    desired_kl: float = 0.01
+    adaptive_lr_factor: float = 1.5
+    adaptive_lr_min: float = 1e-5
+    adaptive_lr_max: float = 1e-2
     diffusion: DictConfig | dict | None = None
     num_eval: int = 25
     max_episode_steps: int = 1000
@@ -281,10 +416,13 @@ class Transition(struct.PyTreeNode):
     reward_target: jax.Array
     reward_target_mask: jax.Array
     soft_reward: jax.Array
+    raw_reward: jax.Array
     log_prob: jax.Array
     value: jax.Array
     done: jax.Array
     truncated: jax.Array
+    fwd_mean: jax.Array
+    fwd_scale: jax.Array
     info: dict[str, jax.Array]
 
 
@@ -297,6 +435,11 @@ class PPOTrainState(nnx.TrainState):
     normalization_state: DictNormalizationState | None = None
     critic_normalization_state: DictNormalizationState | None = None
     reward_normalization_state: NormalizationState | None = None
+    discounted_return: jax.Array | None = None
+    learning_rate: jax.Array = struct.field(
+        pytree_node=True,
+        default_factory=lambda: jnp.asarray(0.0, dtype=jnp.float32),
+    )
 
 
 class PPONetworks(nnx.Module):
@@ -494,6 +637,11 @@ class ReppoPPOTrainer:
         )
         self.normalizer = DictNormalizer()
         self.reward_normalizer = Normalizer()
+        self.use_reward_normalization = bool(
+            getattr(cfg, "normalize_rewards", False)
+            or getattr(cfg, "normalize_reward", False)
+            or getattr(cfg, "normalize_soft_reward", False)
+        )
         self.num_train_steps = cfg.total_time_steps // int(cfg.num_steps * cfg.num_envs * cfg.num_collection_step_factor) 
         self.eval_interval = int(self.num_train_steps // cfg.num_eval)
 
@@ -604,17 +752,25 @@ class ReppoPPOTrainer:
                 rngs=nnx.Rngs(model_key),
             )
 
-            if not cfg.anneal_lr:
-                lr = cfg.lr
-            else:
+            if cfg.anneal_lr and not cfg.adaptive_lr:
                 num_iterations = cfg.total_time_steps // cfg.num_steps // cfg.num_envs
                 num_updates = num_iterations * cfg.num_epochs * cfg.num_mini_batches
                 lr = optax.linear_schedule(cfg.lr, 1e-6, num_updates)
+            else:
+                lr = cfg.lr
 
             def _adam_with_decay(
-                lr_val, weight_decay: float = 0.0, decay_mask=None, optim=optax.adam
+                lr_val,
+                weight_decay: float = 0.0,
+                decay_mask=None,
+                optim=optax.adam,
+                inject_hparams: bool = False,
             ):
-                tx = optim(lr_val)
+                tx = (
+                    optax.inject_hyperparams(optim)(learning_rate=lr_val)
+                    if inject_hparams
+                    else optim(lr_val)
+                )
                 if weight_decay is not None and weight_decay > 0.0:
                     tx = optax.chain(
                         optax.add_decayed_weights(weight_decay, mask=decay_mask), tx
@@ -696,12 +852,17 @@ class ReppoPPOTrainer:
                 temp_lagrangian_adam_gamma2,
             )
             tx_cfg = {
-                "default": _adam_with_decay(lr, weight_decay=cfg.weight_decay),
-                "no_decay": _adam_with_decay(lr, weight_decay=0.0),
+                "default": _adam_with_decay(
+                    lr, weight_decay=cfg.weight_decay, inject_hparams=True
+                ),
+                "no_decay": _adam_with_decay(
+                    lr, weight_decay=0.0, inject_hparams=True
+                ),
                 "temp_lagrangian": _adam_with_decay(
                     cfg.temperature_lr if cfg.temperature_lr is not None else lr,
                     weight_decay=0.0,
                     optim=special_optimizer,
+                    inject_hparams=False,
                 ),
             }
             optimizer = optax.multi_transform(tx_cfg, decay_labels)
@@ -724,17 +885,17 @@ class ReppoPPOTrainer:
                 norm_state = normalizer.init(obs)
                 critic_normalizer = DictNormalizer()
                 critic_norm_state = critic_normalizer.init(critic_obs)
-                obs = normalizer.normalize(norm_state, obs)
-                critic_obs = critic_normalizer.normalize(critic_norm_state, critic_obs)
             else:
                 norm_state = None
                 critic_norm_state = None
-            if cfg.normalize_reward or cfg.normalize_soft_reward:
+            if self.use_reward_normalization:
                 reward_norm_state = self.reward_normalizer.init(
                     jnp.zeros((cfg.num_envs,), dtype=jnp.float32)
                 )
+                discounted_return = jnp.zeros((cfg.num_envs,), dtype=jnp.float32)
             else:
                 reward_norm_state = None
+                discounted_return = jnp.zeros((cfg.num_envs,), dtype=jnp.float32)
 
             return PPOTrainState.create(
                 iteration=0,
@@ -748,6 +909,8 @@ class ReppoPPOTrainer:
                 normalization_state=norm_state,
                 critic_normalization_state=critic_norm_state,
                 reward_normalization_state=reward_norm_state,
+                discounted_return=discounted_return,
+                learning_rate=jnp.asarray(cfg.lr, dtype=jnp.float32),
             )
 
         return init
@@ -766,16 +929,27 @@ class ReppoPPOTrainer:
 
             if cfg.normalize_env:
                 norm_state = normalizer.update(train_state.normalization_state, obs)
-                obs = normalizer.normalize(norm_state, obs)
-                train_state = train_state.replace(normalization_state=norm_state)
-                critic_obs = normalizer.normalize(
+                critic_norm_state = normalizer.update(
                     train_state.critic_normalization_state, critic_obs
                 )
+                obs_norm = normalizer.normalize(norm_state, obs)
+                critic_obs_norm = normalizer.normalize(critic_norm_state, critic_obs)
+                train_state = train_state.replace(
+                    normalization_state=norm_state,
+                    critic_normalization_state=critic_norm_state,
+                )
+            else:
+                obs_norm = obs
+                critic_obs_norm = critic_obs
+
+            old_fwd_mean, old_fwd_scale = _compute_forward_kernel_moments(
+                model.actor_module, obs_norm
+            )
 
             key, act_key, step_key = jax.random.split(key, 3)
             step_key = jax.random.split(step_key, cfg.num_envs)
             action, gen_log_prob, dest_log_prob = model.actor_sample_step(
-                obs, act_key
+                obs_norm, act_key
             )
 
             log_ratio = jax.lax.stop_gradient(
@@ -786,47 +960,61 @@ class ReppoPPOTrainer:
             next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
                 step_key, env_state, action
             )
-            if cfg.normalize_reward:
-                reward_norm_state = self.reward_normalizer.update(
-                    train_state.reward_normalization_state, reward
-                )
-                reward = self.reward_normalizer.normalize(reward_norm_state, reward)
-                train_state = train_state.replace(
-                    reward_normalization_state=reward_norm_state
-                )
+            raw_reward = reward
             if cfg.update_entropy_lagrangian:
                 temperature = model.actor_module.temperature()
                 entropy_scale = temperature
-                soft_reward = (
-                    reward
-                    - cfg.gamma * log_ratio.squeeze() * entropy_scale
-                )
+                soft_reward = raw_reward - cfg.gamma * log_ratio.squeeze() * entropy_scale
             else:
                 entropy_scale = cfg.entropy_coef
-                soft_reward = (
-                    reward
-                    - log_ratio.squeeze() * entropy_scale
+                soft_reward = raw_reward - log_ratio.squeeze() * entropy_scale
+
+            if self.use_reward_normalization:
+                episode_done = jnp.logical_or(
+                    done > 0, next_env_state.env_state.truncated > 0
+                ).astype(jnp.float32)
+                discounted_return = raw_reward + (
+                    cfg.gamma * train_state.discounted_return * (1.0 - episode_done)
                 )
-            if cfg.normalize_soft_reward and not cfg.normalize_reward:
                 reward_norm_state = self.reward_normalizer.update(
-                    train_state.reward_normalization_state, soft_reward
+                    train_state.reward_normalization_state, discounted_return
                 )
-                soft_reward = self.reward_normalizer.normalize(
-                    reward_norm_state, soft_reward
+                reward_scale = jnp.sqrt(
+                    reward_norm_state.var + jnp.asarray(cfg.reward_norm_epsilon)
+                )
+                reward = jnp.clip(
+                    raw_reward / reward_scale,
+                    -cfg.reward_norm_clip,
+                    cfg.reward_norm_clip,
+                )
+                soft_reward = jnp.clip(
+                    soft_reward / reward_scale,
+                    -cfg.reward_norm_clip,
+                    cfg.reward_norm_clip,
                 )
                 train_state = train_state.replace(
-                    reward_normalization_state=reward_norm_state
+                    reward_normalization_state=reward_norm_state,
+                    discounted_return=discounted_return,
                 )
+            else:
+                reward = raw_reward
+
+            if cfg.normalize_env:
+                next_critic_obs_for_aux = normalizer.normalize(
+                    train_state.critic_normalization_state, next_critic_obs
+                )
+            else:
+                next_critic_obs_for_aux = next_critic_obs
             next_features = (
                 jax.lax.stop_gradient(
-                    model.critic_module.forward(next_critic_obs)[0]
+                    model.critic_module.forward(next_critic_obs_for_aux)[0]
                 )
                 if cfg.use_categorical_value
                 else jnp.zeros((cfg.num_envs, cfg.critic_hidden_dim))
             )
             transition = Transition(
-                obs=obs,
-                critic_obs=critic_obs,
+                obs=obs_norm,
+                critic_obs=critic_obs_norm,
                 action=action,
                 next_emb=next_features,
                 next_state_emb=next_features,
@@ -835,10 +1023,13 @@ class ReppoPPOTrainer:
                 reward_target=reward,
                 reward_target_mask=jnp.ones_like(reward),
                 soft_reward=soft_reward,
+                raw_reward=raw_reward,
                 log_prob=gen_log_prob,
-                value=model.critic(critic_obs),
+                value=model.critic(critic_obs_norm),
                 done=done,
                 truncated=next_env_state.env_state.truncated,
+                fwd_mean=old_fwd_mean,
+                fwd_scale=old_fwd_scale,
                 info=info,
             )
             return (
@@ -997,6 +1188,17 @@ class ReppoPPOTrainer:
 
                     gen_log_prob, dest_log_prob = model.actor_log_prob_step(minibatch.obs, minibatch.action)
                     log_ratio = gen_log_prob - dest_log_prob
+                    fwd_mean, fwd_scale = _compute_forward_kernel_moments(
+                        model.actor_module, minibatch.obs
+                    )
+                    kl_mean = jnp.mean(
+                        _rsl_gaussian_kl(
+                            old_mu=minibatch.fwd_mean,
+                            old_sigma=minibatch.fwd_scale,
+                            mu=fwd_mean,
+                            sigma=fwd_scale,
+                        )
+                    )
                     if cfg.use_categorical_value:
                         if cfg.hl_gauss:
                             critic_pred = model.critic_module.critic_cat(
@@ -1253,6 +1455,7 @@ class ReppoPPOTrainer:
                         target_entropy=target_entropy,
                         temp=entropy_scale,
                         kl=kl,
+                        kl_mean=kl_mean,
                         lagrangian=lagrangian,
                         lagrangian_loss=lagrangian_loss,
                         loss=loss,
@@ -1267,7 +1470,7 @@ class ReppoPPOTrainer:
                             jnp.abs(minibatch.action), importance_ratio
                         ),
                         reward_mean=_weighted_batch_mean(
-                            minibatch.reward, importance_ratio
+                            minibatch.raw_reward, importance_ratio
                         )
                         * self.diffusion_steps,
                         target_value_mean=target_value_mean,
@@ -1307,7 +1510,20 @@ class ReppoPPOTrainer:
                 metrics["importance_ratio_mean"] = jnp.mean(importance_ratio)
                 metrics["importance_ratio_max"] = jnp.max(importance_ratio)
                 metrics["importance_ratio_min"] = jnp.min(importance_ratio)
+                new_lr = _update_adaptive_lr(
+                    cfg, train_state.learning_rate, metrics["kl_mean"]
+                )
+                if cfg.adaptive_lr:
+                    train_state = train_state.replace(
+                        opt_state=_replace_learning_rate_in_opt_state(
+                            train_state.opt_state,
+                            new_lr,
+                            transform_names={"default", "no_decay"},
+                        )
+                    )
+                train_state = train_state.replace(learning_rate=new_lr)
                 train_state = train_state.apply_gradients(grads)
+                metrics["learning_rate"] = train_state.learning_rate
                 return (idx + 1, train_state), metrics
 
             key, shuffle_key = jax.random.split(key)
@@ -1355,6 +1571,13 @@ class ReppoPPOTrainer:
                 key=learn_key, train_state=state, batch=transitions
             )
             metrics = dict(update_metrics)
+            if state.reward_normalization_state is not None:
+                metrics["reward_norm_count"] = jnp.asarray(
+                    state.reward_normalization_state.count, dtype=jnp.float32
+                )
+                metrics["reward_norm_std"] = jnp.sqrt(
+                    jnp.mean(state.reward_normalization_state.var)
+                )
             state = state.replace(iteration=state.iteration + 1)
             return state, metrics
 
@@ -1593,7 +1816,8 @@ def run(cfg: DictConfig):
                 if bool(getattr(cfg.hyperparameters, "normalize_env", False))
                 else None,
                 "reward_normalization_state": _to_numpy_tree(state.reward_normalization_state)
-                if bool(getattr(cfg.hyperparameters, "normalize_reward", False))
+                if bool(getattr(cfg.hyperparameters, "normalize_rewards", False))
+                or bool(getattr(cfg.hyperparameters, "normalize_reward", False))
                 or bool(getattr(cfg.hyperparameters, "normalize_soft_reward", False))
                 else None,
                 "last_env_state": _to_numpy_tree(state.last_env_state),
@@ -1647,9 +1871,9 @@ def tune(cfg: DictConfig):
         wandb.init(project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}")
         run_cfg = OmegaConf.to_container(cfg)
         for k, v in dict(wandb.config).items():
-            run_cfg["experiment"]["hyperparameters"][k] = v
+            run_cfg["hyperparameters"][k] = v
         wandb.config.update({"method_name": "reppo_DiffPPO"}, allow_val_change=True)
-        ppo_cfg = PPOConfig(**run_cfg["experiment"]["hyperparameters"])
+        ppo_cfg = PPOConfig(**run_cfg["hyperparameters"])
         trainer = ReppoPPOTrainer(
             cfg=ppo_cfg,
             env=env,
@@ -1688,11 +1912,30 @@ def main(cfg: DictConfig):
     diffppo_overrides = OmegaConf.select(
         cfg, "DiffPPO_overrides.hyperparameters", default={}
     )
+    if OmegaConf.is_config(diffppo_overrides):
+        diffppo_overrides = OmegaConf.create(
+            OmegaConf.to_container(diffppo_overrides, resolve=False)
+        )
+    else:
+        diffppo_overrides = OmegaConf.create(diffppo_overrides)
     experiment_overrides = OmegaConf.select(
         cfg, "experiment_overrides.hyperparameters", default={}
     )
+    if OmegaConf.is_config(experiment_overrides):
+        experiment_overrides = OmegaConf.create(
+            OmegaConf.to_container(experiment_overrides, resolve=False)
+        )
+    else:
+        experiment_overrides = OmegaConf.create(experiment_overrides)
     cfg.hyperparameters = OmegaConf.merge(
         cfg.hyperparameters, diffppo_overrides, experiment_overrides
+    )
+    cfg = _reapply_cli_hyperparameter_overrides(cfg)
+    legacy_norm_rewards = bool(getattr(cfg.hyperparameters, "normalize_reward", False)) or bool(
+        getattr(cfg.hyperparameters, "normalize_soft_reward", False)
+    )
+    cfg.hyperparameters.normalize_rewards = bool(
+        getattr(cfg.hyperparameters, "normalize_rewards", False) or legacy_norm_rewards
     )
     if cfg.tune:
         tune(cfg)
