@@ -739,7 +739,7 @@ def actor_WPO_loss_fn(
             entropy=_metric_scalar(entropy),
             entropy_lagrangian=_metric_scalar(entropy_lagrangian),
             temp_entropy_lagrangian=_metric_scalar(entropy_lagrangian),
-            entropy_loss=target_entropy_loss,
+            entropy_loss=target_entropy,
             wpo_temperature_objective=_metric_scalar(wpo_temperature_objective),
             delta_t_sq=_metric_scalar(delta_t_sq_mean),
             entropy_penalty=entropy_penalty,
