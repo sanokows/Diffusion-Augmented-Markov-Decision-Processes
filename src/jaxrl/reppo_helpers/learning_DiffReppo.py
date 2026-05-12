@@ -681,7 +681,7 @@ def actor_WPO_loss_fn(
         target_entropy = action_size_target + entropy
         kl_constraint = kl_clip_value - cfg.kl_bound
 
-        wpo_temperature_objective = actor_WPO_loss 
+        wpo_temperature_objective = _metric_scalar(actor_WPO_loss)
         normal_ent_reg = _metric_scalar(
             actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
             - jax.lax.stop_gradient(actor_model.temperature()) * target_entropy
@@ -702,6 +702,7 @@ def actor_WPO_loss_fn(
                 loss += normal_ent_reg
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
+        loss = _metric_scalar(loss)
 
         friction = actor_model.diffusion_model.friction.value
         friction_detached = jax.lax.stop_gradient(friction)
@@ -742,8 +743,8 @@ def actor_WPO_loss_fn(
             entropy=_metric_scalar(entropy),
             entropy_lagrangian=_metric_scalar(entropy_lagrangian),
             temp_entropy_lagrangian=_metric_scalar(entropy_lagrangian),
-            entropy_loss=target_entropy,
-            wpo_temperature_objective=_metric_scalar(wpo_temperature_objective),
+            entropy_loss=_metric_scalar(target_entropy),
+            wpo_temperature_objective=wpo_temperature_objective,
             delta_t_sq=_metric_scalar(delta_t_sq_mean),
             entropy_penalty=entropy_penalty,
             kl_penalty=kl_penalty,
