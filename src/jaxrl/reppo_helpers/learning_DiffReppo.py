@@ -697,7 +697,7 @@ def actor_WPO_loss_fn(
         loss = _weighted_batch_mean(actor_loss_val, importance_ratio)
         if cfg.update_entropy_lagrangian:
             if use_wpo_log_temp_update:
-                loss += - wpo_temperature_objective + normal_ent_reg
+                loss +=  wpo_temperature_objective + normal_ent_reg
             else:
                 loss += normal_ent_reg
         if cfg.update_kl_lagrangian:
