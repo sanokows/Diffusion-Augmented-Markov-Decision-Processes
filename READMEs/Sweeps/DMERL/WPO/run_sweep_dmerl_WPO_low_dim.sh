@@ -12,13 +12,6 @@ ENV_NAMES=(
 # Step 2: Define seed sweep values
 SEEDS=(
     0
-    1
-    2
-    3
-    5
-    8
-    13
-    21
 )
 
 # Step 3: Define GPU pool and round-robin scheduling
@@ -58,7 +51,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         echo "Starting env.name=$ENV_NAME seed=$SEED on GPU $GPU_ID..."
         CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
             env.name="$ENV_NAME" \
-            wandb.project_suffix="_FR_WPO_07_05" \
+            wandb.project_suffix="_FR_WPO_07_05_ent" \
             hyperparameters.num_eval=50 \
             hyperparameters.total_time_steps=50000000 \
             hyperparameters.diffusion.diff_steps=8 \
