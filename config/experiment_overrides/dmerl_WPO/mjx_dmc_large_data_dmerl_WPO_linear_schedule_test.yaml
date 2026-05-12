@@ -21,12 +21,11 @@ hyperparameters:
   action_clip_value: 1.
   use_W2_kl: false
   remove_fisher_precond: true
-  new_temp_mode: false
+  new_temp_mode: true
   ent_start: 0.01
   ent_target_mult: 8.
 
   entropy_lagrangian_start: 0.01
-  new_temp_mode: true
   
   lr: 1e-3
   temperature_lr: 6e-4
@@ -47,5 +46,4 @@ hyperparameters:
       _target_: src.networks.diffusion.schedulers.get_linear_schedule
       total_steps: ${hyperparameters.diffusion.diff_steps}
       min: 0.17
-
 
