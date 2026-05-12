@@ -26,7 +26,7 @@ hyperparameters:
   ent_target_mult: 8.
 
   entropy_lagrangian_start: 0.01
-  use_wpo_log_temp_update: true
+  use_new_temp_mode: true
   
   lr: 1e-3
   temperature_lr: 6e-4
