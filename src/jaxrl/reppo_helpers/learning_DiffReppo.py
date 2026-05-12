@@ -682,7 +682,10 @@ def actor_WPO_loss_fn(
         kl_constraint = kl_clip_value - cfg.kl_bound
 
         wpo_temperature_objective = actor_WPO_loss 
-        normal_ent_reg = actor_model.temperature()* jax.lax.stop_gradient(target_entropy) - jax.lax.stop_gradient(actor_model.temperature())* target_entropy
+        normal_ent_reg = _metric_scalar(
+            actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
+            - jax.lax.stop_gradient(actor_model.temperature()) * target_entropy
+        )
 
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
