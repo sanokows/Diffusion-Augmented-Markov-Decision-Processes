@@ -62,4 +62,6 @@ sbatch ./READMEs/Clusters/Vega/DME_PPO/run_gpu_dmerl_low_dim.sh
 
 sbatch ./READMEs/Clusters/Vega/DME_PPO/run_gpu_dmerl_hyperparam.sh
 sbatch ./READMEs/Clusters/Vega/DME_REPPO/run_gpu_dmerl_asp_aux_loss_mult.sh
+
+sbatch ./READMEs/Clusters/Vega/DME_WPO/run_gpu_dmerl_low_dim.sh
 ```

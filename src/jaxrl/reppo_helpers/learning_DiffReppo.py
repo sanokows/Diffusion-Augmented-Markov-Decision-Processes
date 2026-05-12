@@ -681,7 +681,6 @@ def actor_WPO_loss_fn(
         target_entropy = action_size_target + entropy
         kl_constraint = kl_clip_value - cfg.kl_bound
 
-        target_entropy= _weighted_batch_mean(target_entropy, importance_ratio)
         wpo_temperature_objective = actor_WPO_loss 
         normal_ent_reg = actor_model.temperature()* jax.lax.stop_gradient(target_entropy) - jax.lax.stop_gradient(actor_model.temperature())* target_entropy
 
