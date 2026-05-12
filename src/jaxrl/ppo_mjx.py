@@ -9,6 +9,7 @@ import hydra
 import jax
 import optax
 import plotly.graph_objs as go
+from hydra.core.hydra_config import HydraConfig
 from flax import nnx, struct
 from flax.struct import PyTreeNode
 from gymnax.environments.environment import Environment, EnvParams, EnvState
@@ -28,6 +29,73 @@ from src.jaxrl import utils
 from src.jaxrl.normalization import NormalizationState, Normalizer
 
 logging.basicConfig(level=logging.INFO)
+
+
+def _reapply_cli_hyperparameter_overrides(cfg: DictConfig) -> DictConfig:
+    try:
+        task_overrides = HydraConfig.get().overrides.task
+    except Exception:
+        return cfg
+
+    hyperparam_dotlist = []
+    for override in task_overrides:
+        cleaned = override.lstrip("+")
+        if "=" not in cleaned:
+            continue
+        key, _ = cleaned.split("=", 1)
+        if key.startswith("hyperparameters."):
+            hyperparam_dotlist.append(cleaned)
+
+    if hyperparam_dotlist:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(hyperparam_dotlist))
+    return cfg
+
+
+def _extract_hyperparameter_overrides(cfg: DictConfig, path: str) -> DictConfig:
+    """Accept both group styles:
+    1) nested: <group>.hyperparameters.*
+    2) flat:   <group>.*
+    """
+
+    def _to_cfg(value: typing.Any) -> DictConfig:
+        if value is None:
+            return OmegaConf.create({})
+        if OmegaConf.is_config(value):
+            value = OmegaConf.to_container(value, resolve=False)
+        if isinstance(value, dict):
+            return OmegaConf.create(value)
+        return OmegaConf.create({})
+
+    def _collect_nested_hyperparameters(value: typing.Any) -> list[dict]:
+        if isinstance(value, dict):
+            collected: list[dict] = []
+            for key, sub_value in value.items():
+                if key == "hyperparameters" and isinstance(sub_value, dict):
+                    collected.append(sub_value)
+                    continue
+                collected.extend(_collect_nested_hyperparameters(sub_value))
+            return collected
+        if isinstance(value, list):
+            collected: list[dict] = []
+            for item in value:
+                collected.extend(_collect_nested_hyperparameters(item))
+            return collected
+        return []
+
+    raw_cfg = _to_cfg(OmegaConf.select(cfg, path, default={}))
+    raw_obj = OmegaConf.to_container(raw_cfg, resolve=False)
+    if not isinstance(raw_obj, dict):
+        return OmegaConf.create({})
+
+    nested_candidates = _collect_nested_hyperparameters(raw_obj)
+    if nested_candidates:
+        merged = OmegaConf.create({})
+        for candidate in nested_candidates:
+            merged = OmegaConf.merge(merged, OmegaConf.create(candidate))
+        return merged
+
+    flat_overrides = {key: value for key, value in raw_obj.items() if key != "defaults"}
+    return OmegaConf.create(flat_overrides)
 
 
 ## INITIALIZE CLASS STRUCTURES (NETWORKS, STATES, ...)
@@ -57,6 +125,25 @@ class PPOConfig(struct.PyTreeNode):
     normalize_advantages: bool
     normalize_env: bool
     anneal_lr: bool
+    normalize_rewards: bool = False
+    reward_norm_epsilon: float = 1e-8
+    reward_norm_clip: float = 10.0
+    adaptive_lr: bool = False
+    desired_kl: float = 0.01
+    adaptive_lr_factor: float = 1.5
+    adaptive_lr_min: float = 1e-5
+    adaptive_lr_max: float = 1e-2
+    use_reppo_actor_policy: bool = False
+    use_reppo_value_function: bool = False
+    actor_hidden_dim: int = 512
+    num_actor_layers: int = 3
+    use_actor_norm: bool = True
+    use_actor_skip: bool = False
+    actor_min_std: float = 0.0
+    critic_hidden_dim: int = 512
+    num_critic_head_layers: int = 2
+    use_critic_norm: bool = True
+    use_critic_skip: bool = False
     num_eval: int = 25
     max_episode_steps: int = 1000
 
@@ -752,8 +839,14 @@ def tune(cfg: DictConfig):
     wandb.agent(sweep_id, function=train_agent, count=cfg.tune.num_runs)
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="ppo")
+@hydra.main(version_base=None, config_path="../../config/ppo", config_name="default")
 def main(cfg: DictConfig):
+    ppo_architecture = _extract_hyperparameter_overrides(cfg, "architecture")
+    ppo_overrides = _extract_hyperparameter_overrides(cfg, "overrides")
+    cfg.hyperparameters = OmegaConf.merge(
+        cfg.hyperparameters, ppo_architecture, ppo_overrides
+    )
+    cfg = _reapply_cli_hyperparameter_overrides(cfg)
     if cfg.tune:
         tune(cfg)
     else:

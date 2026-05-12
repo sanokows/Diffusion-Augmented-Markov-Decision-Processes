@@ -103,6 +103,9 @@ def _sectioned_wandb_key(key: str) -> str:
         key = key.lstrip("/")
     if key == "sps":
         return "sps"
+    if key.startswith("learning_rate/"):
+        suffix = key.split("/", 1)[1]
+        return f"learning_rate/{suffix}"
     if key.startswith("train/"):
         suffix = key.split("/", 1)[1]
         if suffix.startswith(("temp", "entropy", "target_entropy")):
@@ -121,6 +124,9 @@ def _sectioned_wandb_key(key: str) -> str:
     if key.startswith("norm/"):
         suffix = key.split("/", 1)[1]
         return f"norm/{suffix}"
+    if key.startswith("normalization/"):
+        suffix = key.split("/", 1)[1]
+        return f"normalization/{suffix}"
     if key.startswith("figures/"):
         suffix = key.split("/", 1)[1]
         return f"figures/{suffix}"
@@ -132,6 +138,31 @@ def _sectioned_wandb_key(key: str) -> str:
 
 def _sectioned_wandb_log(log_data: dict[str, Any]) -> dict[str, Any]:
     return {_sectioned_wandb_key(key): value for key, value in log_data.items()}
+
+
+def _dict_norm_stats(prefix: str, state: DictNormalizationState | None) -> dict[str, jax.Array]:
+    stats: dict[str, jax.Array] = {}
+    if state is None:
+        return stats
+
+    if state.obs_state is not None:
+        stats[f"{prefix}_obs_norm_count"] = jnp.asarray(
+            state.obs_state.count, dtype=jnp.float32
+        )
+        stats[f"{prefix}_obs_norm_std"] = jnp.sqrt(jnp.mean(state.obs_state.var))
+        stats[f"{prefix}_obs_norm_mean_abs"] = jnp.mean(jnp.abs(state.obs_state.mean))
+
+    if state.actions_state is not None:
+        stats[f"{prefix}_action_norm_count"] = jnp.asarray(
+            state.actions_state.count, dtype=jnp.float32
+        )
+        stats[f"{prefix}_action_norm_std"] = jnp.sqrt(
+            jnp.mean(state.actions_state.var)
+        )
+        stats[f"{prefix}_action_norm_mean_abs"] = jnp.mean(
+            jnp.abs(state.actions_state.mean)
+        )
+    return stats
 
 
 def _weighted_batch_mean(values: jax.Array, importance_ratio: jax.Array | None) -> jax.Array:
@@ -300,6 +331,53 @@ def _reapply_cli_hyperparameter_overrides(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _extract_hyperparameter_overrides(cfg: DictConfig, path: str) -> DictConfig:
+    """Accept both group styles:
+    1) nested: <group>.hyperparameters.*
+    2) flat:   <group>.*
+    """
+
+    def _to_cfg(value: Any) -> DictConfig:
+        if value is None:
+            return OmegaConf.create({})
+        if OmegaConf.is_config(value):
+            value = OmegaConf.to_container(value, resolve=False)
+        if isinstance(value, dict):
+            return OmegaConf.create(value)
+        return OmegaConf.create({})
+
+    def _collect_nested_hyperparameters(value: Any) -> list[dict]:
+        if isinstance(value, dict):
+            collected: list[dict] = []
+            for key, sub_value in value.items():
+                if key == "hyperparameters" and isinstance(sub_value, dict):
+                    collected.append(sub_value)
+                    continue
+                collected.extend(_collect_nested_hyperparameters(sub_value))
+            return collected
+        if isinstance(value, list):
+            collected: list[dict] = []
+            for item in value:
+                collected.extend(_collect_nested_hyperparameters(item))
+            return collected
+        return []
+
+    raw_cfg = _to_cfg(OmegaConf.select(cfg, path, default={}))
+    raw_obj = OmegaConf.to_container(raw_cfg, resolve=False)
+    if not isinstance(raw_obj, dict):
+        return OmegaConf.create({})
+
+    nested_candidates = _collect_nested_hyperparameters(raw_obj)
+    if nested_candidates:
+        merged = OmegaConf.create({})
+        for candidate in nested_candidates:
+            merged = OmegaConf.merge(merged, OmegaConf.create(candidate))
+        return merged
+
+    flat_overrides = {key: value for key, value in raw_obj.items() if key != "defaults"}
+    return OmegaConf.create(flat_overrides)
+
+
 def require(cfg, key):
     if cfg is None:
         raise KeyError(f"Missing required config key '{key}'")
@@ -416,6 +494,8 @@ class Transition(struct.PyTreeNode):
     reward_target: jax.Array
     reward_target_mask: jax.Array
     soft_reward: jax.Array
+    soft_reward_raw: jax.Array
+    discounted_soft_return: jax.Array
     raw_reward: jax.Array
     log_prob: jax.Array
     value: jax.Array
@@ -964,40 +1044,27 @@ class ReppoPPOTrainer:
             if cfg.update_entropy_lagrangian:
                 temperature = model.actor_module.temperature()
                 entropy_scale = temperature
-                soft_reward = raw_reward - cfg.gamma * log_ratio.squeeze() * entropy_scale
+                soft_reward_raw = (
+                    raw_reward - cfg.gamma * log_ratio.squeeze() * entropy_scale
+                )
             else:
                 entropy_scale = cfg.entropy_coef
-                soft_reward = raw_reward - log_ratio.squeeze() * entropy_scale
+                soft_reward_raw = raw_reward - log_ratio.squeeze() * entropy_scale
 
             if self.use_reward_normalization:
                 episode_done = jnp.logical_or(
                     done > 0, next_env_state.env_state.truncated > 0
                 ).astype(jnp.float32)
-                discounted_return = raw_reward + (
+                discounted_soft_return = soft_reward_raw + (
                     cfg.gamma * train_state.discounted_return * (1.0 - episode_done)
                 )
-                reward_norm_state = self.reward_normalizer.update(
-                    train_state.reward_normalization_state, discounted_return
-                )
-                reward_scale = jnp.sqrt(
-                    reward_norm_state.var + jnp.asarray(cfg.reward_norm_epsilon)
-                )
-                reward = jnp.clip(
-                    raw_reward / reward_scale,
-                    -cfg.reward_norm_clip,
-                    cfg.reward_norm_clip,
-                )
-                soft_reward = jnp.clip(
-                    soft_reward / reward_scale,
-                    -cfg.reward_norm_clip,
-                    cfg.reward_norm_clip,
-                )
                 train_state = train_state.replace(
-                    reward_normalization_state=reward_norm_state,
-                    discounted_return=discounted_return,
+                    discounted_return=discounted_soft_return,
                 )
             else:
-                reward = raw_reward
+                discounted_soft_return = soft_reward_raw
+            reward = raw_reward
+            soft_reward = soft_reward_raw
 
             if cfg.normalize_env:
                 next_critic_obs_for_aux = normalizer.normalize(
@@ -1023,6 +1090,8 @@ class ReppoPPOTrainer:
                 reward_target=reward,
                 reward_target_mask=jnp.ones_like(reward),
                 soft_reward=soft_reward,
+                soft_reward_raw=soft_reward_raw,
+                discounted_soft_return=discounted_soft_return,
                 raw_reward=raw_reward,
                 log_prob=gen_log_prob,
                 value=model.critic(critic_obs_norm),
@@ -1076,6 +1145,31 @@ class ReppoPPOTrainer:
             last_critic_obs = train_state.last_critic_obs
         last_value = model.critic(last_critic_obs)
 
+        if self.use_reward_normalization:
+            rollout_discounted_soft_returns = batch.discounted_soft_return.reshape(-1)
+            rollout_reward_scale = jnp.sqrt(
+                jnp.var(rollout_discounted_soft_returns)
+                + jnp.asarray(
+                    cfg.reward_norm_epsilon,
+                    dtype=rollout_discounted_soft_returns.dtype,
+                )
+            )
+            reward_norm_state = self.reward_normalizer.update(
+                train_state.reward_normalization_state,
+                rollout_discounted_soft_returns,
+            )
+            train_state = train_state.replace(reward_normalization_state=reward_norm_state)
+            reward_norm = batch.raw_reward / rollout_reward_scale
+            soft_reward_norm = batch.soft_reward_raw / rollout_reward_scale
+            batch = batch.replace(
+                reward=reward_norm,
+                reward_target=reward_norm,
+                reward_target_mask=jnp.ones_like(reward_norm),
+                soft_reward=soft_reward_norm,
+            )
+        else:
+            rollout_reward_scale = jnp.asarray(1.0, dtype=batch.raw_reward.dtype)
+
         def compute_advantage(carry, transition):
             gae, next_value = carry
             done = transition.done
@@ -1088,13 +1182,14 @@ class ReppoPPOTrainer:
             gae = jnp.where(truncated, truncated_gae, gae)
             return (gae, value), gae
 
-        _, advantages = jax.lax.scan(
+        _, value_advantages = jax.lax.scan(
             compute_advantage,
             (jnp.zeros_like(last_value), last_value),
             batch,
             reverse=True,
         )
-        target_values = advantages + batch.value
+        target_values = value_advantages + batch.value
+        actor_advantages = value_advantages * rollout_reward_scale
         target_vals_flat = target_values.reshape(-1)
         target_vals_finite = jnp.nan_to_num(
             target_vals_flat,
@@ -1124,7 +1219,7 @@ class ReppoPPOTrainer:
             reward_target_mask=reward_target_mask,
         )
 
-        data = (batch, advantages, target_values)
+        data = (batch, actor_advantages, value_advantages, target_values)
         data = jax.tree.map(
             lambda x: x.reshape(
                 (math.floor(self.num_collection_steps * cfg.num_envs), *x.shape[2:])
@@ -1179,7 +1274,7 @@ class ReppoPPOTrainer:
             def minibatch_update(carry, scan_inputs):
                 idx, train_state = carry
                 indices, step_key, importance_ratio = scan_inputs
-                minibatch, advantages, target_values = jax.tree.map(
+                minibatch, actor_advantages, value_advantages, target_values = jax.tree.map(
                     lambda x: jnp.take(x, indices, axis=0), data
                 )
 
@@ -1349,7 +1444,7 @@ class ReppoPPOTrainer:
                         r=ratio,
                     )
 
-                    adv_base = advantages
+                    adv_base = actor_advantages
 
                     if cfg.update_entropy_lagrangian:
                         entropy_scale = jax.lax.stop_gradient(model.actor_module.temperature())
@@ -1358,8 +1453,8 @@ class ReppoPPOTrainer:
 
                     unnormed_advantages = (
                         adv_base
-                        - minibatch.soft_reward
-                        + minibatch.reward
+                        - minibatch.soft_reward_raw
+                        + minibatch.raw_reward
                         - log_ratio * entropy_scale
                     )
                     if (cfg.normalize_advantages):
@@ -1429,7 +1524,8 @@ class ReppoPPOTrainer:
                         target_entropy = self.action_size_target + entropy
                         target_entropy_loss = (
                             model.actor_module.temperature()
-                            * jax.lax.stop_gradient(target_entropy)
+                            * jax.lax.stop_gradient(target_entropy) - jax.lax.stop_gradient(model.actor_module.temperature())
+                            * target_entropy
                         )
                         target_entropy_loss = jnp.mean(target_entropy_loss)
                         loss += target_entropy_loss
@@ -1452,7 +1548,7 @@ class ReppoPPOTrainer:
                         value_loss=value_loss,
                         entropy_loss=target_entropy_loss,
                         entropy=entropy,
-                        target_entropy=target_entropy,
+                        target_entropy=self.action_size_target,
                         temp=entropy_scale,
                         kl=kl,
                         kl_mean=kl_mean,
@@ -1505,7 +1601,23 @@ class ReppoPPOTrainer:
                 global_grad_norm = jnp.linalg.norm(flat_grads)
 
                 metrics = output[1]
-                metrics["advantages"] = _weighted_batch_mean(advantages, importance_ratio)
+                safe_rollout_reward_scale = jnp.maximum(
+                    rollout_reward_scale, jnp.asarray(1e-8, dtype=rollout_reward_scale.dtype)
+                )
+                metrics["advantages"] = _weighted_batch_mean(
+                    value_advantages, importance_ratio
+                )
+                metrics["actor_advantages"] = _weighted_batch_mean(
+                    actor_advantages, importance_ratio
+                )
+                metrics["rollout_reward_scale"] = rollout_reward_scale
+                metrics["advantage_scale_error"] = _weighted_batch_mean(
+                    jnp.abs(
+                        actor_advantages / safe_rollout_reward_scale
+                        - value_advantages
+                    ),
+                    importance_ratio,
+                )
                 metrics["global_grad_norm"] = global_grad_norm
                 metrics["importance_ratio_mean"] = jnp.mean(importance_ratio)
                 metrics["importance_ratio_max"] = jnp.max(importance_ratio)
@@ -1571,12 +1683,21 @@ class ReppoPPOTrainer:
                 key=learn_key, train_state=state, batch=transitions
             )
             metrics = dict(update_metrics)
+            metrics.update(
+                _dict_norm_stats("actor", state.normalization_state)
+            )
+            metrics.update(
+                _dict_norm_stats("value", state.critic_normalization_state)
+            )
             if state.reward_normalization_state is not None:
                 metrics["reward_norm_count"] = jnp.asarray(
                     state.reward_normalization_state.count, dtype=jnp.float32
                 )
                 metrics["reward_norm_std"] = jnp.sqrt(
                     jnp.mean(state.reward_normalization_state.var)
+                )
+                metrics["reward_norm_mean_abs"] = jnp.mean(
+                    jnp.abs(state.reward_normalization_state.mean)
                 )
             state = state.replace(iteration=state.iteration + 1)
             return state, metrics
@@ -1703,6 +1824,20 @@ def run(cfg: DictConfig):
             "train/importance_ratio_min",
         ):
             metrics.pop(metric_key, None)
+        kl_mean = metrics.pop("train/kl_mean", None)
+        learning_rate = metrics.pop("train/learning_rate", None)
+        normalization_metrics = {}
+        for metric_key in list(metrics.keys()):
+            if (
+                metric_key.startswith("train/reward_norm_")
+                or metric_key.startswith("train/actor_obs_norm_")
+                or metric_key.startswith("train/actor_action_norm_")
+                or metric_key.startswith("train/value_obs_norm_")
+                or metric_key.startswith("train/value_action_norm_")
+            ):
+                normalization_metrics[
+                    f"normalization/{metric_key.split('train/', 1)[1]}"
+                ] = jnp.mean(metrics.pop(metric_key))
         advantages_hist = None
         if advantages is not None:
             adv_np = np.asarray(jax.device_get(advantages))
@@ -1718,7 +1853,12 @@ def run(cfg: DictConfig):
             "eval/episode_return": episode_return,
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
+            **normalization_metrics,
         }
+        if kl_mean is not None:
+            log_data["learning_rate/kl_mean"] = jnp.mean(kl_mean)
+        if learning_rate is not None:
+            log_data["learning_rate/lr"] = jnp.mean(learning_rate)
         if advantages_hist is not None:
             log_data["train/advantages"] = advantages_hist
         wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])
@@ -1907,28 +2047,13 @@ def tune(cfg: DictConfig):
     wandb.agent(sweep_id, function=train_agent, count=cfg.tune.num_runs)
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="diff_ppo")
+@hydra.main(version_base=None, config_path="../../config/diffppo", config_name="default")
 def main(cfg: DictConfig):
-    diffppo_overrides = OmegaConf.select(
-        cfg, "DiffPPO_overrides.hyperparameters", default={}
-    )
-    if OmegaConf.is_config(diffppo_overrides):
-        diffppo_overrides = OmegaConf.create(
-            OmegaConf.to_container(diffppo_overrides, resolve=False)
-        )
-    else:
-        diffppo_overrides = OmegaConf.create(diffppo_overrides)
-    experiment_overrides = OmegaConf.select(
-        cfg, "experiment_overrides.hyperparameters", default={}
-    )
-    if OmegaConf.is_config(experiment_overrides):
-        experiment_overrides = OmegaConf.create(
-            OmegaConf.to_container(experiment_overrides, resolve=False)
-        )
-    else:
-        experiment_overrides = OmegaConf.create(experiment_overrides)
+    diffppo_overrides = _extract_hyperparameter_overrides(cfg, "overrides")
+    diffppo_features = _extract_hyperparameter_overrides(cfg, "features")
+    experiment_overrides = _extract_hyperparameter_overrides(cfg, "experiment_overrides")
     cfg.hyperparameters = OmegaConf.merge(
-        cfg.hyperparameters, diffppo_overrides, experiment_overrides
+        cfg.hyperparameters, diffppo_overrides, diffppo_features, experiment_overrides
     )
     cfg = _reapply_cli_hyperparameter_overrides(cfg)
     legacy_norm_rewards = bool(getattr(cfg.hyperparameters, "normalize_reward", False)) or bool(

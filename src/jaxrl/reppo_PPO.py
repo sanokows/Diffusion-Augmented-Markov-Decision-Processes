@@ -27,6 +27,7 @@ from src.env_utils.jax_wrappers import (
 )
 from src.jaxrl import utils
 from src.jaxrl.normalization import NormalizationState, Normalizer
+from src.networks.jax_models import SACActorNetworks, ValueNetwork
 
 logging.basicConfig(level=logging.INFO)
 
@@ -114,6 +115,53 @@ def _reapply_cli_hyperparameter_overrides(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _extract_hyperparameter_overrides(cfg: DictConfig, path: str) -> DictConfig:
+    """Accept both group styles:
+    1) nested: <group>.hyperparameters.*
+    2) flat:   <group>.*
+    """
+
+    def _to_cfg(value: typing.Any) -> DictConfig:
+        if value is None:
+            return OmegaConf.create({})
+        if OmegaConf.is_config(value):
+            value = OmegaConf.to_container(value, resolve=False)
+        if isinstance(value, dict):
+            return OmegaConf.create(value)
+        return OmegaConf.create({})
+
+    def _collect_nested_hyperparameters(value: typing.Any) -> list[dict]:
+        if isinstance(value, dict):
+            collected: list[dict] = []
+            for key, sub_value in value.items():
+                if key == "hyperparameters" and isinstance(sub_value, dict):
+                    collected.append(sub_value)
+                    continue
+                collected.extend(_collect_nested_hyperparameters(sub_value))
+            return collected
+        if isinstance(value, list):
+            collected: list[dict] = []
+            for item in value:
+                collected.extend(_collect_nested_hyperparameters(item))
+            return collected
+        return []
+
+    raw_cfg = _to_cfg(OmegaConf.select(cfg, path, default={}))
+    raw_obj = OmegaConf.to_container(raw_cfg, resolve=False)
+    if not isinstance(raw_obj, dict):
+        return OmegaConf.create({})
+
+    nested_candidates = _collect_nested_hyperparameters(raw_obj)
+    if nested_candidates:
+        merged = OmegaConf.create({})
+        for candidate in nested_candidates:
+            merged = OmegaConf.merge(merged, OmegaConf.create(candidate))
+        return merged
+
+    flat_overrides = {key: value for key, value in raw_obj.items() if key != "defaults"}
+    return OmegaConf.create(flat_overrides)
+
+
 class Policy(typing.Protocol):
     def __call__(
         self,
@@ -148,6 +196,17 @@ class PPOConfig(struct.PyTreeNode):
     adaptive_lr_factor: float = 1.5
     adaptive_lr_min: float = 1e-5
     adaptive_lr_max: float = 1e-2
+    use_reppo_actor_policy: bool = False
+    use_reppo_value_function: bool = False
+    actor_hidden_dim: int = 512
+    num_actor_layers: int = 3
+    use_actor_norm: bool = True
+    use_actor_skip: bool = False
+    actor_min_std: float = 0.0
+    critic_hidden_dim: int = 512
+    num_critic_head_layers: int = 2
+    use_critic_norm: bool = True
+    use_critic_skip: bool = False
     num_eval: int = 25
     max_episode_steps: int = 1000
 
@@ -190,6 +249,7 @@ class PPONetworks(nnx.Module):
         critic_obs_dim: int,
         action_dim: int,
         hidden_dim: int = 64,
+        cfg: PPOConfig | None = None,
         *,
         rngs: nnx.Rngs,
     ):
@@ -202,30 +262,62 @@ class PPONetworks(nnx.Module):
                 rngs=rngs,
             )
 
-        self.actor_module = nnx.Sequential(
-            linear_layer(obs_dim, hidden_dim),
-            nnx.tanh,
-            linear_layer(hidden_dim, hidden_dim),
-            nnx.tanh,
-            linear_layer(hidden_dim, action_dim, scale=0.01),
+        self.use_reppo_actor_policy = bool(
+            getattr(cfg, "use_reppo_actor_policy", False) if cfg is not None else False
         )
-        self.log_std = nnx.Param(jnp.zeros(action_dim))
-        self.critic_module = nnx.Sequential(
-            linear_layer(critic_obs_dim, hidden_dim),
-            nnx.tanh,
-            linear_layer(hidden_dim, hidden_dim),
-            nnx.tanh,
-            linear_layer(hidden_dim, 1, scale=1.0),
+        self.use_reppo_value_function = bool(
+            getattr(cfg, "use_reppo_value_function", False) if cfg is not None else False
         )
+
+        if self.use_reppo_actor_policy:
+            self.actor_module = SACActorNetworks(
+                obs_dim=obs_dim,
+                action_dim=action_dim,
+                hidden_dim=int(getattr(cfg, "actor_hidden_dim", 512)),
+                use_norm=bool(getattr(cfg, "use_actor_norm", True)),
+                layers=int(getattr(cfg, "num_actor_layers", 3)),
+                min_std=float(getattr(cfg, "actor_min_std", 0.0)),
+                use_skip=bool(getattr(cfg, "use_actor_skip", False)),
+                use_tanh_transform=False,
+                rngs=rngs,
+            )
+            self.log_std = None
+        else:
+            self.actor_module = nnx.Sequential(
+                linear_layer(obs_dim, hidden_dim),
+                nnx.tanh,
+                linear_layer(hidden_dim, hidden_dim),
+                nnx.tanh,
+                linear_layer(hidden_dim, action_dim, scale=0.01),
+            )
+            self.log_std = nnx.Param(jnp.zeros(action_dim))
+
+        if self.use_reppo_value_function:
+            self.critic_module = ValueNetwork(
+                obs_dim=critic_obs_dim,
+                hidden_dim=int(getattr(cfg, "critic_hidden_dim", 512)),
+                use_norm=bool(getattr(cfg, "use_critic_norm", True)),
+                layers=int(getattr(cfg, "num_critic_head_layers", 2)),
+                use_skip=bool(getattr(cfg, "use_critic_skip", False)),
+                rngs=rngs,
+            )
+        else:
+            self.critic_module = nnx.Sequential(
+                linear_layer(critic_obs_dim, hidden_dim),
+                nnx.tanh,
+                linear_layer(hidden_dim, hidden_dim),
+                nnx.tanh,
+                linear_layer(hidden_dim, 1, scale=1.0),
+            )
 
     def critic(self, obs: jax.Array) -> jax.Array:
         return self.critic_module(obs).squeeze()
 
     def actor(self, obs: jax.Array) -> distrax.Distribution:
+        if self.use_reppo_actor_policy:
+            return self.actor_module.actor(obs, scale=1.0)
         loc = self.actor_module(obs)
-        pi = distrax.MultivariateNormalDiag(
-            loc=loc, scale_diag=jnp.exp(self.log_std.value)
-        )
+        pi = distrax.MultivariateNormalDiag(loc=loc, scale_diag=jnp.exp(self.log_std.value))
         return pi
 
 
@@ -334,6 +426,7 @@ class ReppoPPOTrainer:
                 obs_dim=env.observation_space(env_params)[0].shape[0],
                 critic_obs_dim=env.observation_space(env_params)[1].shape[0],
                 action_dim=env.action_space(env_params).shape[0],
+                cfg=cfg,
                 rngs=nnx.Rngs(model_key),
             )
 
@@ -804,6 +897,8 @@ def run(cfg: DictConfig):
         metric_history.append(metrics)
         episode_return = metrics["eval/episode_return"].mean()
         advantages = metrics.pop("train/advantages", None)
+        kl_mean = metrics.pop("train/kl_mean", None)
+        learning_rate = metrics.pop("train/learning_rate", None)
         logging.info(
             f"step={state.time_steps[0]} episode_return={episode_return:.3f}, sps={sps:.2f}"
         )
@@ -813,6 +908,10 @@ def run(cfg: DictConfig):
             "train/advantages": wandb.Histogram(advantages),
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
+        if kl_mean is not None:
+            log_data["learning_rate/kl_mean"] = jnp.mean(kl_mean)
+        if learning_rate is not None:
+            log_data["learning_rate/lr"] = jnp.mean(learning_rate)
         wandb.log(log_data, step=state.time_steps[0])
 
     logging.info(OmegaConf.to_yaml(cfg))
@@ -919,16 +1018,13 @@ def tune(cfg: DictConfig):
     wandb.agent(sweep_id, function=train_agent, count=cfg.tune.num_runs)
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="ppo")
+@hydra.main(version_base=None, config_path="../../config/ppo", config_name="default")
 def main(cfg: DictConfig):
-    ppo_overrides = OmegaConf.select(cfg, "PPO_overrides.hyperparameters", default={})
-    if OmegaConf.is_config(ppo_overrides):
-        ppo_overrides = OmegaConf.create(
-            OmegaConf.to_container(ppo_overrides, resolve=False)
-        )
-    else:
-        ppo_overrides = OmegaConf.create(ppo_overrides)
-    cfg.hyperparameters = OmegaConf.merge(cfg.hyperparameters, ppo_overrides)
+    ppo_architecture = _extract_hyperparameter_overrides(cfg, "architecture")
+    ppo_overrides = _extract_hyperparameter_overrides(cfg, "overrides")
+    cfg.hyperparameters = OmegaConf.merge(
+        cfg.hyperparameters, ppo_architecture, ppo_overrides
+    )
     cfg = _reapply_cli_hyperparameter_overrides(cfg)
     if cfg.tune:
         tune(cfg)

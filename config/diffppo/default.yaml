@@ -1,6 +1,9 @@
+# @package _global_
+
 defaults:
   - env: mjx_dmc
-  - DiffPPO_overrides: default
+  - overrides: default
+  - features: default
   - experiment_overrides: default
   - _self_
 

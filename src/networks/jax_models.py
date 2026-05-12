@@ -530,6 +530,7 @@ class SACActorNetworks(nnx.Module):
         train_mode: str = "reparam",
         disable_wpo_fisher_preconditioning: bool = False,
         disable_temperature: bool = False,
+        use_tanh_transform: bool = True,
         *,
         rngs: nnx.Rngs,
     ):
@@ -564,6 +565,7 @@ class SACActorNetworks(nnx.Module):
             raise ValueError(f"Unknown train_mode: {train_mode}")
         self.train_mode = train_mode
         self.disable_wpo_fisher_preconditioning = disable_wpo_fisher_preconditioning
+        self.use_tanh_transform = use_tanh_transform
 
     def _compute_mean_std(
         self, obs: jax.Array, scale: float | jax.Array
@@ -591,15 +593,20 @@ class SACActorNetworks(nnx.Module):
         self, obs: jax.Array, scale: float | jax.Array = 1.0
     ) -> distrax.Distribution:
         loc, std = self._compute_mean_std(obs, scale)
-        pi = distrax.Transformed(
-            distrax.Normal(loc=loc, scale=std),
-            distrax.Tanh()
-        )
+        if self.use_tanh_transform:
+            pi = distrax.Transformed(
+                distrax.Normal(loc=loc, scale=std),
+                distrax.Tanh(),
+            )
+        else:
+            pi = distrax.MultivariateNormalDiag(loc=loc, scale_diag=std)
         return pi
 
     def det_action(self, obs: jax.Array) -> jax.Array:
         loc, _ = self._compute_mean_std(obs, 1.0)
-        return jnp.tanh(loc)
+        if self.use_tanh_transform:
+            return jnp.tanh(loc)
+        return loc
 
     def temperature(self) -> jax.Array:
         if self.disable_temperature:
@@ -614,7 +621,11 @@ class SACActorNetworks(nnx.Module):
 
     def __call__(self, obs: jax.Array) -> jax.Array:
         loc, std = self._compute_mean_std(obs, 1.0)
-        return jnp.tanh(loc), std, self.temperature(), self.lagrangian()
+        if self.use_tanh_transform:
+            action = jnp.tanh(loc)
+        else:
+            action = loc
+        return action, std, self.temperature(), self.lagrangian()
 
 
 class GumbleSoftmaxDistribution(distrax.Distribution):

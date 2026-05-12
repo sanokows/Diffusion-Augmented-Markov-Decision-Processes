@@ -1,0 +1,11 @@
+type: mjx
+name: 
+max_episode_steps: 1000
+reward_scaling: 1.0
+terminate: false
+push_distractions: false
+use_tuned_reward: false
+use_push_randomization: false
+use_domain_randomization: false
+asymmetric_observation: true
+asymmetric_obs: true

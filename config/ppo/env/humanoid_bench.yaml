@@ -1,0 +1,13 @@
+type: humanoid_bench
+name:
+max_episode_steps: null
+stochastic_eval: true
+asymmetric_obs: false
+
+env_kwargs:
+  obs_mode: state
+  render_mode: rgb_array
+
+
+vmin: 0
+vmax: 500

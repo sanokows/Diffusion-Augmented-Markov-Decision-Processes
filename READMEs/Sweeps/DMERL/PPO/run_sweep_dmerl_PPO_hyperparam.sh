@@ -80,14 +80,14 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
                     echo "Starting env.name=$ENV_NAME lr=$LR entropy_coef=$ENTROPY_COEF num_envs=$NUM_ENVS num_epochs=$NUM_EPOCHS on GPU $GPU_ID..."
                     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DiffPPO \
                         env.name="$ENV_NAME" \
-                        DiffPPO_overrides=default \
+                        overrides=default \
                         env=mjx_dmc \
-                        DiffPPO_overrides.hyperparameters.total_time_steps=50000000  \
+                        overrides.hyperparameters.total_time_steps=50000000  \
                         wandb.project_suffix="_FR_13_04_hyper" \
-                        DiffPPO_overrides.hyperparameters.lr="$LR" \
-                        DiffPPO_overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
-                        DiffPPO_overrides.hyperparameters.num_envs="$NUM_ENVS" \
-                        DiffPPO_overrides.hyperparameters.num_epochs="$NUM_EPOCHS" \
+                        overrides.hyperparameters.lr="$LR" \
+                        overrides.hyperparameters.entropy_coef="$ENTROPY_COEF" \
+                        overrides.hyperparameters.num_envs="$NUM_ENVS" \
+                        overrides.hyperparameters.num_epochs="$NUM_EPOCHS" \
                         seed=0 \
                         trials=1 &
                     GPU_PIDS[$GPU_ID]=$!

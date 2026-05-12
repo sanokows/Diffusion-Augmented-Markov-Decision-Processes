@@ -1,0 +1,26 @@
+type: mjx
+name: TurningGMMEnv
+max_episode_steps: 120
+reward_scaling: 0.33
+terminate: false
+asymmetric_observation: false
+asymmetric_obs: false
+
+# Extra kwargs passed to `TurningGMMEnv(...)` when `env.name=TurningGMMEnv`.
+config:
+  step_size: 1.0                    # Forward movement magnitude per step.
+  action_turn_range_deg: [-100.0, 100.0] # Action -1/1 maps to min/max relative turn.
+  initial_heading_deg: 0.0          # Used only when randomize_initial_heading=false.
+  randomize_initial_heading: true   # If true, reset heading is sampled uniformly in [0, 360).
+  num_action_state: 8               # Number of orientation bins over 360 degrees.
+  num_gmm_components: 5             # Number of Gaussian components per action part.
+  gmm_mean_a_margin_d: 5.0          # Means sampled in [-1 + d*sigma, 1 - d*sigma], where sigma=gmm_std.
+  gmm_std: 0.05                     # Shared Gaussian std for all components.
+  gmm_seed: 0                       # Seed for deterministic GMM mean sampling.
+  point_symmetric_mode: true        # If true: per-part means symmetric around 0 and opposite parts share landscapes.
+  action_clip_eps: 1.0e-6           # Numerical clip for actions before reward density eval.
+  transition_noise_deg: 0.0         # Uniform turn-noise half-range in degrees.
+  min_density: 1.0e-12              # Numerical floor before log-density.
+  mask_state_in_observation: false  # If true, observation is zeroed.
+  use_distance_state: false         # If true, obs is scalar distance-to-origin.
+  jit: false                        # JIT-compile env reset/step functions.

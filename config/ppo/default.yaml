@@ -1,6 +1,9 @@
+# @package _global_
+
 defaults:
   - env: mjx_dmc
-  - PPO_overrides: default
+  - architecture: old
+  - overrides: default
   - _self_
 
 hyperparameters:
@@ -27,6 +30,17 @@ hyperparameters:
     adaptive_lr_factor: 1.5
     adaptive_lr_min: 1e-5
     adaptive_lr_max: 1e-2
+    use_reppo_actor_policy: false
+    use_reppo_value_function: false
+    actor_hidden_dim: 512
+    num_actor_layers: 3
+    use_actor_norm: true
+    use_actor_skip: false
+    actor_min_std: 0.0
+    critic_hidden_dim: 512
+    num_critic_head_layers: 2
+    use_critic_norm: true
+    use_critic_skip: false
     num_eval: 20
     max_episode_steps: 1000
 name: "ppo"

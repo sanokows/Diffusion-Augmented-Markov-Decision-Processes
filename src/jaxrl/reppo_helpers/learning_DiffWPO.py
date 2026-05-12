@@ -137,7 +137,7 @@ def actor_loss_fn(params, updated_state, step_key, minibatch, target_vals, actio
         target_entropy = action_size_target + entropy
         target_entropy_loss = (
              actor_model.temperature()
-            * jax.lax.stop_gradient(target_entropy)
+            * jax.lax.stop_gradient(target_entropy) 
         ).mean()
         lagrangian_loss = (
             -lagrangian

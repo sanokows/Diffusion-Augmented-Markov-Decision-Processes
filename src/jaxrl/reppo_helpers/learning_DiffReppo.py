@@ -669,30 +669,22 @@ def actor_WPO_loss_fn(
             actor_model.entropy_lagrangian() if use_new_temp_mode else temperature
         )
 
-        entropy_lagrangian_maybe_stop_grad = jnp.where(
-                kl_clip_value < cfg.kl_bound,
-                entropy_lagrangian*jnp.ones_like(kl_clip_value),
-                jax.lax.stop_gradient(entropy_lagrangian*jnp.ones_like(kl_clip_value)))
-
-        log_prob_ratio_maybe_stop_grad = jnp.where(
-                kl_clip_value < cfg.kl_bound,
-                log_prob_ratio,
-                jax.lax.stop_gradient(log_prob_ratio))
+        # log_prob_ratio_maybe_stop_grad = jnp.where(
+        #         kl_clip_value < cfg.kl_bound,
+        #         log_prob_ratio,
+        #         jax.lax.stop_gradient(log_prob_ratio))
         entropy = -cfg.diffusion.diff_steps * _weighted_batch_mean_axis0(
-            log_prob_ratio_maybe_stop_grad,
+            log_prob_ratio,
             importance_ratio,
         )
-        entropy_stop_grad = _maybe_stop_grad_entropy(entropy, cfg)
 
-        target_entropy = action_size_target + entropy_stop_grad
+        target_entropy = action_size_target + entropy
         kl_constraint = kl_clip_value - cfg.kl_bound
 
-        target_entropy_loss = (
-            entropy_lagrangian_maybe_stop_grad * target_entropy
-        )
-        target_entropy_loss = _weighted_batch_mean(target_entropy_loss, importance_ratio)
-        target_entropy_scalar = _metric_scalar(target_entropy)
-        wpo_temperature_objective = actor_WPO_loss + temperature * target_entropy_scalar
+        target_entropy= _weighted_batch_mean(target_entropy, importance_ratio)
+        wpo_temperature_objective = actor_WPO_loss 
+        normal_ent_reg = actor_model.temperature()* jax.lax.stop_gradient(target_entropy) - jax.lax.stop_gradient(actor_model.temperature())* target_entropy
+
         lagrangian_loss = (
             -lagrangian * jax.lax.stop_gradient(kl_constraint)
         )
@@ -703,9 +695,9 @@ def actor_WPO_loss_fn(
         loss = _weighted_batch_mean(actor_loss_val, importance_ratio)
         if cfg.update_entropy_lagrangian:
             if use_wpo_log_temp_update:
-                loss += wpo_temperature_objective
+                loss += - wpo_temperature_objective + normal_ent_reg
             else:
-                loss += target_entropy_loss
+                loss += normal_ent_reg
         if cfg.update_kl_lagrangian:
             loss += lagrangian_loss
 

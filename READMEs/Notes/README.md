@@ -6,7 +6,8 @@ This note summarizes the main model-architecture differences between:
 
 ## High-level summary
 
-`reppo_PPO.py` uses a classic small PPO MLP (fixed shape), while `reppo.py` uses larger and more modular actor/critic networks with more architecture options.
+`reppo_PPO.py` uses the classic small PPO MLP by default (`architecture=old`), while `reppo.py` uses larger and more modular actor/critic networks.  
+You can now switch PPO to reppo-like networks via `architecture=reppo_style`.
 
 ## Side-by-side differences
 
@@ -24,5 +25,5 @@ This note summarizes the main model-architecture differences between:
 
 ## Important config note
 
-`config/PPO_overrides/*.yaml` (for `reppo_PPO.py`) mainly changes training behavior (e.g., reward normalization, adaptive LR), not network shape.  
-The PPO architecture remains the same unless `PPONetworks` code is changed directly.
+`config/ppo/overrides/*.yaml` (for `reppo_PPO.py`) mainly changes training behavior (e.g., reward normalization, adaptive LR).  
+Network shape is selected separately via `config/ppo/architecture/*.yaml` (`old` vs `reppo_style`).

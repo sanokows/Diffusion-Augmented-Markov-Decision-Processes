@@ -1,0 +1,11 @@
+use_reppo_actor_policy: true
+use_reppo_value_function: true
+actor_hidden_dim: 512
+num_actor_layers: 3
+use_actor_norm: true
+use_actor_skip: false
+actor_min_std: 0.0
+critic_hidden_dim: 512
+num_critic_head_layers: 2
+use_critic_norm: true
+use_critic_skip: false

@@ -44,7 +44,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DiffPPO \
         env.name="$ENV_NAME" \
-        DiffPPO_overrides=DPPO \
+        overrides=DPPO \
         env=mjx_dmc \
         wandb.project_suffix="_FR_DPPO_29_04" \
         trials=4 \

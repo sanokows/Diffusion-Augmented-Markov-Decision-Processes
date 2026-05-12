@@ -19,7 +19,7 @@ NUM_SEEDS=1
 BASE_SEED=0
 TRIALS=5
 
-# Step 4: Sweep-specific defaults. Core PPO settings come from DiffPPO_overrides=default.
+# Step 4: Sweep-specific defaults. Core PPO settings come from overrides=default.
 WANDB_PROJECT_SUFFIX="_FR_PPO_temp_abl"
 
 # Step 5: Define GPU pool and round-robin scheduling.
@@ -80,7 +80,7 @@ launch_run() {
     echo "Starting env.name=$ENV_NAME entropy_coef=$ENTROPY_COEF num_seeds=$NUM_SEEDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DiffPPO \
         env.name="$ENV_NAME" \
-        DiffPPO_overrides=default \
+        overrides=default \
         env=mjx_dmc \
         wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
         hyperparameters.entropy_coef="$ENTROPY_COEF" \

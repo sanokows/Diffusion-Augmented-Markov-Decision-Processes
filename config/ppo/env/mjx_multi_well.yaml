@@ -1,0 +1,26 @@
+type: mjx
+name: TurningMultiWellEnv
+max_episode_steps: 100
+reward_scaling: 1.0
+terminate: false
+asymmetric_observation: false
+asymmetric_obs: false
+
+# Extra kwargs passed to `TurningMultiWellEnv(...)` when `env.name=TurningMultiWellEnv`.
+config:
+  step_size: 1.0                   # Forward movement magnitude per step.
+  max_turn_deg: 90.0               # Action +/-1 maps to +/-max_turn_deg relative turn.
+  initial_heading_deg: 0.0         # Used only when randomize_initial_heading=false.
+  snap_action_to_optimal: true     # If true, transition turn snaps to nearest configured minimum.
+  randomize_initial_heading: true  # If true, reset heading is sampled from snapped support.
+  num_minima: 4                    # Number of reward minima/maxima locations in [-90,90].
+  well_height: 0.85                # Barrier reward level between neighboring wells, in [0,1].
+  multi_minima_tail_power: 2.0     # Polynomial tail exponent near +/-90 deg.
+  include_opposite_headings: true  # If true, add minima+180deg to reset heading support.
+  transition_noise_deg: 0.0        # Uniform turn noise half-range in degrees.
+  mask_state_in_observation: false # If true, observation is zeroed.
+  use_distance_state: false        # If true, obs is scalar distance-to-origin.
+  jit: false                       # JIT-compile env reset/step functions.
+
+vmin: -20
+vmax: 130

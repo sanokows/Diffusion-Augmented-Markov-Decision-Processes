@@ -1,0 +1,8 @@
+type: brax
+name: halfcheetah
+max_episode_steps: 1000
+reward_scaling: 0.1
+terminate: false
+
+vmin: 0
+vmax: 150
