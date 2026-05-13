@@ -1,0 +1,11 @@
+hyperparameters:
+  num_envs: 1024
+  num_steps: 128
+  num_mini_batches: 64
+  num_epochs: 8
+  kl_bound: 0.05
+  num_eval: 50
+  ent_target_mult: 0.5
+  aux_loss_mult: 0.1
+  lr: 6e-4
+  train_mode: "WPO"

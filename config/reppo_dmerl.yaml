@@ -100,7 +100,6 @@ hyperparameters:
   entropy_lagrangian_start: ${hyperparameters.ent_start}
   ent_target_mult: 3.
   update_entropy_lagrangian: true
-  stop_grad_entropy: true
   new_temp_mode: false
   augmented_lagrangian_entropy_coef: 1.0
   # optional: exponentially decay temperature instead of learning it

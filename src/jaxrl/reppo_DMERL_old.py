@@ -199,7 +199,6 @@ class ReppoConfig(struct.PyTreeNode):
     use_final_step_reward_target: bool = False
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
-    stop_grad_entropy: bool = True
     use_augmented_lagrangian_dual: bool = False
     augmented_lagrangian_entropy_coef: float = 1.0
     augmented_lagrangian_kl_coef: float = 1.0

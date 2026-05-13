@@ -41,12 +41,6 @@ def _resolve_temperature(actor_model, cfg, train_state=None) -> jax.Array:
     return start_val * jnp.exp(progress * log_ratio)
 
 
-def _maybe_stop_grad_entropy(entropy: jax.Array, cfg) -> jax.Array:
-    if bool(getattr(cfg, "stop_grad_entropy", True)):
-        return jax.lax.stop_gradient(entropy)
-    return entropy
-
-
 def compute_action_q_grads(
     actor_model, critic_model, obs, critic_obs, temperature: jax.Array | None = None
 ):
@@ -340,7 +334,6 @@ def actor_loss_fn(
         entropy = -cfg.diffusion.diff_steps * _weighted_batch_mean_axis0(
             log_prob_ratio, importance_ratio
         )
-        entropy = _maybe_stop_grad_entropy(entropy, cfg)
         # print the entropy in jax debug mode also print the target entropy and the temperature
         #jax.debug.print("Entropy: {ent}, target: {tar}, temp: {temp}", ent=entropy, tar=action_size_target, temp=actor_model.temperature())
 

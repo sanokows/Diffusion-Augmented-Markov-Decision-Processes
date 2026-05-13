@@ -51,13 +51,13 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
     echo "Starting env.name=$ENV_NAME on GPU $GPU_ID..."
     CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_ME-WPO" \
+        wandb.project_suffix="_FR_ME-WPO_13_05" \
         hyperparameters.num_eval=50 \
         hyperparameters.total_time_steps=50000000 \
         env=mjx_dmc \
         seed=0 \
-        num_trials=5 \
-        experiment_overrides=reppo_WPO/mjx_dmc_large_data_ME_WPO &
+        num_trials=1 \
+        experiment_overrides=reppo_WPO/mjx_dmc_large_data_ME_WPO_test &
     GPU_PIDS[$GPU_ID]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 done

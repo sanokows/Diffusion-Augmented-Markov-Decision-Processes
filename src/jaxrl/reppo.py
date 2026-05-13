@@ -139,7 +139,6 @@ class ReppoConfig(struct.PyTreeNode):
     aux_loss_mult: float = 0.0
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
-    stop_grad_entropy: bool = True
     new_temp_mode: bool = False
     use_critic_norm: bool = True
     num_critic_encoder_layers: int = 1
@@ -184,12 +183,6 @@ def _resolve_temperature(actor_model, cfg) -> jax.Array:
     ):
         return jnp.asarray(getattr(cfg, "ent_start", 1.0), dtype=jnp.float32)
     return actor_model.temperature()
-
-
-def _maybe_stop_grad_entropy(entropy: jax.Array, cfg) -> jax.Array:
-    if bool(getattr(cfg, "stop_grad_entropy", True)):
-        return jax.lax.stop_gradient(entropy)
-    return entropy
 
 
 def make_policy(
@@ -448,13 +441,6 @@ def make_train_fn(
     num_seeds: int = 1,
     reward_scale: float = 1.0,
 ):
-    if (
-        cfg.train_mode == "WPO"
-        and bool(getattr(cfg, "new_temp_mode", False))
-        and not bool(getattr(cfg, "disable_temperature", False))
-    ):
-        cfg = cfg.replace(stop_grad_entropy=False)
-
     env = LogWrapper(env, cfg.num_envs)
     env = ClipAction(env, low=-cfg.env_action_clip_value, high=cfg.env_action_clip_value)
     # env = VecEnv(env, cfg.num_envs)
@@ -921,8 +907,7 @@ def make_train_fn(
                         )
 
                     # SAC target entropy loss
-                    entropy_stop_grad = _maybe_stop_grad_entropy(entropy, cfg)
-                    target_entropy = action_size_target + entropy_stop_grad
+                    target_entropy = action_size_target + entropy
                     entropy_lagrangian = (
                         actor_model.entropy_lagrangian()
                         if bool(getattr(cfg, "new_temp_mode", False))
@@ -930,7 +915,7 @@ def make_train_fn(
                         else temperature
                     )
                     target_entropy_loss = (
-                        entropy_lagrangian * target_entropy
+                        entropy_lagrangian * jax.lax.stop_gradient(target_entropy) - jax.lax.stop_gradient(entropy_lagrangian) * target_entropy
                     )
 
                     # Lagrangian constraint (follows temperature update)
@@ -968,7 +953,7 @@ def make_train_fn(
                         lagrangian_loss=lagrangian_loss,
                         entropy=entropy,
                         entropy_lagrangian=entropy_lagrangian,
-                        entropy_loss=target_entropy_loss,
+                        entropy_loss=target_entropy,
                         target_values=target_values.mean(),
                         actor_pnorm=actor_pnorm,
                         q_action_grad=q_action_grad,
@@ -1155,13 +1140,6 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 cfg.hyperparameters[name] = sampled_value
             else:
                 raise ValueError(f"Hyperparameter {name} not found in config.")
-
-    if (
-        cfg.hyperparameters.train_mode == "WPO"
-        and bool(getattr(cfg.hyperparameters, "new_temp_mode", False))
-        and not bool(getattr(cfg.hyperparameters, "disable_temperature", False))
-    ):
-        cfg.hyperparameters.stop_grad_entropy = False
 
     try:
         with open("completed_trials.txt", "r") as f:
