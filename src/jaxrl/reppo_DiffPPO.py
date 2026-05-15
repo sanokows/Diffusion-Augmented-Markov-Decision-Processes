@@ -54,6 +54,11 @@ from src.jaxrl.reppo_helpers.diffusion_index_sampling import (
     prepare_diffusion_importance_sampling,
     sample_minibatch_indices,
 )
+from src.jaxrl.reppo_helpers.env_time_discounting import (
+    maybe_env_time_discount_lambda,
+    maybe_env_time_value,
+)
+from src.jaxrl.reppo_helpers.learning_DiffPPO import compute_gae_step
 from src.jaxrl.reppo_DMERL_old import randomize_env_steps
 
 
@@ -451,6 +456,7 @@ class PPOConfig(struct.PyTreeNode):
     aux_loss_mult: float = 0.0
     aux_loss_alpha: float = 0.9
     use_final_step_reward_target: bool = False
+    use_env_time_discounting: bool = False
     action_clip_value: float = 1.0
     tanh_transform: bool = False
     kl_start: float = 0.1
@@ -1041,22 +1047,37 @@ class ReppoPPOTrainer:
                 step_key, env_state, action
             )
             raw_reward = reward
+            env_time_discount = maybe_env_time_value(
+                obs,
+                cfg.gamma,
+                diff_steps,
+                cfg.use_env_time_discounting,
+            )
             if cfg.update_entropy_lagrangian:
                 temperature = model.actor_module.temperature()
                 entropy_scale = temperature
-                soft_reward_raw = (
-                    raw_reward - cfg.gamma * log_ratio.squeeze() * entropy_scale
-                )
+                log_ratio_discount = env_time_discount
             else:
                 entropy_scale = cfg.entropy_coef
-                soft_reward_raw = raw_reward - log_ratio.squeeze() * entropy_scale
+                log_ratio_discount = maybe_env_time_value(
+                    obs,
+                    cfg.gamma,
+                    diff_steps,
+                    cfg.use_env_time_discounting,
+                    legacy_value=1.0,
+                )
+            soft_reward_raw = (
+                raw_reward - log_ratio_discount * log_ratio.squeeze() * entropy_scale
+            )
 
             if self.use_reward_normalization:
                 episode_done = jnp.logical_or(
                     done > 0, next_env_state.env_state.truncated > 0
                 ).astype(jnp.float32)
                 discounted_soft_return = soft_reward_raw + (
-                    cfg.gamma * train_state.discounted_return * (1.0 - episode_done)
+                    env_time_discount
+                    * train_state.discounted_return
+                    * (1.0 - episode_done)
                 )
                 train_state = train_state.replace(
                     discounted_return=discounted_soft_return,
@@ -1136,6 +1157,7 @@ class ReppoPPOTrainer:
         cfg = self.cfg
         normalizer = self.normalizer
         model = nnx.merge(train_state.graphdef, train_state.params)
+        diff_steps = self.diffusion_steps
 
         if cfg.normalize_env:
             last_critic_obs = normalizer.normalize(
@@ -1170,22 +1192,30 @@ class ReppoPPOTrainer:
         else:
             rollout_reward_scale = jnp.asarray(1.0, dtype=batch.raw_reward.dtype)
 
-        def compute_advantage(carry, transition):
-            gae, next_value = carry
-            done = transition.done
-            truncated = transition.truncated
-            reward = transition.soft_reward
-            value = transition.value
-            delta = reward + cfg.gamma * next_value * (1 - done) - value
-            gae = delta + cfg.gamma * cfg.lmbda * (1 - done) * gae
-            truncated_gae = reward + cfg.gamma * next_value - value
-            gae = jnp.where(truncated, truncated_gae, gae)
-            return (gae, value), gae
+        if cfg.use_env_time_discounting:
+            discount, trace_decay = maybe_env_time_discount_lambda(
+                batch.obs,
+                cfg.gamma,
+                cfg.lmbda,
+                diff_steps,
+                True,
+            )
+
+            def compute_advantage(carry, inputs):
+                transition, gamma_t, lmbda_t = inputs
+                return compute_gae_step(gamma_t, lmbda_t, carry, transition)
+
+            advantage_scan_inputs = (batch, discount, trace_decay)
+        else:
+            def compute_advantage(carry, transition):
+                return compute_gae_step(cfg.gamma, cfg.lmbda, carry, transition)
+
+            advantage_scan_inputs = batch
 
         _, value_advantages = jax.lax.scan(
             compute_advantage,
             (jnp.zeros_like(last_value), last_value),
-            batch,
+            advantage_scan_inputs,
             reverse=True,
         )
         target_values = value_advantages + batch.value

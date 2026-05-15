@@ -193,7 +193,9 @@ plots/
 data.zip
 .github/*
 
-tests/
+!tests/
+tests/*
+!tests/test_env_time_discounting.py
 jobs/
 jax_profiling_traces/
 FastTD3/

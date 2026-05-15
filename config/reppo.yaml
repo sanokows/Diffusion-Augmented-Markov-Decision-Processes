@@ -9,6 +9,7 @@ hyperparameters:
   total_time_steps: 50_000_000
   normalize_env: true
   normalize_reward: false
+  update_eval_normalizer_stats: false
   max_episode_steps: 1000
   eval_interval: 2
   num_eval: 20
@@ -25,6 +26,7 @@ hyperparameters:
   env_action_clip_value: 0.999
   action_clip_value: 0.999
   train_mode: "reparam" # "WPO"
+  deterministic_wpo_eval: false
   disable_wpo_fisher_preconditioning: false
   disable_temperature: false
 

@@ -5,8 +5,8 @@ hyperparameters:
   num_epochs: 8
   kl_bound: 0.05
   num_eval: 50
-  ent_target_mult: 0.5
+  ent_target_mult: 1.2
   aux_loss_mult: 0.05
-  lr: 6e-4
+  lr: 6e-3
   train_mode: "WPO"
   deterministic_wpo_eval: true

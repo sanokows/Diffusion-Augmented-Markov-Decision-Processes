@@ -46,6 +46,10 @@ from src.jaxrl.reppo_helpers.diffusion_index_sampling import (
     prepare_diffusion_importance_sampling,
     sample_minibatch_indices,
 )
+from src.jaxrl.reppo_helpers.env_time_discounting import (
+    maybe_env_time_discount_lambda,
+    maybe_env_time_value,
+)
 from src.jaxrl.reppo_helpers.rollout_aux_targets import build_rollout_aux_targets
 from src.networks.diffusion.models import ControlNetwork
 from src.networks.jax_models_DMERL import (
@@ -227,6 +231,7 @@ class ReppoConfig(struct.PyTreeNode):
     aux_loss_mult: float = 0.0
     aux_loss_alpha: float = 0.9
     use_final_step_reward_target: bool = False
+    use_env_time_discounting: bool = False
     update_kl_lagrangian: bool = True
     update_entropy_lagrangian: bool = True
     new_temp_mode: bool = False
@@ -927,8 +932,8 @@ class ReppoDMERLTrainer:
                 tx=critic_optimizer,
             )
 
-            params_actor = jax.tree.map(lambda x: x[0], actor_trainstate.params)
-            params_critic = jax.tree.map(lambda x: x[0], critic_trainstate.params)
+            # params_actor = jax.tree.map(lambda x: x[0], actor_trainstate.params)
+            # params_critic = jax.tree.map(lambda x: x[0], critic_trainstate.params)
             #print(params_actor)
             # jax.debug.print("Actor params: {params}", params=params_actor)
             # #print(params_critic)
@@ -1043,9 +1048,15 @@ class ReppoDMERLTrainer:
             next_gen_log_prob - next_dest_log_prob
         )
         temperature = _resolve_temperature(actor_model, self.cfg, inner_state)
+        soft_reward_discount = maybe_env_time_value(
+            obs,
+            self.cfg.gamma,
+            self.cfg.diffusion.diff_steps,
+            self.cfg.use_env_time_discounting,
+        )
         soft_reward = (
             reward
-            - self.cfg.gamma * log_ratio.squeeze() * temperature
+            - soft_reward_discount * log_ratio.squeeze() * temperature
         )
         transition = Transition(
             obs=obs,
@@ -1084,11 +1095,29 @@ class ReppoDMERLTrainer:
 
         # Build the TD-lambda scan body via the helper module so we avoid
         # defining tiny inner functions in the trainer.
-        nstep_fn = partial(
-            compute_nstep_lambda_step,
-            cfg.gamma,
-            cfg.lmbda,
-        )
+        if cfg.use_env_time_discounting:
+            discount, trace_decay = maybe_env_time_discount_lambda(
+                batch.obs,
+                cfg.gamma,
+                cfg.lmbda,
+                cfg.diffusion.diff_steps,
+                True,
+            )
+
+            def nstep_fn(carry, inputs):
+                transition, gamma_t, lmbda_t = inputs
+                return compute_nstep_lambda_step(
+                    gamma_t, lmbda_t, carry, transition
+                )
+
+            target_scan_inputs = (batch, discount, trace_decay)
+        else:
+            nstep_fn = partial(
+                compute_nstep_lambda_step,
+                cfg.gamma,
+                cfg.lmbda,
+            )
+            target_scan_inputs = batch
         _, target_values = jax.lax.scan(
             nstep_fn,
             (
@@ -1096,7 +1125,7 @@ class ReppoDMERLTrainer:
                 jnp.ones_like(batch.truncated[0]),
                 jnp.zeros_like(batch.importance_weight[0]),
             ),
-            batch,
+            target_scan_inputs,
             reverse=True,
         )
         # print min max and mean values of target_values for debugging

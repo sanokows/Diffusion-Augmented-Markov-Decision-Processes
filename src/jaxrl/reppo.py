@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import pickle
@@ -68,6 +69,42 @@ def _take_last_metrics(metrics: dict) -> dict:
         return x[-1] if x.ndim > 0 else x
 
     return jax.tree.map(_last, metrics)
+
+
+def _sectioned_wandb_key(key: str) -> str:
+    if key.startswith("/"):
+        key = key.lstrip("/")
+    if key == "sps":
+        return "sps"
+    if key.startswith("train/"):
+        suffix = key.split("/", 1)[1]
+        if suffix.startswith(("temp", "entropy", "target_entropy")):
+            return f"temperature/{suffix}"
+        if suffix.startswith(("lagrangian", "kl", "w2_kl")):
+            return f"lagrangian/{suffix}"
+        if suffix.startswith(("aux_loss", "rew_aux_loss")):
+            return f"aux_loss/{suffix}"
+        if suffix.startswith(
+            (
+                "value_loss",
+                "critic_update_loss",
+                "q",
+                "critic_gnorm",
+                "critic_pnorm",
+                "target_values",
+                "target_value_",
+            )
+        ):
+            return f"critic/{suffix}"
+        return f"train/{suffix}"
+    if key.startswith("eval/"):
+        suffix = key.split("/", 1)[1]
+        return f"eval/{suffix}"
+    return f"system/{key}"
+
+
+def _sectioned_wandb_log(log_data: dict) -> dict:
+    return {_sectioned_wandb_key(key): value for key, value in log_data.items()}
 
 
 def _assert_all_finite(name: str, array: jax.Array):
@@ -156,12 +193,14 @@ class ReppoConfig(struct.PyTreeNode):
     actor_kl_clip_mode: str = "clipped"
     use_lax_scan: bool = True
     train_mode: str = "reparam"
+    deterministic_wpo_eval: bool = False
     disable_wpo_fisher_preconditioning: bool = False
     disable_temperature: bool = False
     temperature_lr: float = 3e-4
     temperature_lr_mult: float = 1.0
     lagrangian_lr: float = 3e-4
     lagrangian_lr_mult: float = 1.0
+    update_eval_normalizer_stats: bool = False
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -186,11 +225,13 @@ def _resolve_temperature(actor_model, cfg) -> jax.Array:
 
 
 def make_policy(
-    train_state: SACTrainState, train_mode: str
+    train_state: SACTrainState,
+    train_mode: str,
+    deterministic_wpo_eval: bool = False,
 ) -> Callable[[jax.Array, jax.Array], tuple[jax.Array, dict]]:
     def policy(key: PRNGKey, obs: jax.Array) -> tuple[jax.Array, dict]:
         actor_model = nnx.merge(train_state.actor.graphdef, train_state.actor.params)
-        if train_mode == "WPO":
+        if train_mode == "WPO" and not deterministic_wpo_eval:
             action: jax.Array = actor_model.actor(obs).sample(seed=key)
         else:
             action: jax.Array = actor_model.det_action(obs)
@@ -446,8 +487,11 @@ def make_train_fn(
     # env = VecEnv(env, cfg.num_envs)
     if cfg.normalize_env:
         env = NormalizeVec(env, normalize_reward=cfg.normalize_reward)
+    eval_env = copy.deepcopy(env)
+    if cfg.normalize_env and hasattr(eval_env, "update_stats"):
+        eval_env.update_stats = cfg.update_eval_normalizer_stats
     eval_fn = make_eval_fn(
-        env,
+        eval_env,
         cfg.max_episode_steps,
         reward_scale=reward_scale,
     )
@@ -915,7 +959,7 @@ def make_train_fn(
                         else temperature
                     )
                     target_entropy_loss = (
-                        entropy_lagrangian * jax.lax.stop_gradient(target_entropy) - jax.lax.stop_gradient(entropy_lagrangian) * target_entropy
+                        entropy_lagrangian * jax.lax.stop_gradient(target_entropy) #- jax.lax.stop_gradient(entropy_lagrangian) * target_entropy
                     )
 
                     # Lagrangian constraint (follows temperature update)
@@ -954,6 +998,7 @@ def make_train_fn(
                         entropy=entropy,
                         entropy_lagrangian=entropy_lagrangian,
                         entropy_loss=target_entropy,
+                        target_entropy = action_size_target,
                         target_values=target_values.mean(),
                         actor_pnorm=actor_pnorm,
                         q_action_grad=q_action_grad,
@@ -1054,7 +1099,11 @@ def make_train_fn(
                 xs=jax.random.split(train_key, eval_interval),
             )
             train_metrics = jax.tree.map(lambda x: x[-1], train_metrics)
-            policy = make_policy(train_state, getattr(cfg, "train_mode", "reparam"))
+            policy = make_policy(
+                train_state,
+                getattr(cfg, "train_mode", "reparam"),
+                bool(getattr(cfg, "deterministic_wpo_eval", False)),
+            )
             if cfg.normalize_env:
                 norm_state = train_state.last_env_state
             else:
@@ -1171,7 +1220,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             "sps": sps,
             **jax.tree.map(jnp.mean, utils.filter_prefix("train", metrics)),
         }
-        wandb.log(log_data, step=state.time_steps[0])
+        wandb.log(_sectioned_wandb_log(log_data), step=state.time_steps[0])
 
     # Set up the experiment
     if cfg.env.type == "brax":

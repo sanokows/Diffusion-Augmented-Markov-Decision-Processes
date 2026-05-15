@@ -1,6 +1,9 @@
 
 
 
+### CheetahRun DMERL with environment-time discounting
+exec python -m src.jaxrl.reppo_DMERL_new env.name=AcrobotSwingup hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_env_time seed=0
+
 exec python -m src.jaxrl.reppo_DMERL_new env.name=FingerSpin hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule seed=0
 
 exec python -m src.jaxrl.reppo_DMERL_new env.name=FingerSpin hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 env=mjx_dmc experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule seed=1

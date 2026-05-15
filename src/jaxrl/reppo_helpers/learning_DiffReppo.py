@@ -98,12 +98,15 @@ def maybe_add_q_grad(
 
 
 def compute_nstep_lambda_step(
-    gamma: float,
-    lmbda: float,
+    gamma: float | jax.Array,
+    lmbda: float | jax.Array,
     carry: Tuple[jax.Array, jax.Array, jax.Array],
     transition,
 ):
-    """Single TD-lambda update for use inside a scan."""
+    """Single TD-lambda update for use inside a scan.
+
+    ``gamma`` and ``lmbda`` may be scalars or per-transition arrays.
+    """
     lambda_return, truncated, importance_weight = carry
     done = transition.done
     reward = transition.soft_reward
@@ -677,7 +680,7 @@ def actor_WPO_loss_fn(
         wpo_temperature_objective = _metric_scalar(actor_WPO_loss)
         normal_ent_reg = _metric_scalar(
             actor_model.temperature() * jax.lax.stop_gradient(target_entropy)
-            - jax.lax.stop_gradient(actor_model.temperature()) * target_entropy
+            #- jax.lax.stop_gradient(actor_model.temperature()) * target_entropy
         )
 
         lagrangian_loss = (

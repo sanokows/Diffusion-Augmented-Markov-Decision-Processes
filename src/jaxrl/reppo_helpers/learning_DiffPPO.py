@@ -26,6 +26,21 @@ def compute_nstep_lambda_step(gamma, lmbda, carry, transition):
     return (gae, value, transition.importance_weight), gae
 
 
+def compute_gae_step(gamma, lmbda, carry, transition):
+    """Single PPO GAE update; gamma/lambda may be scalar or per-transition."""
+    gae, next_value = carry
+    done = transition.done
+    truncated = transition.truncated
+    reward = transition.soft_reward
+    value = transition.value
+
+    delta = reward + gamma * next_value * (1 - done) - value
+    gae = delta + gamma * lmbda * (1 - done) * gae
+    truncated_gae = reward + gamma * next_value - value
+    gae = jnp.where(truncated, truncated_gae, gae)
+    return (gae, value), gae
+
+
 def critic_loss_fn(params, train_state, minibatch, target_values, cfg):
     critic_model = nnx.merge(train_state.critic.graphdef, params)
     value = critic_model.critic_cat(minibatch.critic_obs, minibatch.action).squeeze()

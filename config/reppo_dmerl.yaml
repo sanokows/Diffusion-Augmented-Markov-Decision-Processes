@@ -38,6 +38,7 @@ hyperparameters:
   # problem discount settings (need tuning)
   gamma: 0.99
   lmbda: 0.95
+  use_env_time_discounting: false
   lmbda_min: 0.50 # irrelevant if no exploration noise is added
 
   # batch settings (need tuning for MJX humanoid)
