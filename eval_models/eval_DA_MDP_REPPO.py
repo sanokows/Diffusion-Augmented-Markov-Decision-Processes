@@ -10,7 +10,7 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from src.env_utils.jax_wrappers import MjxGymnaxWrapper, MjxDiffEnvWrapper
-from src.jaxrl.reppo_DMERL_new import ReppoDMERLTrainer, ReppoConfig
+from src.jaxrl.DA_MDP_REPPO import ReppoDMERLTrainer, ReppoConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -65,7 +65,7 @@ def _build_env(cfg):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evaluate a saved reppo_DMERL_new model checkpoint."
+        description="Evaluate a saved DA_MDP_REPPO model checkpoint."
     )
     parser.add_argument(
         "--checkpoint",

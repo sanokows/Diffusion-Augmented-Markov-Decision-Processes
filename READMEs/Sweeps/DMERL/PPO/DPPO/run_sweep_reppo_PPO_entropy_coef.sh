@@ -78,7 +78,7 @@ launch_run() {
     fi
 
     echo "Starting env.name=$ENV_NAME entropy_coef=$ENTROPY_COEF num_seeds=$NUM_SEEDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
-    CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DiffPPO \
+    CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.DA_MDP_PPO \
         env.name="$ENV_NAME" \
         overrides=default \
         env=mjx_dmc \

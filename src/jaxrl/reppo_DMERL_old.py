@@ -35,7 +35,7 @@ from src.env_utils.jax_wrappers import (
 )
 from src.jaxrl import utils
 from src.jaxrl.reppo_helpers.learning_rates import resolve_special_lr
-from src.jaxrl.reppo_helpers.learning_DiffReppo import (
+from src.jaxrl.reppo_helpers.learning_DA_MDP_REPPO import (
     _resolve_temperature,
     actor_loss_fn,
     actor_WPO_loss_fn,
@@ -1579,7 +1579,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     for i in range(completed_trials, cfg.num_trials):
         cfg.seed = cfg.seed + i
         run_config = OmegaConf.to_container(cfg)
-        run_config["method_name"] = "reppo_DMERL_new"
+        run_config["method_name"] = "DA_MDP_REPPO"
         wandb.init(
             mode=cfg.wandb.mode,
             project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
@@ -1614,7 +1614,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     return (0.1 * sweep_metrics_array.mean() + sweep_metrics_array[:, -1].mean()).item()
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="reppo_dmerl")
+@hydra.main(version_base=None, config_path="../../config", config_name="DA_MDP_REPPO")
 def main(cfg: DictConfig):
     cfg.hyperparameters = OmegaConf.merge(
         cfg.hyperparameters, cfg.experiment_overrides.hyperparameters

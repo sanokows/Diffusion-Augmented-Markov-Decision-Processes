@@ -19,8 +19,8 @@ python READMEs/Timing/run_timing_benchmark.py \
   --method-experiment-overrides reppo:mjx_dmc_large_data \
   --method-experiment-overrides ppo:mjx_dmc_large_data \
   --method-experiment-overrides dime:mjx_dmc_large_data \
-  --method-experiment-overrides diffppo:mjx_dmc_large_data_DiffPPO_control \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-experiment-overrides diffppo:mjx_dmc_large_data_DA_MDP_PPO_control \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_no_temp \
   --method-diff-steps dime:8 \
   --method-diff-steps diffppo:8 \
   --method-diff-steps dmerl:8 \
@@ -35,7 +35,7 @@ exec python READMEs/Timing/run_timing_benchmark.py \
   --method-env dime:mjx_dmc \
   --method-env dmerl:mjx_dmc \
   --method-experiment-overrides dime:mjx_dmc_large_data \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_no_temp \
   --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 100000000  \
@@ -47,7 +47,7 @@ exec python READMEs/Timing/run_timing_benchmark.py \
   --env-names HopperHop,FishSwim \
   --methods dmerl \
   --method-env dmerl:mjx_dmc \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_no_temp \
   --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 100000000  \
@@ -59,7 +59,7 @@ exec python READMEs/Timing/run_timing_benchmark.py \
   --env-names HopperHop,FishSwim \
   --methods dmerl \
   --method-env dmerl:mjx_dmc \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_time \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_time \
   --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 100000000  \
@@ -74,7 +74,7 @@ exec python READMEs/Timing/run_timing_benchmark.py \
   --method-env dime:mjx_dmc \
   --method-env dmerl:mjx_dmc \
   --method-experiment-overrides dime:mjx_dmc_large_data \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_no_temp \
   --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 10000000  \
@@ -86,7 +86,7 @@ exec python READMEs/Timing/run_timing_benchmark.py \
   --env-names CheetahRun,WalkerRun \
   --methods dmerl \
   --method-env dmerl:mjx_dmc \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_no_temp \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_no_temp \
   --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 10000000  \
@@ -98,7 +98,7 @@ exec python READMEs/Timing/run_timing_benchmark.py \
   --env-names CheetahRun,WalkerRun \
   --methods dmerl \
   --method-env dmerl:mjx_dmc \
-  --method-experiment-overrides dmerl:mjx_dmc_large_data_dmerl_linear_schedule_time \
+  --method-experiment-overrides dmerl:mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_time \
   --method-diff-steps dime:8 \
   --method-diff-steps dmerl:8 \
   --total-time-steps 10000000  \

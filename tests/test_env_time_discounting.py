@@ -10,14 +10,14 @@ from src.jaxrl.reppo_helpers.env_time_discounting import (
     maybe_env_time_discount_lambda,
     maybe_env_time_value,
 )
-from src.jaxrl.reppo_helpers.learning_DiffPPO import compute_gae_step
-from src.jaxrl.reppo_helpers.learning_DiffReppo import (
+from src.jaxrl.reppo_helpers.learning_DA_MDP_PPO import compute_gae_step
+from src.jaxrl.reppo_helpers.learning_DA_MDP_REPPO import (
     reward_normalization_scale,
     scale_temperature_for_reward_normalization,
     compute_nstep_lambda_step,
 )
 from src.jaxrl.normalization import NormalizationState
-from src.jaxrl.reppo_DMERL_new import (
+from src.jaxrl.DA_MDP_REPPO import (
     _init_reward_normalization_window_state,
     _sectioned_wandb_key,
     _update_reward_normalization_window_state,

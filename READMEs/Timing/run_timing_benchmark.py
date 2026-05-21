@@ -22,8 +22,8 @@ METHOD_SPECS: dict[str, dict[str, Any]] = {
     "reppo": {"module": "src.jaxrl.reppo", "supports_diffusion_steps": False},
     "ppo": {"module": "src.jaxrl.reppo_PPO", "supports_diffusion_steps": False},
     "dime": {"module": "src.jaxrl.reppo_dime", "supports_diffusion_steps": True},
-    "diffppo": {"module": "src.jaxrl.reppo_DiffPPO", "supports_diffusion_steps": True},
-    "dmerl": {"module": "src.jaxrl.reppo_DMERL_new", "supports_diffusion_steps": True},
+    "diffppo": {"module": "src.jaxrl.DA_MDP_PPO", "supports_diffusion_steps": True},
+    "dmerl": {"module": "src.jaxrl.DA_MDP_REPPO", "supports_diffusion_steps": True},
 }
 
 

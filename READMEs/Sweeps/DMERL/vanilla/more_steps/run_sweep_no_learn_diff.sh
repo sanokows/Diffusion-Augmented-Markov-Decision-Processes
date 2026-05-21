@@ -115,7 +115,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             env=mjx_dmc \
             num_trials=8 \
             seed=0 \
-            experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_more_steps &
+            experiment_overrides=DA_MDP_REPPO/mjx_dmc_large_data_DA_MDP_REPPO_more_steps &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done

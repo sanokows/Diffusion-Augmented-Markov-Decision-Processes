@@ -5,7 +5,7 @@ ENV_NAME=AcrobotSwingupSparse
 NUM_EVAL=50
 TOTAL_TIME_STEPS=50000000
 DIFF_STEPS=8
-EXPERIMENT_OVERRIDES=dmerl/mjx_dmc_large_data_dmerl_linear_schedule_no_temp
+EXPERIMENT_OVERRIDES=DA_MDP_REPPO/mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule_no_temp
 ENT_TARGET_MULT=4
 USE_FINAL_STEP_REWARD_TARGET=true
 
@@ -59,7 +59,7 @@ for AUX_LOSS_MULT in "${AUX_LOSS_MULT_VALUES[@]}"; do
             wait "${GPU_PIDS[$GPU_ID]}"
         fi
         echo "Starting env.name=$ENV_NAME seed=$SEED aux_loss_mult=$AUX_LOSS_MULT on GPU $GPU_ID..."
-        CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DMERL_new \
+        CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.DA_MDP_REPPO \
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_sparse_test" \
             hyperparameters.num_eval="$NUM_EVAL" \

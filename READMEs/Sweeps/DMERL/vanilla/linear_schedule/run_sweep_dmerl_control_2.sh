@@ -44,7 +44,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
         echo "Starting env.name=$ENV_NAME seed=$SEED on GPU $GPU_ID..."
         build_run_paths "$GPU_ID" "$ENV_NAME" "$SEED"
         echo "Run directory: $RUN_DIR"
-        WANDB_DIR="$WANDB_RUN_DIR" CUDA_VISIBLE_DEVICES="$GPU_ID" python -m src.jaxrl.reppo_DMERL_new \
+        WANDB_DIR="$WANDB_RUN_DIR" CUDA_VISIBLE_DEVICES="$GPU_ID" python -m src.jaxrl.DA_MDP_REPPO \
             env.name="$ENV_NAME" \
             wandb.project_suffix="_FR_REPPO_05_05" \
             hyperparameters.num_eval=50 \
@@ -54,7 +54,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
             seed="$SEED" \
             num_trials=1 \
             hydra.run.dir="$RUN_DIR" \
-            experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_linear_schedule &
+            experiment_overrides=DA_MDP_REPPO/mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule &
         GPU_PIDS[$GPU_ID]=$!
         GPU_INDEX=$((GPU_INDEX + 1))
     done

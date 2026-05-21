@@ -17,7 +17,7 @@ from flax import nnx
 from omegaconf import OmegaConf
 
 from src.env_utils.jax_wrappers import MjxDiffEnvWrapper, MjxGymnaxWrapper
-from src.jaxrl.reppo_DMERL_new import ReppoConfig, ReppoDMERLTrainer
+from src.jaxrl.DA_MDP_REPPO import ReppoConfig, ReppoDMERLTrainer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -538,7 +538,7 @@ def _save_episode_return_plot(results_by_sampler: dict[str, list[dict[str, float
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate reppo_DMERL_new checkpoints with score/Q-gradient interpolation. "
+            "Evaluate DA_MDP_REPPO checkpoints with score/Q-gradient interpolation. "
             "Guided score: (1-alpha)*score + alpha*dt*(grad_log_p + (1/T)*grad_a Q)."
         )
     )

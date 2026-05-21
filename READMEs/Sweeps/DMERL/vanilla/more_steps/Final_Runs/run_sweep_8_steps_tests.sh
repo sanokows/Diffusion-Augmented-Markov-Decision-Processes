@@ -113,7 +113,7 @@ launch_run() {
         wait "${GPU_PIDS[$GPU_SLOT]}"
     fi
     echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP num_mini_batches=$NUM_MINI_BATCHES gamma=$GAMMA lmbda=$LMBDA reward_normalization_mode=$REWARD_NORMALIZATION_MODE reward_normalization_window_rollouts=$REWARD_NORMALIZATION_WINDOW_ROLLOUT vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR num_bins=$NUM_BINS adaptive_hl_gauss_bounds=$ADAPTIVE_HL_GAUSS_BOUNDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
-    CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
+    CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.DA_MDP_REPPO \
         env.name="$ENV_NAME" \
         wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
         hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
@@ -131,7 +131,7 @@ launch_run() {
         hyperparameters.adaptive_hl_gauss_bounds="$ADAPTIVE_HL_GAUSS_BOUNDS" \
         env=mjx_humanoid_dime \
         num_trials=1 \
-        experiment_overrides=dmerl/mjx_humanoid_large_data_DMERL &
+        experiment_overrides=DA_MDP_REPPO/mjx_humanoid_large_data_DA_MDP_REPPO &
     GPU_PIDS[$GPU_SLOT]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 }

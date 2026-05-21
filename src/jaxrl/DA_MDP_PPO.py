@@ -58,7 +58,7 @@ from src.jaxrl.reppo_helpers.env_time_discounting import (
     maybe_env_time_discount_lambda,
     maybe_env_time_value,
 )
-from src.jaxrl.reppo_helpers.learning_DiffPPO import compute_gae_step
+from src.jaxrl.reppo_helpers.learning_DA_MDP_PPO import compute_gae_step
 from src.jaxrl.reppo_DMERL_old import randomize_env_steps
 
 
@@ -625,7 +625,7 @@ class PPONetworks(nnx.Module):
             )
         if not critic_use_normed_actions:
             raise ValueError(
-                "reppo_DiffPPO requires `critic_use_normed_actions=True`. "
+                "DA_MDP_PPO requires `critic_use_normed_actions=True`. "
                 "Set `hyperparameters.critic_use_normed_actions: true` in config."
             )
         self.actor_module = DMERLActor(
@@ -1933,7 +1933,7 @@ def run(cfg: DictConfig):
     for i in range(cfg.trials):
         key, train_key = jax.random.split(key)
         run_config = OmegaConf.to_container(cfg)
-        run_config["method_name"] = "reppo_DiffPPO"
+        run_config["method_name"] = "DA_MDP_PPO"
         wandb.init(
             mode=cfg.wandb.mode,
             project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
@@ -1951,7 +1951,7 @@ def run(cfg: DictConfig):
         # Export final weights into repo_root/saved_models with a descriptive filename.
         try:
             final_metrics = _take_last_metrics(metrics)
-            method_name = "reppo_DiffPPO"
+            method_name = "DA_MDP_PPO"
             env_name = str(cfg.env.name)
             train_mode = _resolve_train_mode(cfg)
             timestamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
@@ -2042,7 +2042,7 @@ def tune(cfg: DictConfig):
         run_cfg = OmegaConf.to_container(cfg)
         for k, v in dict(wandb.config).items():
             run_cfg["hyperparameters"][k] = v
-        wandb.config.update({"method_name": "reppo_DiffPPO"}, allow_val_change=True)
+        wandb.config.update({"method_name": "DA_MDP_PPO"}, allow_val_change=True)
         ppo_cfg = PPOConfig(**run_cfg["hyperparameters"])
         trainer = ReppoPPOTrainer(
             cfg=ppo_cfg,
@@ -2077,7 +2077,7 @@ def tune(cfg: DictConfig):
     wandb.agent(sweep_id, function=train_agent, count=cfg.tune.num_runs)
 
 
-@hydra.main(version_base=None, config_path="../../config/diffppo", config_name="default")
+@hydra.main(version_base=None, config_path="../../config/DA_MDP_PPO", config_name="default")
 def main(cfg: DictConfig):
     diffppo_overrides = _extract_hyperparameter_overrides(cfg, "overrides")
     diffppo_features = _extract_hyperparameter_overrides(cfg, "features")

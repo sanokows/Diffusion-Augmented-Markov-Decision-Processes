@@ -63,12 +63,40 @@ class PreparedMethod:
     entropy_coef: float | None = None
 
 
+_DA_MDP_PPO_METHOD_NAMES = {"da_mdp_ppo", "reppo_diffppo"}
+_DA_MDP_REPPO_METHOD_NAMES = {"da_mdp_reppo", "reppo_dmerl_new"}
+_DA_MDP_WPO_METHOD_NAMES = {"da_mdp_wpo", "dmerl_wpo", "dme_wpo"}
+
+
+def _canonical_method_name(method_name: str) -> str:
+    method_lower = str(method_name).lower()
+    if method_lower in _DA_MDP_PPO_METHOD_NAMES:
+        return "DA_MDP_PPO"
+    if method_lower in _DA_MDP_WPO_METHOD_NAMES:
+        return "DA_MDP_WPO"
+    if method_lower in _DA_MDP_REPPO_METHOD_NAMES:
+        return "DA_MDP_REPPO"
+    return str(method_name)
+
+
+def _is_da_mdp_ppo_method(method_name: str) -> bool:
+    return str(method_name).lower() in _DA_MDP_PPO_METHOD_NAMES
+
+
+def _is_da_mdp_reppo_method(method_name: str) -> bool:
+    return str(method_name).lower() in _DA_MDP_REPPO_METHOD_NAMES
+
+
+def _is_da_mdp_wpo_method(method_name: str) -> bool:
+    return str(method_name).lower() in _DA_MDP_WPO_METHOD_NAMES
+
+
 FULL_METHOD_SLOTS: tuple[str, ...] = (
     "reppo",
     "diffppo_zero",
     "diffppo",
     "dmerl",
-    "dmerl_wpo",
+    "da_mdp_wpo",
     "dime",
 )
 CORE4_METHOD_SLOTS: tuple[str, ...] = (
@@ -108,15 +136,17 @@ def _detect_method_name(checkpoint: dict[str, Any], cfg) -> str:
     method_name = checkpoint.get("method_name", None)
     if method_name is None:
         if OmegaConf.select(cfg, "hyperparameters.diffusion") is not None:
-            if str(OmegaConf.select(cfg, "name") or "").lower() == "diff_ppo":
-                method_name = "reppo_DiffPPO"
+            if str(OmegaConf.select(cfg, "name") or "").lower() in {"diff_ppo", "da_mdp_ppo"}:
+                method_name = "DA_MDP_PPO"
             elif OmegaConf.select(cfg, "hyperparameters.temperature_lagragian_lr") is not None:
                 method_name = "reppo_dime"
+            elif str(OmegaConf.select(cfg, "hyperparameters.train_mode") or "").upper() == "WPO":
+                method_name = "DA_MDP_WPO"
             else:
-                method_name = "reppo_DMERL_new"
+                method_name = "DA_MDP_REPPO"
         else:
             method_name = "reppo"
-    return str(method_name)
+    return _canonical_method_name(str(method_name))
 
 
 def _load_checkpoint_and_cfg(
@@ -181,7 +211,7 @@ def _autodetect_diffppo_zero_checkpoint(
 
     search_dir = os.path.dirname(base_abs) or "."
     candidate_paths = sorted(
-        glob.glob(os.path.join(search_dir, f"reppo_DiffPPO__{base_env}__*.pkl"))
+        glob.glob(os.path.join(search_dir, f"DA_MDP_PPO__{base_env}__*.pkl"))
     )
     if not candidate_paths:
         candidate_paths = sorted(glob.glob(os.path.join(search_dir, "*.pkl")))
@@ -199,7 +229,7 @@ def _autodetect_diffppo_zero_checkpoint(
                 continue
             cfg = OmegaConf.create(cfg_dict)
             method_name = _detect_method_name(ckpt, cfg).lower()
-            if method_name != "reppo_diffppo":
+            if method_name != "da_mdp_ppo":
                 continue
             env_name = str(OmegaConf.select(cfg, "env.name") or "")
             if env_name != base_env:
@@ -286,7 +316,7 @@ def _resolve_diffppo_pair(
             horizon=horizon,
             env_config_overrides=env_config_overrides,
         )
-        if method_name.lower() != "reppo_diffppo":
+        if method_name.lower() != "da_mdp_ppo":
             continue
         ent = OmegaConf.select(cfg, "hyperparameters.entropy_coef")
         ent_f = float(ent) if ent is not None else None
@@ -399,7 +429,7 @@ def _prepare_dmerl(
     method_name: str,
     train_mode: str,
 ) -> PreparedMethod:
-    from src.jaxrl.reppo_DMERL_new import ReppoConfig, ReppoDMERLTrainer
+    from src.jaxrl.DA_MDP_REPPO import ReppoConfig, ReppoDMERLTrainer
 
     horizon = int(cfg.env.max_episode_steps)
     base_env = esm._build_base_env(cfg, horizon=horizon)
@@ -473,7 +503,7 @@ def _prepare_diffppo(
     method_name: str,
     train_mode: str,
 ) -> PreparedMethod:
-    from src.jaxrl.reppo_DiffPPO import PPOConfig, ReppoPPOTrainer
+    from src.jaxrl.DA_MDP_PPO import PPOConfig, ReppoPPOTrainer
 
     if not bool(OmegaConf.select(cfg, "hyperparameters.critic_use_normed_actions")):
         logging.warning(
@@ -728,9 +758,9 @@ def _prepare_method(spec: MethodSpec, args) -> PreparedMethod:
     _require_turning_double_well(cfg, checkpoint=spec.checkpoint)
 
     method_name_lower = method_name.lower()
-    if method_name_lower == "reppo_dmerl_new":
+    if method_name_lower in {"da_mdp_reppo", "da_mdp_wpo"}:
         return _prepare_dmerl(spec, checkpoint, cfg, method_name, train_mode)
-    if method_name_lower == "reppo_diffppo":
+    if method_name_lower == "da_mdp_ppo":
         return _prepare_diffppo(spec, checkpoint, cfg, method_name, train_mode)
     if "dime" in method_name_lower:
         return _prepare_dime(spec, checkpoint, cfg, method_name, train_mode)
@@ -745,7 +775,7 @@ def _resolve_sampler(method: PreparedMethod) -> str:
     method_name_lower = method.method_name.lower()
     env_name = OmegaConf.select(method.cfg, "env.name")
 
-    if method_name_lower == "reppo_dmerl_new":
+    if method_name_lower in {"da_mdp_reppo", "da_mdp_wpo"}:
         if sampler == "auto":
             return esm._resolve_dmerl_sampler_auto(
                 train_mode=method.train_mode,
@@ -753,7 +783,7 @@ def _resolve_sampler(method: PreparedMethod) -> str:
             )
         return sampler
 
-    if method_name_lower == "reppo_diffppo":
+    if method_name_lower == "da_mdp_ppo":
         if sampler == "auto":
             return "sde" if str(method.train_mode or "").upper() == "WPO" else "ode"
         return sampler
@@ -789,7 +819,7 @@ def _sample_actions_for_method(
 
     sampled_per_state: list[np.ndarray] = []
 
-    if method_name_lower == "reppo_dmerl_new":
+    if method_name_lower in {"da_mdp_reppo", "da_mdp_wpo"}:
         sampler_mode = _resolve_sampler(method)
         diff_steps = int(getattr(method.actor_model, "diff_steps", 1))
         if diff_steps <= 0:
@@ -836,7 +866,7 @@ def _sample_actions_for_method(
             sampled_actions = jnp.tanh(current_x)
             sampled_per_state.append(np.asarray(jax.device_get(sampled_actions)).reshape(-1))
 
-    elif method_name_lower == "reppo_diffppo":
+    elif method_name_lower == "da_mdp_ppo":
         sampler_mode = _resolve_sampler(method)
         model = method.actor_model
         diff_steps = int(getattr(model.actor_module, "diff_steps", 1))
@@ -967,7 +997,7 @@ def _collect_trajectory_samples_for_method(
     )
     method_name_lower = method.method_name.lower()
 
-    if method_name_lower == "reppo_dmerl_new":
+    if method_name_lower in {"da_mdp_reppo", "da_mdp_wpo"}:
         if method.train_state is None:
             raise ValueError(f"Missing train_state for DMERL method: {method.spec.slot}")
         return esm._collect_dmerl_trajectories(
@@ -982,7 +1012,7 @@ def _collect_trajectory_samples_for_method(
             train_mode=method.train_mode,
         )
 
-    if method_name_lower == "reppo_diffppo":
+    if method_name_lower == "da_mdp_ppo":
         if method.train_state is None:
             raise ValueError(f"Missing train_state for DiffPPO method: {method.spec.slot}")
         return esm._collect_diffppo_trajectories(
@@ -1277,14 +1307,25 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("--checkpoint-dmerl", required=True)
-    p.add_argument("--checkpoint-dmerl-wpo", required=True)
+    p.add_argument(
+        "--checkpoint-da-mdp-wpo",
+        "--checkpoint-dmerl-wpo",
+        dest="checkpoint_da_mdp_wpo",
+        required=True,
+    )
     p.add_argument("--checkpoint-dime", required=True)
 
     p.add_argument("--sampler-reppo", default="auto", choices=["auto", "sde", "ode"])
     p.add_argument("--sampler-diffppo", default="sde", choices=["auto", "sde", "ode"])
     p.add_argument("--sampler-diffppo-zero", default="ode", choices=["auto", "sde", "ode"])
     p.add_argument("--sampler-dmerl", default="auto", choices=["auto", "sde", "ode"])
-    p.add_argument("--sampler-dmerl-wpo", default="auto", choices=["auto", "sde", "ode"])
+    p.add_argument(
+        "--sampler-da-mdp-wpo",
+        "--sampler-dmerl-wpo",
+        dest="sampler_da_mdp_wpo",
+        default="auto",
+        choices=["auto", "sde", "ode"],
+    )
     p.add_argument("--sampler-dime", default="auto", choices=["auto", "sde", "ode"])
 
     p.add_argument("--seed-idx", type=int, default=0)
@@ -1384,7 +1425,12 @@ def main() -> None:
         ),
         "diffppo": MethodSpec("diffppo", "DA-MDP: PPO", diffppo_ckpt, args.sampler_diffppo),
         "dmerl": MethodSpec("dmerl", "DA-MDP: REPPO", args.checkpoint_dmerl, args.sampler_dmerl),
-        "dmerl_wpo": MethodSpec("dmerl_wpo", "DA-MDP: WPO", args.checkpoint_dmerl_wpo, args.sampler_dmerl_wpo),
+        "da_mdp_wpo": MethodSpec(
+            "da_mdp_wpo",
+            "DA-MDP WPO",
+            args.checkpoint_da_mdp_wpo,
+            args.sampler_da_mdp_wpo,
+        ),
         "dime": MethodSpec("dime", "DIME", args.checkpoint_dime, args.sampler_dime),
     }
     specs = _ordered_from_slots_by_slot(

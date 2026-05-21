@@ -376,17 +376,36 @@ def _method_display_name(
 ) -> str:
     method_lower = str(method_name).lower()
     mode_upper = str(train_mode or "").upper()
-    if "diffppo" in method_lower:
+    if _is_da_mdp_ppo_method(method_lower) or "diffppo" in method_lower:
         if entropy_coef is not None and abs(float(entropy_coef)) <= 1e-12:
             return "DPPO (DME-PPO temp = 0)"
         return "DME-PPO"
     if "dime" in method_lower:
         return "REPPO-DIME"
-    if "dmerl" in method_lower:
+    if _is_da_mdp_wpo_method(method_lower):
+        return "DA-MDP WPO"
+    if _is_da_mdp_reppo_method(method_lower) or "dmerl" in method_lower:
         if mode_upper == "WPO":
-            return "DME-WPO"
+            return "DA-MDP WPO"
         return "DME-REPPO"
     return "REPPO"
+
+
+_DA_MDP_PPO_METHOD_NAMES = {"da_mdp_ppo", "reppo_diffppo"}
+_DA_MDP_REPPO_METHOD_NAMES = {"da_mdp_reppo", "reppo_dmerl_new"}
+_DA_MDP_WPO_METHOD_NAMES = {"da_mdp_wpo", "dmerl_wpo", "dme_wpo"}
+
+
+def _is_da_mdp_ppo_method(method_name: str) -> bool:
+    return str(method_name).lower() in _DA_MDP_PPO_METHOD_NAMES
+
+
+def _is_da_mdp_reppo_method(method_name: str) -> bool:
+    return str(method_name).lower() in _DA_MDP_REPPO_METHOD_NAMES
+
+
+def _is_da_mdp_wpo_method(method_name: str) -> bool:
+    return str(method_name).lower() in _DA_MDP_WPO_METHOD_NAMES
 
 
 def _resolve_train_mode(checkpoint: dict[str, Any], cfg) -> str:
@@ -760,7 +779,7 @@ def _tdw_action_analysis_dmerl(
     actor_model,
     critic_model,
     norm_state,
-    method_name: str = "reppo_DMERL_new",
+    method_name: str = "DA_MDP_REPPO",
     train_mode: str | None = None,
     out_path: str | None,
     num_samples: int,
@@ -1093,7 +1112,7 @@ def _tdw_action_analysis_diffppo(
     checkpoint_path: str,
     model,
     norm_state,
-    method_name: str = "reppo_DiffPPO",
+    method_name: str = "DA_MDP_PPO",
     train_mode: str | None = None,
     out_path: str | None,
     num_samples: int,
@@ -1875,7 +1894,7 @@ def _render_mjx_rollout_grid_dmerl(
     follow_body: str | None,
     render_format: str,
 ) -> None:
-    from src.jaxrl.reppo_helpers.learning_DiffReppo import maybe_add_q_grad
+    from src.jaxrl.reppo_helpers.learning_DA_MDP_REPPO import maybe_add_q_grad
 
     cfg_render = cfg
     if int(num_envs) != int(cfg.hyperparameters.num_envs):
@@ -2713,10 +2732,15 @@ def _render_turning_double_well_reppo(
         method_name, train_mode=train_mode, entropy_coef=entropy_coef
     )
     method_lower = str(method_name).lower()
-    is_diffppo = method_lower == "reppo_diffppo"
+    is_diffppo = _is_da_mdp_ppo_method(method_lower)
     if is_diffppo:
         method_display = _diffppo_plot_title_name(entropy_coef)
-    is_dmerl = ("dmerl" in method_lower and "dime" not in method_lower) or is_diffppo
+    is_dmerl = (
+        _is_da_mdp_reppo_method(method_lower)
+        or _is_da_mdp_wpo_method(method_lower)
+        or ("dmerl" in method_lower and "dime" not in method_lower)
+        or is_diffppo
+    )
     is_dime = "dime" in str(method_name).lower()
     sampler = str(diffusion_sampler or "auto").lower()
     if sampler not in ("auto", "sde", "ode"):
@@ -2880,7 +2904,7 @@ def _render_turning_double_well_reppo(
             if (step_idx + 1) % diff_steps == 0:
                 states.append(_state_to_numpy(_unwrap_env_state(env_state)))
     elif is_dmerl:
-        from src.jaxrl.reppo_helpers.learning_DiffReppo import maybe_add_q_grad
+        from src.jaxrl.reppo_helpers.learning_DA_MDP_REPPO import maybe_add_q_grad
 
         diff_cfg = cfg_render.hyperparameters.diffusion
         diff_steps = int(diff_cfg.diff_steps)
@@ -3125,10 +3149,10 @@ def _collect_dmerl_trajectories(
     diffusion_sampler: str,
     train_mode: str,
 ) -> dict[str, np.ndarray]:
-    from src.jaxrl.reppo_helpers.learning_DiffReppo import maybe_add_q_grad
+    from src.jaxrl.reppo_helpers.learning_DA_MDP_REPPO import maybe_add_q_grad
 
     _progress(
-        f"[reppo_DMERL_new] Collecting state trajectories: repeats={int(repeats)}, "
+        f"[DA_MDP_REPPO] Collecting state trajectories: repeats={int(repeats)}, "
         f"num_envs={int(num_envs)}, horizon={int(horizon)}"
     )
     hp = cfg.hyperparameters
@@ -3170,7 +3194,7 @@ def _collect_dmerl_trajectories(
     obs_runs: list[np.ndarray] = []
 
     for rep in range(int(repeats)):
-        _progress(f"[reppo_DMERL_new] Trajectory repeat {rep + 1}/{int(repeats)}")
+        _progress(f"[DA_MDP_REPPO] Trajectory repeat {rep + 1}/{int(repeats)}")
         key = jax.random.PRNGKey(int(seed) + rep)
         key, init_key = jax.random.split(key)
         init_keys = jax.random.split(init_key, int(num_envs))
@@ -3219,7 +3243,7 @@ def _collect_diffppo_trajectories(
     diffusion_sampler: str,
 ) -> dict[str, np.ndarray]:
     _progress(
-        f"[reppo_DiffPPO] Collecting state trajectories: repeats={int(repeats)}, "
+        f"[DA_MDP_PPO] Collecting state trajectories: repeats={int(repeats)}, "
         f"num_envs={int(num_envs)}, horizon={int(horizon)}"
     )
     hp = cfg.hyperparameters
@@ -3250,7 +3274,7 @@ def _collect_diffppo_trajectories(
     obs_runs: list[np.ndarray] = []
 
     for rep in range(int(repeats)):
-        _progress(f"[reppo_DiffPPO] Trajectory repeat {rep + 1}/{int(repeats)}")
+        _progress(f"[DA_MDP_PPO] Trajectory repeat {rep + 1}/{int(repeats)}")
         key = jax.random.PRNGKey(int(seed) + rep)
         key, init_key = jax.random.split(key)
         init_keys = jax.random.split(init_key, int(num_envs))
@@ -3605,11 +3629,11 @@ def _eval_reppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
     return metrics
 
 
-def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
+def _eval_da_mdp_reppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
     # Lazy import: DMERL pulls in extra modules.
-    from src.jaxrl.reppo_DMERL_new import ReppoDMERLTrainer, ReppoConfig
+    from src.jaxrl.DA_MDP_REPPO import ReppoDMERLTrainer, ReppoConfig
 
-    _progress("[reppo_DMERL_new] Preparing evaluation")
+    _progress("[DA_MDP_REPPO] Preparing evaluation")
     horizon = int(cfg.env.max_episode_steps)
     base_env = _build_base_env(cfg, horizon=horizon)
     diff_cfg = cfg.hyperparameters.diffusion
@@ -3657,7 +3681,7 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
     )
     if not bool(cfg.hyperparameters.normalize_env):
         norm_state = None
-    method_name = str(checkpoint.get("method_name", "reppo_DMERL_new"))
+    method_name = str(checkpoint.get("method_name", "DA_MDP_REPPO"))
     train_mode = _resolve_train_mode(checkpoint, cfg)
 
     if bool(getattr(args, "tdw_action_analysis", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
@@ -3733,7 +3757,7 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
                 str(cfg.env.name),
             )
 
-    _progress("[reppo_DMERL_new] Running evaluation metrics")
+    _progress("[DA_MDP_REPPO] Running evaluation metrics")
     eval_key = jax.random.PRNGKey(123)
     sampler_arg = str(getattr(args, "diffusion_sampler", "auto")).lower()
     if sampler_arg not in ("auto", "sde", "ode"):
@@ -3776,7 +3800,7 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
 
     metrics = eval_fn(eval_key, train_state, norm_state)
     metrics = jax.tree.map(lambda x: float(np.asarray(x)), metrics)
-    _progress("[reppo_DMERL_new] Evaluation metrics complete")
+    _progress("[DA_MDP_REPPO] Evaluation metrics complete")
     if bool(getattr(args, "collect_trajectories", False)):
         traj_num_envs = (
             int(getattr(args, "traj_num_envs"))
@@ -3790,7 +3814,7 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
             else cfg
         )
         _progress(
-            f"[reppo_DMERL_new] Starting trajectory collection (X={traj_num_envs}, Y={traj_repeats})"
+            f"[DA_MDP_REPPO] Starting trajectory collection (X={traj_num_envs}, Y={traj_repeats})"
         )
         traj = _collect_dmerl_trajectories(
             cfg=cfg_collect,
@@ -3820,11 +3844,11 @@ def _eval_reppo_dmerl_new(checkpoint: dict[str, Any], cfg, args) -> dict[str, An
     return metrics
 
 
-def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
+def _eval_da_mdp_ppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
     # Lazy import: DiffPPO pulls in extra modules.
-    from src.jaxrl.reppo_DiffPPO import PPOConfig, ReppoPPOTrainer
+    from src.jaxrl.DA_MDP_PPO import PPOConfig, ReppoPPOTrainer
 
-    _progress("[reppo_DiffPPO] Preparing evaluation")
+    _progress("[DA_MDP_PPO] Preparing evaluation")
     hp = cfg.hyperparameters
     horizon = int(cfg.env.max_episode_steps)
     base_env = _build_base_env(cfg, horizon=horizon)
@@ -3853,7 +3877,7 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
     if params is None:
         raise ValueError(
             "DiffPPO checkpoint is missing `params`. Re-train with the updated "
-            "`src/jaxrl/reppo_DiffPPO.py` checkpoint exporter."
+            "`src/jaxrl/DA_MDP_PPO.py` checkpoint exporter."
         )
     params = _select_seed(params, seed_idx, num_seeds)
 
@@ -3892,7 +3916,7 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
         ),
     )
 
-    method_name = str(checkpoint.get("method_name", "reppo_DiffPPO"))
+    method_name = str(checkpoint.get("method_name", "DA_MDP_PPO"))
     train_mode = _resolve_train_mode(checkpoint, cfg)
 
     if bool(getattr(args, "tdw_action_analysis", False)) and str(cfg.env.name) == "TurningDoubleWellEnv":
@@ -3966,7 +3990,7 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
                 str(cfg.env.name),
             )
 
-    _progress("[reppo_DiffPPO] Running evaluation metrics")
+    _progress("[DA_MDP_PPO] Running evaluation metrics")
     sampler = str(getattr(args, "diffusion_sampler", "auto")).lower()
     if sampler not in ("auto", "sde", "ode"):
         raise ValueError(f"Unknown --diffusion-sampler: {sampler}")
@@ -3986,7 +4010,7 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
     eval_key = jax.random.PRNGKey(123)
     metrics = trainer.eval_fn(eval_key, policy)
     metrics = jax.tree.map(lambda x: float(np.asarray(x)), metrics)
-    _progress("[reppo_DiffPPO] Evaluation metrics complete")
+    _progress("[DA_MDP_PPO] Evaluation metrics complete")
     if bool(getattr(args, "collect_trajectories", False)):
         traj_num_envs = (
             int(getattr(args, "traj_num_envs"))
@@ -4000,7 +4024,7 @@ def _eval_reppo_diffppo(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]
             else cfg
         )
         _progress(
-            f"[reppo_DiffPPO] Starting trajectory collection (X={traj_num_envs}, Y={traj_repeats})"
+            f"[DA_MDP_PPO] Starting trajectory collection (X={traj_num_envs}, Y={traj_repeats})"
         )
         traj = _collect_diffppo_trajectories(
             cfg=cfg_collect,
@@ -4398,7 +4422,7 @@ def _eval_reppo_dime(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evaluate a saved model checkpoint (reppo, reppo_DMERL_new, reppo_DiffPPO, or reppo_dime)."
+        description="Evaluate a saved model checkpoint (reppo, DA_MDP_REPPO, DA_MDP_PPO, or reppo_dime)."
     )
     parser.add_argument("--checkpoint", required=True, help="Path to a .pkl checkpoint under saved_models/.")
     parser.add_argument("--seed-idx", type=int, default=0, help="Which trained seed index (when checkpoint contains multiple seeds).")
@@ -4420,7 +4444,7 @@ def main() -> None:
         choices=["auto", "sde", "ode"],
         default="auto",
         help=(
-            "For diffusion-based methods (reppo_DMERL_new, reppo_DiffPPO, reppo_dime), choose whether actions are sampled via the SDE or ODE path during evaluation (and TurningDoubleWell rendering). 'auto' keeps the method default."
+            "For diffusion-based methods (DA_MDP_REPPO, DA_MDP_PPO, reppo_dime), choose whether actions are sampled via the SDE or ODE path during evaluation (and TurningDoubleWell rendering). 'auto' keeps the method default."
         ),
     )
     parser.add_argument(
@@ -4682,12 +4706,14 @@ def main() -> None:
     if method_name is None:
         # Heuristic fallback for older checkpoints that don't store method_name.
         if OmegaConf.select(cfg, "hyperparameters.diffusion") is not None:
-            if str(OmegaConf.select(cfg, "name") or "").lower() == "diff_ppo":
-                method_name = "reppo_DiffPPO"
+            if str(OmegaConf.select(cfg, "name") or "").lower() in {"diff_ppo", "da_mdp_ppo"}:
+                method_name = "DA_MDP_PPO"
             elif OmegaConf.select(cfg, "hyperparameters.temperature_lagragian_lr") is not None:
                 method_name = "reppo_dime"
+            elif str(OmegaConf.select(cfg, "hyperparameters.train_mode") or "").upper() == "WPO":
+                method_name = "DA_MDP_WPO"
             else:
-                method_name = "reppo_DMERL_new"
+                method_name = "DA_MDP_REPPO"
         else:
             method_name = "reppo"
     method_name = str(method_name)
@@ -4697,12 +4723,12 @@ def main() -> None:
         f"Effective env={cfg.env.name} type={cfg.env.type} horizon={cfg.env.max_episode_steps}"
     )
 
-    if method_name_lower == "reppo_dmerl_new":
-        _progress("Dispatching to reppo_DMERL_new evaluator")
-        metrics = _eval_reppo_dmerl_new(checkpoint, cfg, args)
-    elif method_name_lower == "reppo_diffppo":
-        _progress("Dispatching to reppo_DiffPPO evaluator")
-        metrics = _eval_reppo_diffppo(checkpoint, cfg, args)
+    if _is_da_mdp_reppo_method(method_name_lower) or _is_da_mdp_wpo_method(method_name_lower):
+        _progress("Dispatching to DA_MDP_REPPO evaluator")
+        metrics = _eval_da_mdp_reppo(checkpoint, cfg, args)
+    elif _is_da_mdp_ppo_method(method_name_lower):
+        _progress("Dispatching to DA_MDP_PPO evaluator")
+        metrics = _eval_da_mdp_ppo(checkpoint, cfg, args)
     elif "dime" in method_name_lower:
         _progress("Dispatching to reppo_dime evaluator")
         metrics = _eval_reppo_dime(checkpoint, cfg, args)

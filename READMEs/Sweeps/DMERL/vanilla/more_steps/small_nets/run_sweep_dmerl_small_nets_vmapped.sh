@@ -106,7 +106,7 @@ launch_run() {
     fi
 
     echo "Starting env.name=$ENV_NAME diff_steps=$DIFF_STEP gamma=$GAMMA lmbda=$LMBDA ent_target_mult=$ENT_TARGET_MULT num_mini_batches=$NUM_MINI_BATCHES num_seeds=$NUM_SEEDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
-    CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
+    CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.DA_MDP_REPPO \
         env.name="$ENV_NAME" \
         wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
         hyperparameters.num_eval="$NUM_EVAL" \
@@ -120,7 +120,7 @@ launch_run() {
         num_trials="$NUM_TRIALS" \
         num_seeds="$NUM_SEEDS" \
         seed="$BASE_SEED" \
-        experiment_overrides=dmerl/mjx_dmc_large_data_dmerl_small_nets &
+        experiment_overrides=DA_MDP_REPPO/mjx_dmc_large_data_DA_MDP_REPPO_small_nets &
     GPU_PIDS[$GPU_SLOT]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
 }

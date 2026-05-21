@@ -1,15 +1,23 @@
-# Relative Entropy Pathwise Policy Optimization 
+# Diffusion-Augmented Markov Decision Processes for Maximum Entropy Reinforcement Learning
 
-## On-policy value-based reinforcement learning without endless hyperparameter tuning
+## Code for DA-MDP maximum-entropy reinforcement learning experiments
 
-This repository contains the official implementation for REPPO - Relative Entropy Pathwise Policy Optimization [arXiv paper link](https://arxiv.org/abs/2507.11019).
+This repository contains the experimental code for the paper **Diffusion-Augmented Markov Decision Processes for Maximum Entropy Reinforcement Learning**.
 
-We provide reference implementations of the REPPO algorithm, as well as the raw results for our experiments.
+The repository implements the DA-MDP variants used in the paper:
 
-Our repo provides you with the core algorithm and the following features:
-- Jax and Torch support: No matter what your favorite framework is, you can take use the algorithm out of the box
-- Modern installation: Our algorithm and environment dependencies can be installed with a single command
-- Fast and reliable learning: REPPO is wallclock time competitive with approaches such as FastTD3 and PPO, while learning reliably and with minimal hyperparameter tuning
+- `DA_MDP_REPPO`
+- `DA_MDP_WPO`
+- `DA_MDP_PPO`
+
+This codebase is based on the paper code for **REPPO - Relative Entropy Pathwise Policy Optimization** [arXiv paper link](https://arxiv.org/abs/2507.11019). The DA-MDP entrypoints, configs, sweep scripts, and evaluation utilities in this repository extend that REPPO implementation for diffusion-augmented maximum-entropy RL experiments.
+
+The repository provides:
+
+- JAX implementations of the DA-MDP algorithms used in the paper.
+- Hydra configs and sweep scripts for MJX DeepMind Control experiments.
+- Checkpoint export and evaluation utilities for the DA-MDP method families.
+- Installation through `uv` or a standard editable Python package install.
 
 ## Installation
 
@@ -34,56 +42,109 @@ pip install -e .
 >  To provide a level comparison with prior work, we depend on the FastTD3 for of mujoco_playground. As soon as proper terminal state observation handling is merged into the main repository, we will update our dependencies.
 
 
-## Running Experiments
+## Run DA-MDP Experiments
 
-The main code for the algorithm is in `src/jaxrl/reppo.py` and `src/torchrl/reppo.py` respectively.
-In our tests, both versions produce similar returns up to seed variance.
-However, due to slight variations in the frameworks, we cannot always guarantee this.
+The current DA-MDP experiments use the JAX entrypoints below. Configurations are handled with [Hydra](https://hydra.cc/), so any setting can be overridden from the command line with `key=value`.
 
-For maximum speed, we highly recommend using our jax version.
-The torch version can result in slow experiment depending on the CPU/GPU configuration, as sampling from a squashed Gaussian is not implemented efficiently in the torch framework.
-This can result in cases where the GPU is stalled if the CPU cannot provide instructions and kernels fast enough.
+| Method | Python module | Config root | Checkpoint method name | Main override |
+| --- | --- | --- | --- | --- |
+| `DA_MDP_REPPO` | `src.jaxrl.DA_MDP_REPPO` | `config/DA_MDP_REPPO.yaml` | `DA_MDP_REPPO` | `experiment_overrides=DA_MDP_REPPO/...` |
+| `DA_MDP_WPO` | `src.jaxrl.DA_MDP_REPPO` | `config/DA_MDP_REPPO.yaml` | `DA_MDP_WPO` | `hyperparameters.train_mode=WPO` plus `experiment_overrides=DA_MDP_WPO/...` |
+| `DA_MDP_PPO` | `src.jaxrl.DA_MDP_PPO` | `config/DA_MDP_PPO/` | `DA_MDP_PPO` | `overrides=default` or another `config/DA_MDP_PPO/overrides/` file |
 
-Our configurations are handled with [hydra.cc](https://hydra.cc/). This means parameters can be overwritten by using the syntax
+Use `env.name` for the task, `env=mjx_dmc` for DeepMind Control MJX tasks, and `seed` for the random seed. `DA_MDP_REPPO` and `DA_MDP_WPO` use `num_trials`; `DA_MDP_PPO` uses `trials`. `hydra.run.dir` controls Hydra output location, and `WANDB_DIR` controls where W&B writes local run files.
+
+The examples below are single-run commands. The sweep scripts append `&` to launch multiple background jobs; omit it when running one job interactively.
+
+### DA_MDP_REPPO
+
 ```bash
-python src/jaxrl/reppo.py PARAMETER=VALUE
-```
+export ENV_NAME=CheetahRun
+export SEED=0
+export GPU_ID=0
+export RUN_DIR="outputs/DA_MDP_REPPO/${ENV_NAME}/seed_${SEED}"
+export WANDB_RUN_DIR="${RUN_DIR}/wandb"
+mkdir -p "$RUN_DIR" "$WANDB_RUN_DIR"
 
-### Example: REPPO-DIME
-
-To run REPPO-DIME:
-```bash
-python src/jaxrl/reppo_dime.py \
-    env.name=CheetahRun \
-    hyperparameters.num_eval=10 \
+WANDB_DIR="$WANDB_RUN_DIR" CUDA_VISIBLE_DEVICES="$GPU_ID" python -m src.jaxrl.DA_MDP_REPPO \
+    env.name="$ENV_NAME" \
+    wandb.project_suffix="_FR_REPPO_05_05" \
+    hyperparameters.num_eval=50 \
     hyperparameters.total_time_steps=50000000 \
     hyperparameters.diffusion.diff_steps=8 \
-    hyperparameters.kl_action_rep=4
+    env=mjx_dmc \
+    seed="$SEED" \
+    num_trials=1 \
+    hydra.run.dir="$RUN_DIR" \
+    experiment_overrides=DA_MDP_REPPO/mjx_dmc_large_data_DA_MDP_REPPO_linear_schedule
 ```
 
+### DA_MDP_WPO
 
-By default, the environment type and name need to be provided.
-Currently the jax version supports `env=mjx_dmc`, `env=mjx_humanoid`, `env=brax`, and `env=humanoid_brax`. The latter is treated as a separate environment, as the reward scale is much larger than other brax environments, and the min and max Q values need to be tracked per environment.
-The torch version support `env=mjx_dmc`, and `env=maniskill`. We additionally provide wrappers for isaaclab, but this is still under development and might not work out of the box.
+`DA_MDP_WPO` uses the same Python module as `DA_MDP_REPPO`. The public method/checkpoint name becomes `DA_MDP_WPO` when `hyperparameters.train_mode=WPO` is set.
 
-The paper experiments can be reproduced easily by using the `experiment_override` settings.
-By specifying `experiment_override=mjx_smc_small_data` for example, you can run the variant of REPPO with a batch size of 32k samples.
+```bash
+export ENV_NAME=CheetahRun
+export SEED=0
+export GPU_ID=0
+export RUN_DIR="outputs/DA_MDP_WPO/${ENV_NAME}/seed_${SEED}"
+export WANDB_RUN_DIR="${RUN_DIR}/wandb"
+mkdir -p "$RUN_DIR" "$WANDB_RUN_DIR"
+
+WANDB_DIR="$WANDB_RUN_DIR" CUDA_VISIBLE_DEVICES="$GPU_ID" python -m src.jaxrl.DA_MDP_REPPO \
+    env.name="$ENV_NAME" \
+    wandb.project_suffix="_FR_WPO_07_05_ent" \
+    hyperparameters.num_eval=50 \
+    hyperparameters.total_time_steps=50000000 \
+    hyperparameters.diffusion.diff_steps=8 \
+    hyperparameters.train_mode=WPO \
+    env=mjx_dmc \
+    seed="$SEED" \
+    num_trials=1 \
+    hydra.run.dir="$RUN_DIR" \
+    experiment_overrides=DA_MDP_WPO/mjx_dmc_large_data_DA_MDP_WPO_linear_schedule
+```
+
+### DA_MDP_PPO
+
+```bash
+export ENV_NAME=CheetahRun
+export SEED=0
+export GPU_ID=0
+export RUN_DIR="outputs/DA_MDP_PPO/${ENV_NAME}/seed_${SEED}"
+export WANDB_RUN_DIR="${RUN_DIR}/wandb"
+mkdir -p "$RUN_DIR" "$WANDB_RUN_DIR"
+
+WANDB_DIR="$WANDB_RUN_DIR" CUDA_VISIBLE_DEVICES="$GPU_ID" python -m src.jaxrl.DA_MDP_PPO \
+    env.name="$ENV_NAME" \
+    env=mjx_dmc \
+    overrides=default \
+    wandb.project_suffix="_FR_PPO_27_04" \
+    hyperparameters.num_eval=50 \
+    hyperparameters.total_time_steps=50000000 \
+    hyperparameters.diffusion.diff_steps=8 \
+    seed="$SEED" \
+    trials=1 \
+    hydra.run.dir="$RUN_DIR"
+```
+
+### Sweep Scripts
+
+The active sweep scripts are runnable references for launching many environments and seeds:
+
+- `READMEs/Sweeps/DMERL/vanilla/linear_schedule/` for `DA_MDP_REPPO`
+- `READMEs/Sweeps/DMERL/WPO/` for `DA_MDP_WPO`
+- `READMEs/Sweeps/DMERL/PPO/` for `DA_MDP_PPO`
+
+### Outputs and Checkpoints
+
+Hydra writes run outputs under `hydra.run.dir`. W&B local files can be redirected with `WANDB_DIR`. When final checkpoint export is enabled, checkpoint filenames use the method prefix, for example `DA_MDP_REPPO__...`, `DA_MDP_WPO__...`, or `DA_MDP_PPO__...`.
 
 ## Contributing
 
 We welcome contributions! Please feel free to submit issues and pull requests.
 
-## License
-
-This project is licensed under the MIT License -- see the [LICENSE](LICENSE) file for details. The repository is built on prior code from the [PureJaxRL](https://github.com/luchris429/purejaxrl) and [FastTD3](https://github.com/younggyoseo/FastTD3) projects, and we thank the respective authors for making their work available in open-source. We include the appropriate licences in ours.
-
 ## Citation
 
-```bibtex
-@article{voelcker2025reppo,
-  title     = {Relative Entropy Pathwise Policy Optimization},
-  author    = {Voelcker, Claas and Brunnbauer, Axel and Hussing, Marcel and Nauman, Michal and Abbeel, Pieter and Eaton, Eric and Grosu, Radu and Farahmand, Amir-massoud and Gilitschenski, Igor},
-  booktitle = {preprint},
-  year      = {2025},
-}
+Please cite **Diffusion-Augmented Markov Decision Processes for Maximum Entropy Reinforcement Learning** when using this repository. 
 ```

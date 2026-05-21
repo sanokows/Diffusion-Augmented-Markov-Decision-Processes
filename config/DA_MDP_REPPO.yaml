@@ -1,7 +1,7 @@
 defaults:
   - env: mjx_dmc
   - platform: torch
-  - experiment_overrides: dmerl_default
+  - experiment_overrides: DA_MDP_REPPO/default
   - _self_
 
 hyperparameters:
@@ -183,7 +183,7 @@ hyperparameters:
   ode_coefs: []
 measure_burnin: 3
 
-name: "reppo-dmerl-debug-1"
+name: "DA_MDP_REPPO"
 seed: 0
 num_seeds: 1
 tune: false

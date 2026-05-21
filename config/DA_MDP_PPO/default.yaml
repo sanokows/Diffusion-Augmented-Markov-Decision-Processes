@@ -133,7 +133,7 @@ hyperparameters:
     # dt_schedule:
     #   _target_: src.networks.diffusion.schedulers.get_constant_schedule
 
-name: "diff_ppo"
+name: "DA_MDP_PPO"
 tags: ["ppo_baseline_retuned"]
 seed: 0
 num_seeds: 1

@@ -10,9 +10,9 @@ The main entry point is:
 python eval_models/eval_saved_model.py --checkpoint saved_models/<checkpoint>.pkl
 ```
 
-## Partition Sum / `log Z` Estimation (`reppo`, `reppo_dime`, `reppo_DMERL_new`)
+## Partition Sum / `log Z` Estimation (`reppo`, `reppo_dime`, `DA_MDP_REPPO`)
 
-Use `compute_partition_sum.py` to estimate partition terms from saved `reppo`, `reppo_dime`, or `reppo_DMERL_new` checkpoints:
+Use `compute_partition_sum.py` to estimate partition terms from saved `reppo`, `reppo_dime`, or `DA_MDP_REPPO` checkpoints:
 
 ```bash
 python eval_models/compute_partition_sum.py \
@@ -35,7 +35,7 @@ What it computes:
   - For each trajectory:
     - `R = sum_t r_t`
     - `log w = (1 / T) * R + sum_t(sum_diffusion_steps(log p - log q)) - sum_t(log_prior)`
-- For `reppo_DMERL_new`:
+- For `DA_MDP_REPPO`:
   - At each diffusion step, store:
     - `gen_log_prob` (forward/generation step log-probability)
     - `dest_log_prob` (destination/backward step log-probability)
@@ -117,11 +117,11 @@ python eval_models/compute_partition_sum.py \
   --plot-xscale linear
 ```
 
-- `reppo_DMERL_new` example:
+- `DA_MDP_REPPO` example:
 
 ```bash
 exec python eval_models/compute_partition_sum.py \
-  --checkpoint saved_models/reppo_DMERL_new__FishSwim__trainmodereparam__seed0__trial0__ts20260326T153220.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__FishSwim__trainmodereparam__seed0__trial0__ts20260326T153220.pkl \
   --num-envs 2024 \
   --horizon 1000 \
   --temperature 0.1 \
@@ -155,11 +155,11 @@ By default outputs are written under `artifacts/partition_sum/`:
 
 ## DMERL Alpha Sweep Evaluation
 
-For checkpoints trained with `src/jaxrl/reppo_DMERL_new.py`, use:
+For checkpoints trained with `src/jaxrl/DA_MDP_REPPO.py`, use:
 
 ```bash
 exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
-  --checkpoint saved_models/reppo_DMERL_new__FishSwim__trainmodereparam__seed0__trial0__ts20260329T150527.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__FishSwim__trainmodereparam__seed0__trial0__ts20260329T150527.pkl \
   --alpha-start 0.0 \
   --alpha-end 1. \
   --alpha-steps 20 \
@@ -174,7 +174,7 @@ exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
 
 ```bash
 exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
-  --checkpoint saved_models/reppo_DMERL_new__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl \
   --alpha-start 0.0 \
   --alpha-end 1. \
   --alpha-steps 20 \
@@ -189,7 +189,7 @@ exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
 
 ```bash
 exec python eval_models/eval_reppo_DMERL_alpha_sweep.py \
-  --checkpoint saved_models/reppo_DMERL_new__HopperHop__trainmodereparam__seed0__trial0__ts20260330T145700.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__HopperHop__trainmodereparam__seed0__trial0__ts20260330T145700.pkl \
   --alpha-start 0.0 \
   --alpha-end 1. \
   --alpha-steps 20 \
@@ -253,7 +253,7 @@ To inspect how strong the base score is relative to the guidance vector across d
 
 ```bash
 python eval_models/eval_reppo_DMERL_guidance_ratio_by_step.py \
-  --checkpoint saved_models/reppo_DMERL_new__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__AcrobotSwingup__trainmodereparam__seed0__trial0__ts20260330T140419.pkl \
   --diffusion-sampler both \
   --num-envs 8000 \
   --normalizer-stats-mode fixed \
@@ -326,7 +326,7 @@ exec python eval_models/eval_saved_model.py \
 ```
 ```bash
 exec python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
   --collect-trajectories \
   --traj-num-envs 4000 \
   --traj-repeats 4 \
@@ -359,7 +359,7 @@ exec python eval_models/eval_saved_model.py \
 
 ### State Definition For Diffusion Methods
 
-- For `reppo_DMERL_new` and `reppo_DiffPPO`, trajectory collection records states only when the underlying environment advances (i.e. at the last diffusion step of each diffusion cycle), plus the initial reset state.
+- For `DA_MDP_REPPO` and `DA_MDP_PPO`, trajectory collection records states only when the underlying environment advances (i.e. at the last diffusion step of each diffusion cycle), plus the initial reset state.
 - Stored states are taken from the diffusion wrapper's raw underlying environment observation (`MjxDiffEnvState.obs`), not the normalized observation tensor used by the policy wrapper.
 
 ### Overriding Environment Flags
@@ -398,7 +398,7 @@ python eval_models/eval_saved_model.py \
 
 ```bash
 python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
   --horizon 100 \
   --render --render-num-envs 20 \
     --tdw-action-analysis \
@@ -409,9 +409,9 @@ python eval_models/eval_saved_model.py \
   --render-width 1200 --render-height 800
 ```
 
-### high temp reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260325T210624
-### even higher temp reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260325T215952
-### more directions reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T084336
+### high temp DA_MDP_REPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260325T210624
+### even higher temp DA_MDP_REPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260325T215952
+### more directions DA_MDP_REPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T084336
 
 ```bash
 python eval_models/eval_saved_model.py \
@@ -430,7 +430,7 @@ python eval_models/eval_saved_model.py \
 
 ```bash
 python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl \
+  --checkpoint saved_models/DA_MDP_PPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl \
   --horizon 100 \
   --render --render-num-envs 20 \
     --tdw-action-analysis \
@@ -445,7 +445,7 @@ python eval_models/eval_saved_model.py \
 
 ```bash
 python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
+  --checkpoint saved_models/DA_MDP_PPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
   --horizon 100 \
   --render --render-num-envs 20 \
     --tdw-action-analysis \
@@ -460,7 +460,7 @@ python eval_models/eval_saved_model.py \
 ### WPO
 ```bash
 python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl \
+  --checkpoint saved_models/DA_MDP_WPO__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl \
   --horizon 100 \
   --render --render-num-envs 20 \
     --tdw-action-analysis \
@@ -474,17 +474,17 @@ python eval_models/eval_saved_model.py \
 
 
 
-The script auto-detects whether the checkpoint is for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, or `reppo_dime` via `checkpoint["method_name"]` (with a config-based fallback for older checkpoints).
+The script auto-detects whether the checkpoint is for `reppo`, `DA_MDP_REPPO`, `DA_MDP_PPO`, or `reppo_dime` via `checkpoint["method_name"]` (with a config-based fallback for older checkpoints).
 
 ## MJX Rollout-Grid Rendering (Eval-Only)
 
-For MJX checkpoints (for example `FishSwim`) across `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime`, `--render` records tiled rollout grids (e.g., 20 envs in one frame) during evaluation only:
+For MJX checkpoints (for example `FishSwim`) across `reppo`, `DA_MDP_REPPO`, `DA_MDP_PPO`, and `reppo_dime`, `--render` records tiled rollout grids (e.g., 20 envs in one frame) during evaluation only:
 
 
 
 ```bash
 exec python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DMERL_new__HopperHop__trainmodereparam__seed0__trial0__ts20260326T152835.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__HopperHop__trainmodereparam__seed0__trial0__ts20260326T152835.pkl \
   --render \
   --render-format mp4 \
   --render-num-envs 16 \
@@ -499,7 +499,7 @@ exec python eval_models/eval_saved_model.py \
 
 
 exec python eval_models/eval_saved_model.py \
-  --checkpoint saved_models/reppo_DMERL_new__HopperHop__trainmodereparam__seed0__trial0__ts20260326T152835.pkl \
+  --checkpoint saved_models/DA_MDP_REPPO__HopperHop__trainmodereparam__seed0__trial0__ts20260326T152835.pkl \
   --render \
   --render-format mp4 \
   --render-num-envs 16 \
@@ -537,7 +537,7 @@ Useful MJX render options:
 
 ## TurningDoubleWellEnv Trajectory Rendering
 
-If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/visualization/test_turning_double_well_env.py` (works for `reppo`, `reppo_DMERL_new`, `reppo_DiffPPO`, and `reppo_dime` checkpoints):
+If `cfg.env.name == "TurningDoubleWellEnv"`, you can also render a batch of trajectories (X agents in parallel), similar to `src/env_utils/visualization/test_turning_double_well_env.py` (works for `reppo`, `DA_MDP_REPPO`, `DA_MDP_PPO`, and `reppo_dime` checkpoints):
 
 ```bash
 python eval_models/eval_saved_model.py \
@@ -547,7 +547,7 @@ python eval_models/eval_saved_model.py \
   --render-num-envs 10
 ```
 
-This produces a GIF (and also a PNG snapshot of the last frame) in a dedicated run folder under `artifacts/`. By default, the GIF name is prefixed with `REPPO__...`, `DME-REPPO__...`, `DME-WPO__...` (for WPO mode), or `REPPO-DIME__...` depending on the checkpoint/method.
+This produces a GIF (and also a PNG snapshot of the last frame) in a dedicated run folder under `artifacts/`. By default, the GIF name is prefixed with `REPPO__...`, `DME-REPPO__...`, `DA-MDP WPO__...` (for WPO mode), or `REPPO-DIME__...` depending on the checkpoint/method.
 
 Rendering options:
 
@@ -596,19 +596,19 @@ Outputs are written as PNG files into `artifacts/` (see `--tdw-action-analysis-o
 
 To auto-generate compact paper-ready composites in the fixed method order
 
-`REPPO | DPPO (zero temp) | DME-PPO | DMERL | DMERL-WPO | DIME`
+`REPPO | DPPO (zero temp) | DME-PPO | DMERL | DA-MDP WPO | DIME`
 
 use:
-#reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T151614
-# old_weights saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl
+#DA_MDP_WPO__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T151614
+# old_weights saved_models/DA_MDP_WPO__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260328T123545.pkl
 
 ```bash
 exec python eval_models/make_tdw_paper_figures.py \
   --checkpoint-reppo saved_models/reppo__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T102744.pkl \
-  --checkpoint-diffppo saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl  \
-  --checkpoint-diffppo saved_models/reppo_DiffPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
-  --checkpoint-dmerl saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
-  --checkpoint-dmerl-wpo saved_models/reppo_DMERL_new__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T155839.pkl \
+  --checkpoint-diffppo saved_models/DA_MDP_PPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175708.pkl  \
+  --checkpoint-diffppo saved_models/DA_MDP_PPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260327T175700.pkl \
+  --checkpoint-dmerl saved_models/DA_MDP_REPPO__TurningDoubleWellEnv__trainmodereparam__seed0__trial0__ts20260326T105557.pkl \
+  --checkpoint-da-mdp-wpo saved_models/DA_MDP_WPO__TurningDoubleWellEnv__trainmodeWPO__seed0__trial0__ts20260506T155839.pkl \
   --checkpoint-dime saved_models/reppo_dime__TurningDoubleWellEnv__seed0__trial0__ts20260326T110236.pkl \
   --sampler-diffppo sde \
   --sampler-diffppo-zero ode \

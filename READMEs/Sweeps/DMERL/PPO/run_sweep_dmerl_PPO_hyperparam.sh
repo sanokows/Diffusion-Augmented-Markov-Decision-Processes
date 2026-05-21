@@ -78,7 +78,7 @@ for ENV_NAME in "${ENV_NAMES[@]}"; do
                         wait "${GPU_PIDS[$GPU_ID]}"
                     fi
                     echo "Starting env.name=$ENV_NAME lr=$LR entropy_coef=$ENTROPY_COEF num_envs=$NUM_ENVS num_epochs=$NUM_EPOCHS on GPU $GPU_ID..."
-                    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.reppo_DiffPPO \
+                    CUDA_VISIBLE_DEVICES=$GPU_ID python -m src.jaxrl.DA_MDP_PPO \
                         env.name="$ENV_NAME" \
                         overrides=default \
                         env=mjx_dmc \

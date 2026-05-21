@@ -588,17 +588,30 @@ def _save_logz_plot(
     plt.close(fig)
 
 
+def _canonical_method_name(method_name: str) -> str:
+    method_lower = str(method_name).lower()
+    if method_lower in {
+        "da_mdp_reppo",
+        "da_mdp_wpo",
+        "reppo_dmerl_new",
+        "dmerl_wpo",
+        "dme_wpo",
+    }:
+        return "da_mdp_reppo"
+    return method_lower
+
+
 def _compute_partition_sum(checkpoint: dict[str, Any], cfg, args) -> dict[str, Any]:
     hp = cfg.hyperparameters
     horizon = int(cfg.env.max_episode_steps)
     num_envs = int(hp.num_envs)
-    method_name = str(checkpoint.get("method_name", "reppo")).lower()
+    method_name = _canonical_method_name(str(checkpoint.get("method_name", "reppo")))
     train_mode = _resolve_train_mode(checkpoint, cfg)
 
-    if method_name == "reppo_dmerl_new":
+    if method_name == "da_mdp_reppo":
         if cfg.env.type != "mjx":
             raise ValueError(
-                "reppo_DMERL_new checkpoints are only supported for MJX envs."
+                "DA_MDP_REPPO checkpoints are only supported for MJX envs."
             )
         base_env = _build_base_env(cfg, horizon=horizon)
         diff_cfg = hp.diffusion
@@ -642,7 +655,7 @@ def _compute_partition_sum(checkpoint: dict[str, Any], cfg, args) -> dict[str, A
     actor_params = _select_seed(checkpoint["actor_params"], seed_idx=seed_idx, num_seeds=num_seeds)
     if method_name == "reppo":
         actor_params = _upgrade_actor_params_for_backward_compat(actor_params, hp)
-    elif method_name == "reppo_dmerl_new":
+    elif method_name == "da_mdp_reppo":
         actor_params = _upgrade_dmerl_actor_params_for_backward_compat(actor_params, hp)
     norm_state = checkpoint.get("last_env_state", None)
     if norm_state is not None:
@@ -677,7 +690,7 @@ def _compute_partition_sum(checkpoint: dict[str, Any], cfg, args) -> dict[str, A
         actor_template = _build_dime_actor_template(
             hp, obs_dim=obs_dim, action_dim=action_dim, actor_key=actor_key
         )
-    elif method_name == "reppo_dmerl_new":
+    elif method_name == "da_mdp_reppo":
         actor_template = _build_dmerl_actor_template(
             hp,
             obs_dim=obs_dim,
@@ -688,7 +701,7 @@ def _compute_partition_sum(checkpoint: dict[str, Any], cfg, args) -> dict[str, A
     else:
         raise ValueError(
             "compute_partition_sum.py supports method_name in "
-            "{'reppo', 'reppo_dime', 'reppo_dmerl_new'}; "
+            "{'reppo', 'reppo_dime', 'da_mdp_reppo'}; "
             f"got '{method_name}'."
         )
     actor_graphdef = nnx.graphdef(actor_template)
@@ -1086,7 +1099,7 @@ def _compute_partition_sum(checkpoint: dict[str, Any], cfg, args) -> dict[str, A
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Compute partition-sum estimate for reppo/reppo_dime/reppo_DMERL_new "
+            "Compute partition-sum estimate for reppo/reppo_dime/DA_MDP_REPPO "
             "checkpoints using trajectory importance weights."
         )
     )
@@ -1094,7 +1107,7 @@ def main() -> None:
         "--checkpoint",
         required=True,
         help=(
-            "Path to a reppo, reppo_dime, or reppo_DMERL_new checkpoint "
+            "Path to a reppo, reppo_dime, or DA_MDP_REPPO checkpoint "
             "under saved_models/."
         ),
     )
@@ -1200,11 +1213,11 @@ def main() -> None:
         raise ValueError("Checkpoint is missing cfg; cannot reconstruct env/model.")
     cfg = OmegaConf.create(cfg_dict)
 
-    method_name = str(checkpoint.get("method_name", "reppo")).lower()
-    if method_name not in {"reppo", "reppo_dime", "reppo_dmerl_new"}:
+    method_name = _canonical_method_name(str(checkpoint.get("method_name", "reppo")))
+    if method_name not in {"reppo", "reppo_dime", "da_mdp_reppo"}:
         raise ValueError(
             "compute_partition_sum.py currently supports method_name in "
-            f"{{'reppo', 'reppo_dime', 'reppo_dmerl_new'}}, got '{method_name}'."
+            f"{{'reppo', 'reppo_dime', 'da_mdp_reppo'}}, got '{method_name}'."
         )
 
     cfg = _override_cfg(cfg, horizon=args.horizon, num_envs=args.num_envs)

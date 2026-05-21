@@ -36,7 +36,7 @@ from src.env_utils.jax_wrappers import (
 from src.jaxrl import utils
 from src.jaxrl.normalization import NormalizationState, Normalizer
 from src.jaxrl.reppo_helpers.learning_rates import resolve_special_lr
-from src.jaxrl.reppo_helpers.learning_DiffReppo import (
+from src.jaxrl.reppo_helpers.learning_DA_MDP_REPPO import (
     VALID_REWARD_NORMALIZATION_MODES,
     _resolve_temperature,
     actor_loss_fn,
@@ -2275,21 +2275,23 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
 
     for i in range(completed_trials, cfg.num_trials):
         cfg.seed = cfg.seed + i
+        train_mode = str(getattr(cfg.hyperparameters, "train_mode", "reparam"))
+        method_name = "DA_MDP_WPO" if train_mode.upper() == "WPO" else "DA_MDP_REPPO"
         run_config = OmegaConf.to_container(cfg)
-        run_config["method_name"] = "reppo_DMERL_new"
+        run_config["method_name"] = method_name
         wandb.init(
             mode=cfg.wandb.mode,
             project=f"{cfg.wandb.project}{getattr(cfg.wandb, 'project_suffix', '')}",
             entity=cfg.wandb.entity,
             tags=[
-                cfg.name,
+                method_name,
                 cfg.env.name,
                 cfg.env.type,
                 "hp_tune" if trial is not None else "val",
                 *cfg.tags,
             ],
             config=run_config,
-            name=f"{cfg.name}-{cfg.env.name.lower()}-{getattr(cfg.hyperparameters, 'train_mode', 'reparam')}",
+            name=f"{method_name}-{cfg.env.name.lower()}-{train_mode}",
             save_code=True,
         )
 
@@ -2305,9 +2307,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
         # Export final weights into repo_root/saved_models with a descriptive filename.
         try:
             final_metrics = _take_last_metrics(metrics)
-            method_name = "reppo_DMERL_new"
             env_name = str(cfg.env.name)
-            train_mode = str(getattr(cfg.hyperparameters, "train_mode", "reparam"))
             timestamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
             filename = "__".join(
                 [
@@ -2373,7 +2373,7 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
     return (0.1 * sweep_metrics_array.mean() + sweep_metrics_array[:, -1].mean()).item()
 
 
-@hydra.main(version_base=None, config_path="../../config", config_name="reppo_dmerl")
+@hydra.main(version_base=None, config_path="../../config", config_name="DA_MDP_REPPO")
 def main(cfg: DictConfig):
     cfg.hyperparameters = OmegaConf.merge(
         cfg.hyperparameters, cfg.experiment_overrides.hyperparameters
