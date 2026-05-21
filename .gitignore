@@ -1,5 +1,9 @@
-outputs/
 artifacts/
+READMEs/
+results/
+tests/
+scripts/
+outputs/
 saved_models/
 wandb/
 logs/
