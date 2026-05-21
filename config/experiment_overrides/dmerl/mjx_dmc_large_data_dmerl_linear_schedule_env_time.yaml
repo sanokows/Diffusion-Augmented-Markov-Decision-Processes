@@ -19,10 +19,11 @@ hyperparameters:
   lr: 1e-3
   temperature_lr: 3e-4
   lagrangian_lr: 3e-4
-  ent_target_mult: 5.
+  ent_target_mult: 5. 
   tanh_transform: false
   gamma: 0.99
   lmbda: 0.95
+  adaptive_hl_gauss_bounds: true
   use_env_time_discounting: true
   diffusion:
     learn_friction: true

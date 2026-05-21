@@ -913,6 +913,17 @@ class DiffNormalizeVec(Wrapper):
         self.num_diff_steps = num_diff_steps
         self.update_stats = update_stats
 
+    def _is_real_env_step(self, state) -> jax.Array:
+        env_state = state
+        for _ in range(8):
+            if hasattr(env_state, "diff_time_step"):
+                diff_time_step = env_state.diff_time_step
+                return diff_time_step.reshape(-1)[0] >= (self.num_diff_steps - 1)
+            if not hasattr(env_state, "env_state"):
+                break
+            env_state = env_state.env_state
+        return jnp.asarray(True)
+
     def _compute_stats(self, mean, var, count, obs):
         batch_mean = jnp.mean(obs, axis=0)
         batch_var = jnp.var(obs, axis=0)
@@ -1016,9 +1027,11 @@ class DiffNormalizeVec(Wrapper):
         )
 
     def step(self, key, state: DiffNormalizeVecObsEnvState, action):
+        real_env_step = self._is_real_env_step(state.env_state)
         obs, critic_obs, env_state, reward, done, info = self.env.step(
             key, state.env_state, action
         )
+        raw_reward = reward
         orig_obs = obs["orig_obs"]
         critic_orig_obs = critic_obs["orig_obs"]
         actor_actions = obs.get("normed_actions", None)
@@ -1031,7 +1044,13 @@ class DiffNormalizeVec(Wrapper):
                 info=env_state.info,
             )
             if self.normalize_reward:
-                reward = (reward - state.reward_mean) / jnp.sqrt(state.reward_var + 1e-2)
+                normalized_reward = (reward - state.reward_mean) / jnp.sqrt(
+                    state.reward_var + 1e-2
+                )
+                reward = jnp.where(real_env_step, normalized_reward, reward)
+            info = dict(info)
+            info["raw_reward"] = raw_reward
+            info["normalized_reward"] = reward
             return (
                 self._normalize_obs_dict(
                     obs, state.mean, state.var, state.action_mean, state.action_var
@@ -1074,9 +1093,13 @@ class DiffNormalizeVec(Wrapper):
                 state.critic_action_var,
             )
         reward_count = state.count / self.num_diff_steps
-        new_reward_mean, new_reward_var = self._compute_stats(
+        updated_reward_mean, updated_reward_var = self._compute_stats(
             state.reward_mean, state.reward_var, reward_count, reward
         )
+        new_reward_mean = jnp.where(
+            real_env_step, updated_reward_mean, state.reward_mean
+        )
+        new_reward_var = jnp.where(real_env_step, updated_reward_var, state.reward_var)
         new_count = state.count + orig_obs.shape[0]
 
         state = DiffNormalizeVecObsEnvState(
@@ -1096,7 +1119,13 @@ class DiffNormalizeVec(Wrapper):
             info=env_state.info,
         )
         if self.normalize_reward:
-            reward = (reward - state.reward_mean) / jnp.sqrt(state.reward_var + 1e-2)
+            normalized_reward = (reward - state.reward_mean) / jnp.sqrt(
+                state.reward_var + 1e-2
+            )
+            reward = jnp.where(real_env_step, normalized_reward, reward)
+        info = dict(info)
+        info["raw_reward"] = raw_reward
+        info["normalized_reward"] = reward
 
         return (
             self._normalize_obs_dict(

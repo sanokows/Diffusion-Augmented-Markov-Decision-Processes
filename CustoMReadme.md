@@ -1,4 +1,4 @@
-# salloc -A EU-25-100 -p qgpu --time=1:00:30 
+# salloc -A EU-25-100 -p qgpu --time=4:00:30 
 ### TODO in Q function process states, noisy actions and actions separately. -> then change state reconst loss
 ### then store state embedding during rollout
 

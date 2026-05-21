@@ -800,23 +800,26 @@ class CategoricalCriticNetwork(nnx.Module):
         features = self.features(obs, action, time)
         return self.critic_head(features)
 
-    def critic(self, obs: jax.Array, action: jax.Array) -> jax.Array:
+    def _value_support(self, vmin=None, vmax=None):
+        if vmin is None:
+            vmin = self.vmin
+        if vmax is None:
+            vmax = self.vmax
+        return jnp.linspace(vmin, vmax, self.num_bins, endpoint=True)
+
+    def critic(self, obs: jax.Array, action: jax.Array, vmin=None, vmax=None) -> jax.Array:
         value_cat = jax.nn.softmax(self.critic_cat(obs, action), axis=-1)
-        value = value_cat.dot(
-            jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
-        )
+        value = value_cat.dot(self._value_support(vmin=vmin, vmax=vmax))
         return value
 
-    def forward(self, obs_dict, action):
+    def forward(self, obs_dict, action, vmin=None, vmax=None):
         obs, time = self.from_dict_to_observation(obs_dict)
         #action = jnp.tanh(action) # tanh is pulled  into observation
 
         features = self.features(obs, action, time)
         value_cat = jax.nn.softmax(self.critic_head(features), axis=-1)
 
-        value = value_cat.dot(
-            jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
-        )
+        value = value_cat.dot(self._value_support(vmin=vmin, vmax=vmax))
         preds = self.pred_module(features)
         pred_rew = preds[..., :1]
         pred_features = preds[..., 1 : 1 + features.shape[-1]]
@@ -989,21 +992,24 @@ class CategoricalValueNetwork(nnx.Module):
         features = self.features(obs, time)
         return self.critic_head(features)
 
-    def critic(self, obs_dict: jax.Array) -> jax.Array:
+    def _value_support(self, vmin=None, vmax=None):
+        if vmin is None:
+            vmin = self.vmin
+        if vmax is None:
+            vmax = self.vmax
+        return jnp.linspace(vmin, vmax, self.num_bins, endpoint=True)
+
+    def critic(self, obs_dict: jax.Array, vmin=None, vmax=None) -> jax.Array:
         value_cat = jax.nn.softmax(self.critic_cat(obs_dict), axis=-1)
-        value = value_cat.dot(
-            jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
-        )
+        value = value_cat.dot(self._value_support(vmin=vmin, vmax=vmax))
         return value
 
-    def forward(self, obs_dict):
+    def forward(self, obs_dict, vmin=None, vmax=None):
         obs, time = self.from_dict_to_observation(obs_dict)
         features = self.features(obs, time)
         value_cat = jax.nn.softmax(self.critic_head(features), axis=-1)
 
-        value = value_cat.dot(
-            jnp.linspace(self.vmin, self.vmax, self.num_bins, endpoint=True)
-        )
+        value = value_cat.dot(self._value_support(vmin=vmin, vmax=vmax))
         preds = self.pred_module(features)
         pred_rew = preds[..., :1]
         pred_features = preds[..., 1 : 1 + features.shape[-1]]

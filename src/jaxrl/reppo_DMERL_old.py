@@ -34,6 +34,7 @@ from src.env_utils.jax_wrappers import (
     DiffNormalizeVec,
 )
 from src.jaxrl import utils
+from src.jaxrl.reppo_helpers.learning_rates import resolve_special_lr
 from src.jaxrl.reppo_helpers.learning_DiffReppo import (
     _resolve_temperature,
     actor_loss_fn,
@@ -165,8 +166,6 @@ class ReppoConfig(struct.PyTreeNode):
     num_collection_step_factor: float = 1.0
     temperature_lr: float | None = None
     lagrangian_lr: float | None = None
-    temperature_lr_mult: float = 1.0
-    lagrangian_lr_mult: float = 1.0
     temp_lagrangian_optim: str = "sgd"
     temp_lagrangian_adam_gamma1: float = 0.9
     temp_lagrangian_adam_gamma2: float = 0.999
@@ -306,16 +305,7 @@ class ReppoDMERLTrainer:
             print(128/(cfg.num_mini_batches*cfg.diffusion.diff_steps), cfg.num_mini_batches, cfg.diffusion.diff_steps)
             print(f"Adjusted temp_lagrangian_adam_gamma1: {temp_lagrangian_adam_gamma1}, temp_lagrangian_adam_gamma2: {temp_lagrangian_adam_gamma2}")
 
-
-            temp_lr_multi = cfg.temperature_lr_mult
-            lagrangian_lr_mult = cfg.lagrangian_lr_mult
-            if cfg.temperature_lr is None:
-                temp_lr_multi = temp_lr_multi
-            if cfg.lagrangian_lr is None:
-                lagrangian_lr_mult = lagrangian_lr_mult
             cfg = cfg.replace(
-                temperature_lr_mult=temp_lr_multi,
-                lagrangian_lr_mult=lagrangian_lr_mult,
                 temp_lagrangian_adam_gamma1=temp_lagrangian_adam_gamma1,
                 temp_lagrangian_adam_gamma2=temp_lagrangian_adam_gamma2,
             )
@@ -681,11 +671,6 @@ class ReppoDMERLTrainer:
                 min_lr = cfg.lr * cfg.lr_decay_factor
                 lr = optax.linear_schedule(cfg.lr, min_lr, num_updates)
 
-            def _scale_lr(lr_val, mult: float):
-                if callable(lr_val):
-                    return lambda step: lr_val(step) * mult
-                return lr_val * mult
-
             def _adam_with_decay(lr_val, weight_decay: float = 0., decay_mask=None, optim = optax.adam):
                 tx = optim(lr_val)
                 if weight_decay is not None and weight_decay > 0.0:
@@ -801,11 +786,6 @@ class ReppoDMERLTrainer:
                     optax.clip_by_global_norm(cfg.max_grad_norm), critic_optimizer
                 )
 
-            def _resolve_special_lr(direct_lr, mult: float):
-                if direct_lr is not None:
-                    return direct_lr
-                return _scale_lr(lr, mult)
-
             def _label_actor_params(params):
                 flat = flatten_dict(params)  # tuple keys to avoid char-splitting
                 norm_prefixes = _layernorm_projection_prefixes(flat)
@@ -826,12 +806,8 @@ class ReppoDMERLTrainer:
 
             actor_param_tree = nnx.to_pure_dict(nnx.state(actor_networks))
             actor_labels = _label_actor_params(actor_param_tree)
-            temperature_lr = _resolve_special_lr(
-                cfg.temperature_lr, cfg.temperature_lr_mult
-            )
-            lagrangian_lr = _resolve_special_lr(
-                cfg.lagrangian_lr, cfg.lagrangian_lr_mult
-            )
+            temperature_lr = resolve_special_lr(lr, cfg.temperature_lr)
+            lagrangian_lr = resolve_special_lr(lr, cfg.lagrangian_lr)
 
             special_optimizer = _select_special_optimizer(cfg.temp_lagrangian_optim)
 

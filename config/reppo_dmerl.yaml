@@ -8,7 +8,10 @@ hyperparameters:
   # env and run settings (mostly don't touch)
   total_time_steps: 50_000_000
   normalize_env: true
-  normalize_reward: false
+  reward_normalization_mode: "none"  # none, env_reward, soft_reward, q_target
+  reward_norm_epsilon: 1e-8
+  reward_norm_clip: null
+  reward_normalization_window_rollouts: 0  # 0: running stats, 1: current rollout, N: sliding history
   max_episode_steps: 1000
   eval_interval: 2
   num_eval: 20
@@ -19,8 +22,8 @@ hyperparameters:
   lr_decay_factor: 1.
   weight_decay: 0.0
   use_current_critic_for_actor_samples: true
-  temperature_lr: 1e-4
-  lagrangian_lr: 1e-4
+  temperature_lr: null
+  lagrangian_lr: null
   temp_lagrangian_optim: "adam"
   temp_lagrangian_adam_gamma1: 0.9
   temp_lagrangian_adam_gamma2: 0.999
@@ -67,6 +70,9 @@ hyperparameters:
   vmax: ${env.vmax}
   num_bins: 151
   hl_gauss: true
+  adaptive_hl_gauss_bounds: false
+  hl_gauss_bounds_ema_decay: 0.96
+  hl_gauss_bounds_margin_frac: 0.1
   use_critic_norm: true
   num_critic_encoder_layers: 2
   num_critic_head_layers: 2
@@ -111,9 +117,6 @@ hyperparameters:
   # optionally learn temperature/kl multipliers with a tiny MLP
   use_temp_lagrangian_mlp: false
   temp_lagrangian_hidden: 32
-  # scale the effective learning rates for temperature and KL lagrangian updates
-  temperature_lr_mult: 1.0
-  lagrangian_lr_mult: 1.0
   ## auxiliary loss settings
   aux_loss_mult: 0.5
   aux_loss_alpha: 0.95

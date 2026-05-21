@@ -9,3 +9,6 @@ use_push_randomization: false
 use_domain_randomization: false
 asymmetric_observation: true
 asymmetric_obs: true
+
+# vmin: -10
+# vmax: 10

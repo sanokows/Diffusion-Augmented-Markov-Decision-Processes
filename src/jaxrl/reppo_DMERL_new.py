@@ -34,13 +34,19 @@ from src.env_utils.jax_wrappers import (
     DiffNormalizeVec,
 )
 from src.jaxrl import utils
+from src.jaxrl.normalization import NormalizationState, Normalizer
+from src.jaxrl.reppo_helpers.learning_rates import resolve_special_lr
 from src.jaxrl.reppo_helpers.learning_DiffReppo import (
+    VALID_REWARD_NORMALIZATION_MODES,
     _resolve_temperature,
     actor_loss_fn,
     actor_WPO_loss_fn,
+    adaptive_hl_gauss_bounds_enabled,
     compute_nstep_lambda_step,
     critic_loss_fn,
+    effective_hl_gauss_bounds,
     maybe_add_q_grad,
+    reward_normalization_scale,
 )
 from src.jaxrl.reppo_helpers.diffusion_index_sampling import (
     prepare_diffusion_importance_sampling,
@@ -78,6 +84,12 @@ def _sectioned_wandb_key(key: str) -> str:
         return "sps"
     if key.startswith("train/"):
         suffix = key.split("/", 1)[1]
+        if suffix.startswith("hl_gauss_bounds/"):
+            return suffix
+        if suffix.startswith("reward_norm/"):
+            return suffix
+        if suffix.startswith(("reward/", "soft_reward/", "q_target/")):
+            return f"reward_norm/{suffix}"
         if suffix.startswith(("temp", "entropy")):
             return f"temperature/{suffix}"
         if suffix.startswith(("lagrangian", "kl")):
@@ -100,6 +112,9 @@ def _sectioned_wandb_key(key: str) -> str:
     if key.startswith("step_metrics/"):
         suffix = key.split("/", 1)[1]
         return f"step_metrics/{suffix}"
+    if key.startswith("hl_gauss_bounds/"):
+        suffix = key.split("/", 1)[1]
+        return f"hl_gauss_bounds/{suffix}"
     return f"system/{key}"
 
 
@@ -135,6 +150,115 @@ def _take_last_metrics(metrics: dict) -> dict:
     return jax.tree.map(_last, metrics)
 
 
+def _validate_reward_normalization_mode(mode: str) -> str:
+    normalized = str(mode).lower()
+    if normalized not in VALID_REWARD_NORMALIZATION_MODES:
+        valid = ", ".join(VALID_REWARD_NORMALIZATION_MODES)
+        raise ValueError(
+            f"Unknown reward_normalization_mode={mode!r}. Expected one of: {valid}."
+        )
+    return normalized
+
+
+def _validate_reward_normalization_window_rollouts(window_rollouts: int) -> int:
+    normalized = int(window_rollouts)
+    if normalized < 0:
+        raise ValueError(
+            "reward_normalization_window_rollouts must be >= 0. "
+            "Use 0 for cumulative stats, 1 for the current rollout, or N > 1 "
+            "for a sliding history over N rollouts."
+        )
+    return normalized
+
+
+def _maybe_clip_reward_normalized(values: jax.Array, cfg: "ReppoConfig") -> jax.Array:
+    clip_value = getattr(cfg, "reward_norm_clip", None)
+    if clip_value is None:
+        return values
+    clip_value = jnp.asarray(clip_value, dtype=values.dtype)
+    return jnp.clip(values, -clip_value, clip_value)
+
+
+class RewardNormalizationWindowState(struct.PyTreeNode):
+    sums: jax.Array
+    sumsqs: jax.Array
+    counts: jax.Array
+    index: jax.Array
+    filled: jax.Array
+
+
+def _init_reward_normalization_window_state(
+    window_rollouts: int, dtype=jnp.float32
+) -> RewardNormalizationWindowState:
+    return RewardNormalizationWindowState(
+        sums=jnp.zeros((window_rollouts,), dtype=dtype),
+        sumsqs=jnp.zeros((window_rollouts,), dtype=dtype),
+        counts=jnp.zeros((window_rollouts,), dtype=jnp.int32),
+        index=jnp.asarray(0, dtype=jnp.int32),
+        filled=jnp.asarray(0, dtype=jnp.int32),
+    )
+
+
+def _normalization_state_from_window(
+    state: RewardNormalizationWindowState,
+) -> NormalizationState:
+    total_sum = jnp.sum(state.sums)
+    total_sumsq = jnp.sum(state.sumsqs)
+    total_count = jnp.sum(state.counts)
+    count_float = jnp.maximum(total_count, 1).astype(total_sum.dtype)
+    mean = total_sum / count_float
+    var = jnp.maximum(total_sumsq / count_float - jnp.square(mean), 0.0)
+    return NormalizationState(mean=mean, var=var, count=total_count)
+
+
+def _update_reward_normalization_window_state(
+    state: RewardNormalizationWindowState, values: jax.Array
+) -> tuple[RewardNormalizationWindowState, NormalizationState]:
+    values = values.reshape(-1)
+    values = values.astype(state.sums.dtype)
+    rollout_sum = jnp.sum(values)
+    rollout_sumsq = jnp.sum(jnp.square(values))
+    rollout_count = jnp.asarray(values.shape[0], dtype=state.counts.dtype)
+    window_size = state.sums.shape[0]
+    next_state = state.replace(
+        sums=state.sums.at[state.index].set(rollout_sum),
+        sumsqs=state.sumsqs.at[state.index].set(rollout_sumsq),
+        counts=state.counts.at[state.index].set(rollout_count),
+        index=(state.index + 1) % window_size,
+        filled=jnp.minimum(state.filled + 1, window_size),
+    )
+    return next_state, _normalization_state_from_window(next_state)
+
+
+def _update_reward_normalization_from_values(
+    cfg: "ReppoConfig",
+    normalizer: Normalizer,
+    train_state: "SACTrainState",
+    values: jax.Array,
+) -> tuple["SACTrainState", NormalizationState]:
+    if cfg.reward_normalization_window_rollouts > 0:
+        window_state, reward_normalization_state = (
+            _update_reward_normalization_window_state(
+                train_state.reward_normalization_window_state,
+                values,
+            )
+        )
+        train_state = train_state.replace(
+            reward_normalization_state=reward_normalization_state,
+            reward_normalization_window_state=window_state,
+        )
+        return train_state, reward_normalization_state
+
+    reward_normalization_state = normalizer.update(
+        train_state.reward_normalization_state,
+        values.reshape(-1),
+    )
+    train_state = train_state.replace(
+        reward_normalization_state=reward_normalization_state
+    )
+    return train_state, reward_normalization_state
+
+
 class Policy(typing.Protocol):
     def __call__(
         self,
@@ -149,9 +273,13 @@ class Transition(struct.PyTreeNode):
     critic_obs: jax.Array
     action: jax.Array
     reward: jax.Array
+    raw_reward: jax.Array
+    normalized_reward: jax.Array
     reward_target: jax.Array
     reward_target_mask: jax.Array
     soft_reward: jax.Array
+    raw_soft_reward: jax.Array
+    normalized_soft_reward: jax.Array
     next_emb: jax.Array
     next_state_emb: jax.Array
     next_emb_mask: jax.Array
@@ -171,6 +299,67 @@ def _timestep_coeff_norm(params):
             coeff = v[0] if isinstance(v, tuple) else v
             return jnp.linalg.norm(coeff)
     return jnp.array(0.0)
+
+
+def _update_hl_gauss_bounds(cfg, train_state, target_values):
+    fixed_vmin = jnp.asarray(cfg.vmin, dtype=jnp.float32)
+    fixed_vmax = jnp.asarray(cfg.vmax, dtype=jnp.float32)
+    min_width = jnp.asarray(1e-6, dtype=jnp.float32)
+    fixed_width = jnp.maximum(fixed_vmax - fixed_vmin, min_width)
+    prev_vmin = jnp.asarray(train_state.hl_gauss_vmin, dtype=jnp.float32)
+    prev_width = jnp.maximum(
+        jnp.asarray(train_state.hl_gauss_width, dtype=jnp.float32),
+        min_width,
+    )
+    prev_vmax = prev_vmin + prev_width
+
+    flat_targets = target_values.reshape(-1)
+    finite_mask = jnp.isfinite(flat_targets)
+    finite_count = jnp.sum(finite_mask)
+    has_finite = finite_count > 0
+    raw_vmin = jnp.min(jnp.where(finite_mask, flat_targets, jnp.inf))
+    raw_vmax = jnp.max(jnp.where(finite_mask, flat_targets, -jnp.inf))
+    raw_vmin = jnp.where(has_finite, raw_vmin, prev_vmin)
+    raw_vmax = jnp.where(has_finite, raw_vmax, prev_vmax)
+
+    raw_width = jnp.maximum(raw_vmax - raw_vmin, 0.0)
+    half_margin = jnp.maximum(
+        raw_width * jnp.asarray(cfg.hl_gauss_bounds_margin_frac, dtype=jnp.float32),
+        min_width * 0.5,
+    )
+    observed_vmin = raw_vmin - half_margin
+    observed_width = jnp.maximum(raw_width + 2.0 * half_margin, min_width)
+    decay = jnp.clip(
+        jnp.asarray(cfg.hl_gauss_bounds_ema_decay, dtype=jnp.float32),
+        0.0,
+        1.0,
+    )
+
+    if adaptive_hl_gauss_bounds_enabled(cfg):
+        next_vmin = decay * prev_vmin + (1.0 - decay) * observed_vmin
+        next_width = decay * prev_width + (1.0 - decay) * observed_width
+        next_width = jnp.maximum(next_width, min_width)
+        next_vmin = jnp.where(has_finite, next_vmin, prev_vmin)
+        next_width = jnp.where(has_finite, next_width, prev_width)
+    else:
+        next_vmin = fixed_vmin
+        next_width = fixed_width
+    next_vmax = next_vmin + next_width
+
+    train_state = train_state.replace(
+        hl_gauss_vmin=next_vmin,
+        hl_gauss_width=next_width,
+    )
+    metrics = {
+        "hl_gauss_bounds/vmin": next_vmin,
+        "hl_gauss_bounds/vmax": next_vmax,
+        "hl_gauss_bounds/raw_vmin": raw_vmin,
+        "hl_gauss_bounds/raw_vmax": raw_vmax,
+        "hl_gauss_bounds/empirical_target_min": raw_vmin,
+        "hl_gauss_bounds/empirical_target_max": raw_vmax,
+        "hl_gauss_bounds/width": next_width,
+    }
+    return train_state, metrics
 
 
 
@@ -199,8 +388,6 @@ class ReppoConfig(struct.PyTreeNode):
     num_collection_step_factor: float = 1.0
     temperature_lr: float | None = None
     lagrangian_lr: float | None = None
-    temperature_lr_mult: float = 1.0
-    lagrangian_lr_mult: float = 1.0
     temp_lagrangian_optim: str = "sgd"
     temp_lagrangian_adam_gamma1: float = 0.9
     temp_lagrangian_adam_gamma2: float = 0.999
@@ -225,6 +412,9 @@ class ReppoConfig(struct.PyTreeNode):
     vmax: int = 100
     num_bins: int = 250
     hl_gauss: bool = False
+    adaptive_hl_gauss_bounds: bool = False
+    hl_gauss_bounds_ema_decay: float = 0.99
+    hl_gauss_bounds_margin_frac: float = 0.05
     kl_bound: float = 1.0
     kl_bound_fisher_precond: bool = False
     remove_fisher_precond: bool = False
@@ -267,7 +457,10 @@ class ReppoConfig(struct.PyTreeNode):
     project_unit_ball: bool = True
     project_only_if_exceeds: bool = True
     use_current_critic_for_actor_samples: bool = True
-    normalize_reward: bool = False
+    reward_normalization_mode: str = "none"
+    reward_norm_epsilon: float = 1e-8
+    reward_norm_clip: float | None = None
+    reward_normalization_window_rollouts: int = 0
     log_target_value_stats: bool = False
     log_pnorms: bool = False
     importance_sample_diffusion_steps: bool = False
@@ -284,9 +477,13 @@ class SACTrainState(struct.PyTreeNode):
     actor_target: nnx.TrainState
     iteration: int
     time_steps: int
+    hl_gauss_vmin: jax.Array
+    hl_gauss_width: jax.Array
     last_env_state: EnvState
     last_obs: jax.Array
     last_critic_obs: jax.Array
+    reward_normalization_state: NormalizationState | None = None
+    reward_normalization_window_state: RewardNormalizationWindowState | None = None
 
 
 def randomize_env_steps(
@@ -351,16 +548,7 @@ class ReppoDMERLTrainer:
             print(128/(cfg.num_mini_batches*cfg.diffusion.diff_steps), cfg.num_mini_batches, cfg.diffusion.diff_steps)
             print(f"Adjusted temp_lagrangian_adam_gamma1: {temp_lagrangian_adam_gamma1}, temp_lagrangian_adam_gamma2: {temp_lagrangian_adam_gamma2}")
 
-
-            temp_lr_multi = cfg.temperature_lr_mult
-            lagrangian_lr_mult = cfg.lagrangian_lr_mult
-            if cfg.temperature_lr is None:
-                temp_lr_multi = temp_lr_multi
-            if cfg.lagrangian_lr is None:
-                lagrangian_lr_mult = lagrangian_lr_mult
             cfg = cfg.replace(
-                temperature_lr_mult=temp_lr_multi,
-                lagrangian_lr_mult=lagrangian_lr_mult,
                 temp_lagrangian_adam_gamma1=temp_lagrangian_adam_gamma1,
                 temp_lagrangian_adam_gamma2=temp_lagrangian_adam_gamma2,
             )
@@ -371,7 +559,27 @@ class ReppoDMERLTrainer:
 
             pass
 
+        reward_normalization_mode = _validate_reward_normalization_mode(
+            cfg.reward_normalization_mode
+        )
+        if reward_normalization_mode == "env_reward" and not cfg.normalize_env:
+            raise ValueError(
+                "reward_normalization_mode='env_reward' requires normalize_env=True "
+                "because env reward normalization is implemented by DiffNormalizeVec."
+            )
+        reward_normalization_window_rollouts = (
+            _validate_reward_normalization_window_rollouts(
+                cfg.reward_normalization_window_rollouts
+            )
+        )
+        cfg = cfg.replace(
+            reward_normalization_mode=reward_normalization_mode,
+            reward_normalization_window_rollouts=reward_normalization_window_rollouts,
+        )
+
         self.cfg = cfg
+        self.reward_normalization_mode = reward_normalization_mode
+        self.reward_normalizer = Normalizer()
         self.use_langevin_param = bool(cfg.diffusion.score_model.langevin_param)
         self.env_params = env_params
         self.log_callback = log_callback or (lambda *args: None)
@@ -434,7 +642,7 @@ class ReppoDMERLTrainer:
         if self.cfg.normalize_env:
             env = DiffNormalizeVec(
                 env,
-                normalize_reward=self.cfg.normalize_reward,
+                normalize_reward=self.reward_normalization_mode == "env_reward",
                 num_diff_steps=self.cfg.diffusion.diff_steps,
                 update_stats=True,
             )
@@ -462,7 +670,13 @@ class ReppoDMERLTrainer:
                 policy_key: PRNGKey, obs: jax.Array, critic_obs: jax.Array
             ) -> tuple[jax.Array, dict]:
                 obs_for_actor = maybe_add_q_grad(
-                    obs, critic_obs, actor_model, critic_model, use_langevin
+                    obs,
+                    critic_obs,
+                    actor_model,
+                    critic_model,
+                    use_langevin,
+                    cfg=self.cfg,
+                    train_state=train_state,
                 )
                 #jax.debug.print("eval_step_env shape: {shape}", shape=policy_key.shape)
                 action, *_ = actor_model.vmap_sample_next_step(
@@ -471,22 +685,62 @@ class ReppoDMERLTrainer:
                 return action, {}
 
             def step_env(carry, _):
-                key, env_state, obs, critic_obs = carry
+                (
+                    key,
+                    env_state,
+                    obs,
+                    critic_obs,
+                    normalized_episode_returns,
+                    normalized_returned_episode_returns,
+                ) = carry
                 key, act_key, env_key = jax.random.split(key, 3)
                 action, _ = sde_policy(act_key, obs, critic_obs)
                 step_key = jax.random.split(env_key, env.num_envs)
                 obs, critic_obs, env_state, reward, done, info = env.step(
                     step_key, env_state, action
                 )
-                return (key, env_state, obs, critic_obs), info
+                not_done = 1.0 - done.astype(jnp.float32)
+                next_normalized_episode_returns = (
+                    normalized_episode_returns + reward
+                )
+                normalized_returned_episode_returns = (
+                    normalized_returned_episode_returns * not_done
+                    + next_normalized_episode_returns * done.astype(jnp.float32)
+                )
+                normalized_episode_returns = (
+                    next_normalized_episode_returns * not_done
+                )
+                info = dict(info)
+                info["normalized_returned_episode_returns"] = (
+                    normalized_returned_episode_returns
+                )
+                return (
+                    key,
+                    env_state,
+                    obs,
+                    critic_obs,
+                    normalized_episode_returns,
+                    normalized_returned_episode_returns,
+                ), info
 
             key, init_key = jax.random.split(key)
             init_key = jax.random.split(init_key, env.num_envs)
             obs, critic_obs, env_state = env.reset(init_key, norm_state)
+            normalized_episode_returns = jnp.zeros((env.num_envs,), dtype=jnp.float32)
+            normalized_returned_episode_returns = jnp.zeros(
+                (env.num_envs,), dtype=jnp.float32
+            )
             key, _ = jax.random.split(key)
             _, infos = jax.lax.scan(
                 f=step_env,
-                init=(key, env_state, obs, critic_obs),
+                init=(
+                    key,
+                    env_state,
+                    obs,
+                    critic_obs,
+                    normalized_episode_returns,
+                    normalized_returned_episode_returns,
+                ),
                 xs=None,
                 length=max_episode_steps,
             )
@@ -511,6 +765,11 @@ class ReppoDMERLTrainer:
                 "num_episodes": returned_episode.sum(),
                 "returned_episode_fraction": returned_episode.mean(),
             }
+            metrics["episode_return_raw"] = metrics["episode_return"]
+            if self.reward_normalization_mode == "env_reward":
+                metrics["episode_return_normalized"] = infos[
+                    "normalized_returned_episode_returns"
+                ].mean(where=returned_episode)
             return metrics
 
         return sde_evaluation_fn
@@ -537,7 +796,13 @@ class ReppoDMERLTrainer:
                 policy_key: PRNGKey, obs: jax.Array, critic_obs: jax.Array
             ) -> tuple[jax.Array, dict]:
                 obs_for_actor = maybe_add_q_grad(
-                    obs, critic_obs, actor_model, critic_model, use_langevin
+                    obs,
+                    critic_obs,
+                    actor_model,
+                    critic_model,
+                    use_langevin,
+                    cfg=self.cfg,
+                    train_state=train_state,
                 )
                 action, *_ = actor_model.vmap_ode_sample_next_step(
                     obs_for_actor, policy_key
@@ -545,22 +810,62 @@ class ReppoDMERLTrainer:
                 return action, {}
 
             def step_env(carry, _):
-                key, env_state, obs, critic_obs = carry
+                (
+                    key,
+                    env_state,
+                    obs,
+                    critic_obs,
+                    normalized_episode_returns,
+                    normalized_returned_episode_returns,
+                ) = carry
                 key, act_key, env_key = jax.random.split(key, 3)
                 action, _ = ode_policy(act_key, obs, critic_obs)
                 step_key = jax.random.split(env_key, env.num_envs)
                 obs, critic_obs, env_state, reward, done, info = env.step(
                     step_key, env_state, action
                 )
-                return (key, env_state, obs, critic_obs), info
+                not_done = 1.0 - done.astype(jnp.float32)
+                next_normalized_episode_returns = (
+                    normalized_episode_returns + reward
+                )
+                normalized_returned_episode_returns = (
+                    normalized_returned_episode_returns * not_done
+                    + next_normalized_episode_returns * done.astype(jnp.float32)
+                )
+                normalized_episode_returns = (
+                    next_normalized_episode_returns * not_done
+                )
+                info = dict(info)
+                info["normalized_returned_episode_returns"] = (
+                    normalized_returned_episode_returns
+                )
+                return (
+                    key,
+                    env_state,
+                    obs,
+                    critic_obs,
+                    normalized_episode_returns,
+                    normalized_returned_episode_returns,
+                ), info
 
             key, init_key = jax.random.split(key)
             init_key = jax.random.split(init_key, env.num_envs)
             obs, critic_obs, env_state = env.reset(init_key, norm_state)
+            normalized_episode_returns = jnp.zeros((env.num_envs,), dtype=jnp.float32)
+            normalized_returned_episode_returns = jnp.zeros(
+                (env.num_envs,), dtype=jnp.float32
+            )
             key, _ = jax.random.split(key)
             _, infos = jax.lax.scan(
                 f=step_env,
-                init=(key, env_state, obs, critic_obs),
+                init=(
+                    key,
+                    env_state,
+                    obs,
+                    critic_obs,
+                    normalized_episode_returns,
+                    normalized_returned_episode_returns,
+                ),
                 xs=None,
                 length=max_episode_steps,
             )
@@ -585,6 +890,11 @@ class ReppoDMERLTrainer:
                 "num_episodes": returned_episode.sum(),
                 "returned_episode_fraction": returned_episode.mean(),
             }
+            metrics["episode_return_raw"] = metrics["episode_return"]
+            if self.reward_normalization_mode == "env_reward":
+                metrics["episode_return_normalized"] = infos[
+                    "normalized_returned_episode_returns"
+                ].mean(where=returned_episode)
             return metrics
 
         return ode_evaluation_fn
@@ -746,11 +1056,6 @@ class ReppoDMERLTrainer:
                 min_lr = cfg.lr * cfg.lr_decay_factor
                 lr = optax.linear_schedule(cfg.lr, min_lr, num_updates)
 
-            def _scale_lr(lr_val, mult: float):
-                if callable(lr_val):
-                    return lambda step: lr_val(step) * mult
-                return lr_val * mult
-
             def _adam_with_decay(lr_val, weight_decay: float = 0., decay_mask=None, optim = optax.adam):
                 tx = optim(lr_val)
                 if weight_decay is not None and weight_decay > 0.0:
@@ -866,11 +1171,6 @@ class ReppoDMERLTrainer:
                     optax.clip_by_global_norm(cfg.max_grad_norm), critic_optimizer
                 )
 
-            def _resolve_special_lr(direct_lr, mult: float):
-                if direct_lr is not None:
-                    return direct_lr
-                return _scale_lr(lr, mult)
-
             def _label_actor_params(params):
                 flat = flatten_dict(params)  # tuple keys to avoid char-splitting
                 norm_prefixes = _layernorm_projection_prefixes(flat)
@@ -891,12 +1191,8 @@ class ReppoDMERLTrainer:
 
             actor_param_tree = nnx.to_pure_dict(nnx.state(actor_networks))
             actor_labels = _label_actor_params(actor_param_tree)
-            temperature_lr = _resolve_special_lr(
-                cfg.temperature_lr, cfg.temperature_lr_mult
-            )
-            lagrangian_lr = _resolve_special_lr(
-                cfg.lagrangian_lr, cfg.lagrangian_lr_mult
-            )
+            temperature_lr = resolve_special_lr(lr, cfg.temperature_lr)
+            lagrangian_lr = resolve_special_lr(lr, cfg.lagrangian_lr)
 
             special_optimizer = _select_special_optimizer(cfg.temp_lagrangian_optim)
 
@@ -954,6 +1250,22 @@ class ReppoDMERLTrainer:
             key, env_state = randomize_env_steps(
                 key, env_state, cfg.max_episode_steps
             )
+            if self.reward_normalization_mode in ("soft_reward", "q_target"):
+                reward_normalization_state = self.reward_normalizer.init(
+                    jnp.zeros((cfg.num_envs,), dtype=jnp.float32)
+                )
+                if cfg.reward_normalization_window_rollouts > 0:
+                    reward_normalization_window_state = (
+                        _init_reward_normalization_window_state(
+                            cfg.reward_normalization_window_rollouts,
+                            dtype=jnp.float32,
+                        )
+                    )
+                else:
+                    reward_normalization_window_state = None
+            else:
+                reward_normalization_state = None
+                reward_normalization_window_state = None
 
             return SACTrainState(
                 actor=actor_trainstate,
@@ -961,9 +1273,16 @@ class ReppoDMERLTrainer:
                 critic=critic_trainstate,
                 iteration=0,
                 time_steps=0,
+                hl_gauss_vmin=jnp.asarray(cfg.vmin, dtype=jnp.float32),
+                hl_gauss_width=jnp.maximum(
+                    jnp.asarray(cfg.vmax - cfg.vmin, dtype=jnp.float32),
+                    jnp.asarray(1e-6, dtype=jnp.float32),
+                ),
                 last_env_state=env_state,
                 last_obs=obs,
                 last_critic_obs=critic_obs,
+                reward_normalization_state=reward_normalization_state,
+                reward_normalization_window_state=reward_normalization_window_state,
             )
 
         return init
@@ -997,6 +1316,8 @@ class ReppoDMERLTrainer:
             actor_model,
             critic_model,
             use_langevin,
+            cfg=self.cfg,
+            train_state=train_state,
         )
         init_action, _, _ = actor_model.vmap_sample_next_step(
             obs_for_actor, init_act_key
@@ -1034,16 +1355,35 @@ class ReppoDMERLTrainer:
         next_obs, next_critic_obs, next_env_state, reward, done, info = self.env.step(
             step_key, env_state, action
         )
+        raw_reward = info.get("raw_reward", reward)
+        normalized_reward = info.get("normalized_reward", reward)
         importance_weight = jnp.zeros((self.cfg.num_envs,))
         next_obs_for_actor = maybe_add_q_grad(
-            next_obs, next_critic_obs, actor_model, critic_model, use_langevin
+            next_obs,
+            next_critic_obs,
+            actor_model,
+            critic_model,
+            use_langevin,
+            cfg=self.cfg,
+            train_state=inner_state,
         )
         # print key shapez
         next_action, next_gen_log_prob, next_dest_log_prob = (
             actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
         )
         next_action = jax.lax.stop_gradient(next_action)
-        next_emb, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
+        if self.cfg.hl_gauss:
+            hl_vmin, hl_vmax = effective_hl_gauss_bounds(self.cfg, inner_state)
+            next_emb, _, _, _, value = critic_model.forward(
+                next_critic_obs,
+                next_action,
+                vmin=hl_vmin,
+                vmax=hl_vmax,
+            )
+        else:
+            next_emb, _, _, _, value = critic_model.forward(
+                next_critic_obs, next_action
+            )
         log_ratio = jax.lax.stop_gradient(
             next_gen_log_prob - next_dest_log_prob
         )
@@ -1058,6 +1398,8 @@ class ReppoDMERLTrainer:
             reward
             - soft_reward_discount * log_ratio.squeeze() * temperature
         )
+        raw_soft_reward = soft_reward
+        normalized_soft_reward = soft_reward
         transition = Transition(
             obs=obs,
             critic_obs=critic_obs,
@@ -1066,9 +1408,13 @@ class ReppoDMERLTrainer:
             next_state_emb=next_emb,
             next_emb_mask=jnp.ones_like(reward),
             reward=reward,
+            raw_reward=raw_reward,
+            normalized_reward=normalized_reward,
             reward_target=reward,
             reward_target_mask=jnp.ones_like(reward),
             soft_reward=soft_reward,
+            raw_soft_reward=raw_soft_reward,
+            normalized_soft_reward=normalized_soft_reward,
             value=value,
             done=done,
             truncated=next_env_state.env_state.truncated,
@@ -1092,12 +1438,57 @@ class ReppoDMERLTrainer:
     ) -> tuple[SACTrainState, dict[str, jax.Array]]:
         cfg = self.cfg
         action_size_target = self.action_size_target
+        mode = self.reward_normalization_mode
+        reward_metrics = {
+            "reward/raw_mean": jnp.mean(batch.raw_reward),
+            "reward/normalized_mean": jnp.mean(batch.normalized_reward),
+            "soft_reward/raw_mean": jnp.mean(batch.raw_soft_reward),
+            "soft_reward/normalized_mean": jnp.mean(batch.normalized_soft_reward),
+            "reward_norm/window_rollouts": jnp.asarray(
+                cfg.reward_normalization_window_rollouts, dtype=jnp.float32
+            ),
+            "reward_norm/window_filled": jnp.asarray(0.0, dtype=jnp.float32),
+        }
+
+        if mode == "soft_reward":
+            train_state, _ = _update_reward_normalization_from_values(
+                cfg,
+                self.reward_normalizer,
+                train_state,
+                batch.raw_soft_reward,
+            )
+            reward_scale = reward_normalization_scale(
+                cfg, train_state, dtype=batch.raw_soft_reward.dtype
+            )
+            normalized_soft_reward = batch.raw_soft_reward / reward_scale
+            normalized_soft_reward = _maybe_clip_reward_normalized(
+                normalized_soft_reward, cfg
+            )
+            batch = batch.replace(
+                soft_reward=normalized_soft_reward,
+                normalized_soft_reward=normalized_soft_reward,
+            )
+            reward_metrics["soft_reward/normalized_mean"] = jnp.mean(
+                normalized_soft_reward
+            )
+
+        target_batch = batch
+        if mode == "q_target":
+            reward_scale = reward_normalization_scale(
+                cfg, train_state, dtype=batch.value.dtype
+            )
+            reward_mean = jnp.asarray(
+                train_state.reward_normalization_state.mean, dtype=batch.value.dtype
+            )
+            target_batch = batch.replace(
+                value=batch.value * reward_scale + reward_mean
+            )
 
         # Build the TD-lambda scan body via the helper module so we avoid
         # defining tiny inner functions in the trainer.
         if cfg.use_env_time_discounting:
             discount, trace_decay = maybe_env_time_discount_lambda(
-                batch.obs,
+                target_batch.obs,
                 cfg.gamma,
                 cfg.lmbda,
                 cfg.diffusion.diff_steps,
@@ -1110,36 +1501,75 @@ class ReppoDMERLTrainer:
                     gamma_t, lmbda_t, carry, transition
                 )
 
-            target_scan_inputs = (batch, discount, trace_decay)
+            target_scan_inputs = (target_batch, discount, trace_decay)
         else:
             nstep_fn = partial(
                 compute_nstep_lambda_step,
                 cfg.gamma,
                 cfg.lmbda,
             )
-            target_scan_inputs = batch
-        _, target_values = jax.lax.scan(
+            target_scan_inputs = target_batch
+        _, target_values_raw = jax.lax.scan(
             nstep_fn,
             (
-                batch.value[-1],
-                jnp.ones_like(batch.truncated[0]),
-                jnp.zeros_like(batch.importance_weight[0]),
+                target_batch.value[-1],
+                jnp.ones_like(target_batch.truncated[0]),
+                jnp.zeros_like(target_batch.importance_weight[0]),
             ),
             target_scan_inputs,
             reverse=True,
         )
+        target_values = target_values_raw
+        if mode == "q_target":
+            train_state, reward_normalization_state = (
+                _update_reward_normalization_from_values(
+                    cfg,
+                    self.reward_normalizer,
+                    train_state,
+                    target_values_raw,
+                )
+            )
+            reward_scale = reward_normalization_scale(
+                cfg, train_state, dtype=target_values_raw.dtype
+            )
+            reward_mean = jnp.asarray(
+                reward_normalization_state.mean, dtype=target_values_raw.dtype
+            )
+            target_values = (target_values_raw - reward_mean) / reward_scale
+            target_values = _maybe_clip_reward_normalized(target_values, cfg)
+
+        reward_metrics["q_target/raw_mean"] = jnp.mean(target_values_raw)
+        reward_metrics["q_target/normalized_mean"] = jnp.mean(target_values)
+        if train_state.reward_normalization_state is not None:
+            norm_state = train_state.reward_normalization_state
+            reward_metrics["reward_norm/std"] = jnp.sqrt(jnp.mean(norm_state.var))
+            reward_metrics["reward_norm/mean"] = jnp.mean(norm_state.mean)
+            reward_metrics["reward_norm/count"] = jnp.asarray(
+                norm_state.count, dtype=jnp.float32
+            )
+            if train_state.reward_normalization_window_state is not None:
+                reward_metrics["reward_norm/window_filled"] = jnp.asarray(
+                    train_state.reward_normalization_window_state.filled,
+                    dtype=jnp.float32,
+                )
         # print min max and mean values of target_values for debugging
         # jax.debug.print("target_values stats - min: {min}, max: {max}, mean: {mean}",
         #                 min=jnp.min(target_values),
         #                 max=jnp.max(target_values),
         #                 mean=jnp.mean(target_values))
+        target_vals_flat = target_values.reshape(-1)
+        bounds_metrics = {}
+        if cfg.hl_gauss:
+            train_state, bounds_metrics = _update_hl_gauss_bounds(
+                cfg, train_state, target_vals_flat
+            )
         if cfg.log_target_value_stats:
-            target_vals_flat = target_values.reshape(-1)
+            hl_vmin, hl_vmax = effective_hl_gauss_bounds(cfg, train_state)
             target_vals_finite = jnp.nan_to_num(
                 target_vals_flat,
                 nan=0.0,
-                posinf=cfg.vmax,
-                neginf=cfg.vmin,
+                posinf=hl_vmax,
+                neginf=hl_vmin,
             )
             target_val_mean = jnp.mean(target_vals_finite)
             target_val_min = jnp.min(target_vals_finite)
@@ -1254,6 +1684,9 @@ class ReppoDMERLTrainer:
             update_metrics["target_value_mean"] = target_val_mean
             update_metrics["target_value_min"] = target_val_min
             update_metrics["target_value_max"] = target_val_max
+        if cfg.hl_gauss:
+            update_metrics.update(bounds_metrics)
+        update_metrics.update(reward_metrics)
         # jax.debug.print("Temperature: {temperature}, Lagrangian: {lagrangian}",
         #                 temperature=temperature, lagrangian=lagrangian)
         return train_state, update_metrics
@@ -1424,6 +1857,9 @@ class ReppoDMERLTrainer:
             "train/episode_return": train_state.last_env_state.info[
                 "returned_episode_returns"
             ].mean(),
+            "train/episode_return_raw": train_state.last_env_state.info[
+                "returned_episode_returns"
+            ].mean(),
             "train/episode_length": train_state.last_env_state.info[
                 "returned_episode_lengths"
             ].mean(),
@@ -1520,6 +1956,20 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 cfg.hyperparameters[name] = sampled_value
             else:
                 raise ValueError(f"Hyperparameter {name} not found in config.")
+
+    if "normalize_reward" in cfg.hyperparameters:
+        raise ValueError(
+            "hyperparameters.normalize_reward has been removed for DMERL. "
+            "Use hyperparameters.reward_normalization_mode=env_reward, soft_reward, "
+            "q_target, or none."
+        )
+    if "reward_normalization_use_rollout_window" in cfg.hyperparameters:
+        raise ValueError(
+            "hyperparameters.reward_normalization_use_rollout_window has been "
+            "replaced by hyperparameters.reward_normalization_window_rollouts. "
+            "Use 0 for cumulative stats, 1 for the current rollout, or N > 1 "
+            "for a sliding history over N rollouts."
+        )
 
     try:
         with open("completed_trials.txt", "r") as f:
@@ -1754,6 +2204,18 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
             "critic_step": _to_numpy_tree(state.critic.step),
             "time_steps": _to_numpy_tree(state.time_steps),
             "iteration": _to_numpy_tree(state.iteration),
+            "hl_gauss_vmin": _to_numpy_tree(state.hl_gauss_vmin),
+            "hl_gauss_width": _to_numpy_tree(state.hl_gauss_width),
+            "reward_normalization_state": _to_numpy_tree(
+                state.reward_normalization_state
+            )
+            if state.reward_normalization_state is not None
+            else None,
+            "reward_normalization_window_state": _to_numpy_tree(
+                state.reward_normalization_window_state
+            )
+            if state.reward_normalization_window_state is not None
+            else None,
             "num_seeds": int(np.asarray(state.time_steps).shape[0])
             if np.asarray(state.time_steps).ndim > 0
             else 1,
@@ -1872,6 +2334,18 @@ def run(cfg: DictConfig, trial: optuna.Trial | None) -> float:
                 "critic_step": _to_numpy_tree(state.critic.step),
                 "time_steps": _to_numpy_tree(state.time_steps),
                 "iteration": _to_numpy_tree(state.iteration),
+                "hl_gauss_vmin": _to_numpy_tree(state.hl_gauss_vmin),
+                "hl_gauss_width": _to_numpy_tree(state.hl_gauss_width),
+                "reward_normalization_state": _to_numpy_tree(
+                    state.reward_normalization_state
+                )
+                if state.reward_normalization_state is not None
+                else None,
+                "reward_normalization_window_state": _to_numpy_tree(
+                    state.reward_normalization_window_state
+                )
+                if state.reward_normalization_window_state is not None
+                else None,
                 "num_seeds": int(np.asarray(state.time_steps).shape[0])
                 if np.asarray(state.time_steps).ndim > 0
                 else 1,

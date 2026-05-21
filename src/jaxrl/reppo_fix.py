@@ -28,6 +28,7 @@ from src.env_utils.jax_wrappers import (
     NormalizeVec,
 )
 from src.jaxrl import utils
+from src.jaxrl.reppo_helpers.learning_rates import resolve_special_lr
 from src.networks.jax_models import (
     CategoricalCriticNetwork,
     CriticNetwork,
@@ -126,10 +127,8 @@ class ReppoConfig(struct.PyTreeNode):
     train_mode: str = "reparam"
     disable_wpo_fisher_preconditioning: bool = False
     disable_temperature: bool = False
-    temperature_lr: float = 3e-4
-    temperature_lr_mult: float = 1.0
-    lagrangian_lr: float = 3e-4
-    lagrangian_lr_mult: float = 1.0
+    temperature_lr: float | None = None
+    lagrangian_lr: float | None = None
 
 
 class SACTrainState(struct.PyTreeNode):
@@ -287,16 +286,6 @@ def make_init(
             num_updates = num_iterations * cfg.num_epochs * cfg.num_mini_batches
             lr = optax.linear_schedule(cfg.lr, 0, num_updates)
 
-        def _scale_lr(lr_val, mult: float):
-            if callable(lr_val):
-                return lambda step: lr_val(step) * mult
-            return lr_val * mult
-
-        def _resolve_special_lr(lr_val, special_lr, mult: float):
-            if special_lr is not None:
-                return special_lr
-            return _scale_lr(lr_val, mult)
-
         def _label_actor_params(params):
             flat = flatten_dict(params)
             labels = {}
@@ -310,12 +299,8 @@ def make_init(
                     labels[k] = "default"
             return unflatten_dict(labels)
 
-        temperature_lr = _resolve_special_lr(
-            lr, cfg.temperature_lr, cfg.temperature_lr_mult
-        )
-        lagrangian_lr = _resolve_special_lr(
-            lr, cfg.lagrangian_lr, cfg.lagrangian_lr_mult
-        )
+        temperature_lr = resolve_special_lr(lr, cfg.temperature_lr)
+        lagrangian_lr = resolve_special_lr(lr, cfg.lagrangian_lr)
         actor_param_tree = nnx.to_pure_dict(nnx.state(actor_networks))
         actor_labels = _label_actor_params(actor_param_tree)
         actor_optimizer = optax.multi_transform(

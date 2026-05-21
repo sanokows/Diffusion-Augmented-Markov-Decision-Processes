@@ -196,6 +196,7 @@ data.zip
 !tests/
 tests/*
 !tests/test_env_time_discounting.py
+!tests/test_learning_rates.py
 jobs/
 jax_profiling_traces/
 FastTD3/

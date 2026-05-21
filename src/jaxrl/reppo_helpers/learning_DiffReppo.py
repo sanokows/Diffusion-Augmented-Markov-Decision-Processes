@@ -13,6 +13,65 @@ import optax
 from src.jaxrl import utils
 
 
+VALID_REWARD_NORMALIZATION_MODES = ("none", "env_reward", "soft_reward", "q_target")
+
+
+def reward_normalization_mode(cfg) -> str:
+    return str(getattr(cfg, "reward_normalization_mode", "none")).lower()
+
+
+def uses_normalized_value_scale(cfg) -> bool:
+    return reward_normalization_mode(cfg) in ("soft_reward", "q_target")
+
+
+def reward_normalization_scale(cfg, train_state, dtype=jnp.float32):
+    if not uses_normalized_value_scale(cfg):
+        return jnp.asarray(1.0, dtype=dtype)
+    norm_state = getattr(train_state, "reward_normalization_state", None)
+    if norm_state is None:
+        return jnp.asarray(1.0, dtype=dtype)
+    eps = jnp.asarray(getattr(cfg, "reward_norm_epsilon", 1e-8), dtype=dtype)
+    return jnp.sqrt(jnp.asarray(norm_state.var, dtype=dtype) + eps)
+
+
+def scale_temperature_for_reward_normalization(temperature, cfg, train_state):
+    temperature = jnp.asarray(temperature)
+    scale = reward_normalization_scale(cfg, train_state, dtype=temperature.dtype)
+    return temperature / jax.lax.stop_gradient(scale)
+
+
+def adaptive_hl_gauss_bounds_enabled(cfg) -> bool:
+    return bool(getattr(cfg, "hl_gauss", False)) and bool(
+        getattr(cfg, "adaptive_hl_gauss_bounds", False)
+    )
+
+
+def effective_hl_gauss_bounds(cfg, train_state=None):
+    if adaptive_hl_gauss_bounds_enabled(cfg) and train_state is not None:
+        vmin = jnp.asarray(train_state.hl_gauss_vmin, dtype=jnp.float32)
+        width = jnp.maximum(
+            jnp.asarray(train_state.hl_gauss_width, dtype=jnp.float32),
+            jnp.asarray(1e-6, dtype=jnp.float32),
+        )
+        return vmin, vmin + width
+    return (
+        jnp.asarray(cfg.vmin, dtype=jnp.float32),
+        jnp.asarray(cfg.vmax, dtype=jnp.float32),
+    )
+
+
+def _critic_value(critic_model, obs, action, vmin=None, vmax=None):
+    if vmin is None or vmax is None:
+        return critic_model.critic(obs, action)
+    return critic_model.critic(obs, action, vmin=vmin, vmax=vmax)
+
+
+def _critic_forward(critic_model, obs, action, vmin=None, vmax=None):
+    if vmin is None or vmax is None:
+        return critic_model.forward(obs, action)
+    return critic_model.forward(obs, action, vmin=vmin, vmax=vmax)
+
+
 def _resolve_temperature(actor_model, cfg, train_state=None) -> jax.Array:
     """Return either learned temperature or an exponential decay schedule."""
     if bool(getattr(cfg, "new_temp_mode", False)) and getattr(cfg, "train_mode", None) == "WPO":
@@ -42,13 +101,21 @@ def _resolve_temperature(actor_model, cfg, train_state=None) -> jax.Array:
 
 
 def compute_action_q_grads(
-    actor_model, critic_model, obs, critic_obs, temperature: jax.Array | None = None
+    actor_model,
+    critic_model,
+    obs,
+    critic_obs,
+    temperature: jax.Array | None = None,
+    vmin=None,
+    vmax=None,
 ):
     """Compute eval-style guidance gradient: q_grad + temperature * grad(log p)."""
     actions = obs["orig_actions"]
 
     def _q_grad(single_critic_obs, act):
-        q_fn = lambda a: critic_model.critic(single_critic_obs, a).sum()
+        q_fn = lambda a: _critic_value(
+            critic_model, single_critic_obs, a, vmin=vmin, vmax=vmax
+        ).sum()
         return jax.grad(q_fn)(act)
 
     q_grad = jax.vmap(_q_grad)(critic_obs, actions)
@@ -85,12 +152,29 @@ def maybe_add_q_grad(
     critic_model,
     use_langevin: bool,
     temperature: jax.Array | None = None,
+    cfg=None,
+    train_state=None,
 ):
     """Attach guidance gradients to the observation dict when enabled."""
     if not use_langevin:
         return obs
+    if temperature is None and cfg is not None:
+        temperature = _resolve_temperature(actor_model, cfg, train_state)
+    if temperature is not None and cfg is not None:
+        temperature = scale_temperature_for_reward_normalization(
+            temperature, cfg, train_state
+        )
+    vmin, vmax = (None, None)
+    if cfg is not None and bool(getattr(cfg, "hl_gauss", False)):
+        vmin, vmax = effective_hl_gauss_bounds(cfg, train_state)
     q_grad = compute_action_q_grads(
-        actor_model, critic_model, obs, critic_obs, temperature=temperature
+        actor_model,
+        critic_model,
+        obs,
+        critic_obs,
+        temperature=temperature,
+        vmin=vmin,
+        vmax=vmax,
     )
     obs_with_grad = dict(obs)
     obs_with_grad["q_grad"] = jax.lax.stop_gradient(q_grad)
@@ -173,10 +257,11 @@ def _weighted_batch_mean_axis0(
 def critic_loss_fn(params, train_state, minibatch, target_vals, cfg, importance_ratio=None):
         critic_model = nnx.merge(train_state.critic.graphdef, params)
         critic_pred = critic_model.critic_cat(minibatch.critic_obs, minibatch.action).squeeze()
+        hl_vmin, hl_vmax = effective_hl_gauss_bounds(cfg, train_state)
         if cfg.hl_gauss:
             target_cat = jax.vmap(
                 utils.hl_gauss, in_axes=(0, None, None, None)
-            )(target_vals, cfg.num_bins, cfg.vmin, cfg.vmax)
+            )(target_vals, cfg.num_bins, hl_vmin, hl_vmax)
             critic_update_loss = optax.softmax_cross_entropy(critic_pred, target_cat)
         else:
             critic_update_loss = optax.squared_error(
@@ -184,8 +269,12 @@ def critic_loss_fn(params, train_state, minibatch, target_vals, cfg, importance_
                 target_vals.reshape(-1, 1),
             )
 
-        _, pred, pred_rew, pred_next_diff_state, value = critic_model.forward(
-            minibatch.critic_obs, minibatch.action
+        _, pred, pred_rew, pred_next_diff_state, value = _critic_forward(
+            critic_model,
+            minibatch.critic_obs,
+            minibatch.action,
+            vmin=hl_vmin if cfg.hl_gauss else None,
+            vmax=hl_vmax if cfg.hl_gauss else None,
         )
         # `next_state_emb` is shifted by `diff_steps` in the trainer; tail elements are
         # invalid and must be masked out to avoid supervising with clamped indices.
@@ -303,6 +392,9 @@ def actor_loss_fn(
         )
         actor_model = nnx.merge(updated_state.actor.graphdef, params)
         temperature = _resolve_temperature(actor_model, cfg, updated_state)
+        value_temperature = scale_temperature_for_reward_normalization(
+            temperature, cfg, updated_state
+        )
         critic_current_model = nnx.merge(
             updated_state.critic.graphdef, updated_state.critic.params
         )
@@ -316,6 +408,8 @@ def actor_loss_fn(
             critic_current_model,
             use_langevin,
             temperature=temperature,
+            cfg=cfg,
+            train_state=updated_state,
         )
         obs_for_target = maybe_add_q_grad(
             minibatch.obs,
@@ -324,13 +418,22 @@ def actor_loss_fn(
             critic_for_target,
             use_langevin,
             temperature=temperature,
+            cfg=cfg,
+            train_state=updated_state,
         )
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
             obs_for_actions, step_key
         )
         entropy_prior = actor_model.get_prior_entropy()
         log_prob_ratio = gen_log_prob - dest_log_prob
-        value = critic_current_model.critic(minibatch.critic_obs, pred_action)
+        hl_vmin, hl_vmax = effective_hl_gauss_bounds(cfg, updated_state)
+        value = _critic_value(
+            critic_current_model,
+            minibatch.critic_obs,
+            pred_action,
+            vmin=hl_vmin if cfg.hl_gauss else None,
+            vmax=hl_vmax if cfg.hl_gauss else None,
+        )
     
         #print the shape of log_prob_ratio
         #jax.debug.print("log_prob_ratio shape: {shape}", shape=log_prob_ratio.shape)
@@ -360,19 +463,19 @@ def actor_loss_fn(
 
         if cfg.actor_kl_clip_mode == "full":
             actor_loss_val = (
-                log_prob_ratio * jax.lax.stop_gradient(temperature)
+                log_prob_ratio * jax.lax.stop_gradient(value_temperature)
                 - value
                 + kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl
             )
         elif cfg.actor_kl_clip_mode == "clipped":
             actor_loss_val = jnp.where(
                 kl < cfg.kl_bound,
-                log_prob_ratio * jax.lax.stop_gradient(temperature) - value,
+                log_prob_ratio * jax.lax.stop_gradient(value_temperature) - value,
                 kl * jax.lax.stop_gradient(lagrangian) * cfg.reduce_kl,
             )
         elif cfg.actor_kl_clip_mode == "value":
             actor_loss_val = (
-                log_prob_ratio * jax.lax.stop_gradient(temperature)
+                log_prob_ratio * jax.lax.stop_gradient(value_temperature)
                 - value
             )
         else:
@@ -402,6 +505,7 @@ def actor_loss_fn(
             actor_loss=_metric_scalar(_weighted_batch_mean(actor_loss_val, importance_ratio)),
             loss=loss,
             temp=_metric_scalar(temperature),
+            value_temp=_metric_scalar(value_temperature),
             abs_batch_action=_metric_scalar(
                 _weighted_batch_mean(jnp.abs(minibatch.action), importance_ratio)
             ),
@@ -475,6 +579,8 @@ def actor_WPO_loss_fn(
             critic_for_actions,
             use_langevin,
             temperature=temperature,
+            cfg=cfg,
+            train_state=updated_state,
         )
         obs_for_target = maybe_add_q_grad(
             minibatch.obs,
@@ -483,6 +589,8 @@ def actor_WPO_loss_fn(
             critic_rollout_model,
             use_langevin,
             temperature=temperature,
+            cfg=cfg,
+            train_state=updated_state,
         )
 
         stop_grad_params = jax.tree.map(jax.lax.stop_gradient, params)
@@ -545,6 +653,9 @@ def actor_WPO_loss_fn(
             if use_wpo_log_temp_update
             else _resolve_temperature(actor_model, cfg, updated_state)
         )
+        value_temperature = scale_temperature_for_reward_normalization(
+            temperature, cfg, updated_state
+        )
 
         #jax.debug.print("train_update_step_5_env shape: {shape}", shape=step_key.shape)
         pred_action, gen_log_prob, dest_log_prob = actor_model.vmap_sample_next_step(
@@ -559,7 +670,14 @@ def actor_WPO_loss_fn(
 
         def single_q(obs, act):
             batched_obs = jax.tree_util.tree_map(lambda x: x[None], obs)
-            q_val = critic_current_model.critic(batched_obs, act[None])
+            hl_vmin, hl_vmax = effective_hl_gauss_bounds(cfg, updated_state)
+            q_val = _critic_value(
+                critic_current_model,
+                batched_obs,
+                act[None],
+                vmin=hl_vmin if cfg.hl_gauss else None,
+                vmax=hl_vmax if cfg.hl_gauss else None,
+            )
             # Expected shape is scalar-like (e.g. (1,) or (1, 1)); squeeze to scalar.
             return jnp.squeeze(q_val)
 
@@ -628,12 +746,14 @@ def actor_WPO_loss_fn(
         lagrangian = actor_model.lagrangian()
 
         actor_Q_loss = jnp.sum(
-            jax.lax.stop_gradient(log_prob_action_grad * temperature - stop_q_action_grad)
+            jax.lax.stop_gradient(
+                log_prob_action_grad * value_temperature - stop_q_action_grad
+            )
             * (gen_log_prob_action_grad - dest_log_prob_action_grad),
             axis=-1,
         )
 
-        safe_temperature = jnp.maximum(temperature, 1e-8)
+        safe_temperature = jnp.maximum(value_temperature, 1e-8)
         delta_t = (
             jax.lax.stop_gradient(log_prob_action_grad)
             - jax.lax.stop_gradient(stop_q_action_grad) / safe_temperature
@@ -641,7 +761,7 @@ def actor_WPO_loss_fn(
         delta_t_sq_mean = _weighted_batch_mean(
             (delta_t**2).sum(axis=-1), importance_ratio
         )
-        actor_WPO_loss = temperature * delta_t_sq_mean
+        actor_WPO_loss = value_temperature * delta_t_sq_mean
 
         clip_ratio = _weighted_batch_mean(
             (kl_clip_value >= cfg.kl_bound).astype(jnp.float32),
@@ -713,6 +833,7 @@ def actor_WPO_loss_fn(
             ),
             loss=loss,
             temp=_metric_scalar(temperature),
+            value_temp=_metric_scalar(value_temperature),
             abs_batch_action=_metric_scalar(
                 _weighted_batch_mean(jnp.abs(minibatch.action), importance_ratio)
             ),
@@ -760,7 +881,14 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     step_key = jax.random.split(step_key, cfg.num_envs)
     temperature = _resolve_temperature(actor_model, cfg, inner_state)
     obs_for_actor = maybe_add_q_grad(
-        obs, critic_obs, actor_model, critic_model, use_langevin, temperature=temperature
+        obs,
+        critic_obs,
+        actor_model,
+        critic_model,
+        use_langevin,
+        temperature=temperature,
+        cfg=cfg,
+        train_state=inner_state,
     )
 
     jax.debug.print("train_update_step_1_env shape: {shape}", shape=act_key.shape)
@@ -771,6 +899,8 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
     next_obs, next_critic_obs, next_env_state, reward, done, info = env.step(
         step_key, env_state, action
     )
+    raw_reward = info.get("raw_reward", reward)
+    normalized_reward = info.get("normalized_reward", reward)
     importance_weight = jnp.zeros((cfg.num_envs,))
     key, next_act_key = jax.random.split(key)
     next_obs_for_actor = maybe_add_q_grad(
@@ -780,13 +910,22 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         critic_model,
         use_langevin,
         temperature=temperature,
+        cfg=cfg,
+        train_state=inner_state,
     )
 
     next_action, next_gen_log_prob, next_dest_log_prob = (
         actor_model.vmap_sample_next_step(next_obs_for_actor, next_act_key)
     )
     next_action = jax.lax.stop_gradient(next_action)
-    next_emb, _, _, _, value = critic_model.forward(next_critic_obs, next_action)
+    hl_vmin, hl_vmax = effective_hl_gauss_bounds(cfg, inner_state)
+    next_emb, _, _, _, value = _critic_forward(
+        critic_model,
+        next_critic_obs,
+        next_action,
+        vmin=hl_vmin if cfg.hl_gauss else None,
+        vmax=hl_vmax if cfg.hl_gauss else None,
+    )
     log_ratio = jax.lax.stop_gradient(
         next_gen_log_prob - next_dest_log_prob
     )
@@ -794,6 +933,8 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         reward
         - cfg.gamma * log_ratio.squeeze() * temperature
     )
+    raw_soft_reward = soft_reward
+    normalized_soft_reward = soft_reward
     transition = Transition(
         obs=obs,
         critic_obs=critic_obs,
@@ -802,9 +943,13 @@ def train_step_env(Transition, cfg, env, actor_model, critic_model, carry, _):
         next_state_emb=next_emb,
         next_emb_mask=jnp.ones_like(reward),
         reward=reward,
+        raw_reward=raw_reward,
+        normalized_reward=normalized_reward,
         reward_target=reward,
         reward_target_mask=jnp.ones_like(reward),
         soft_reward=soft_reward,
+        raw_soft_reward=raw_soft_reward,
+        normalized_soft_reward=normalized_soft_reward,
         value=value,
         done=done,
         truncated=next_env_state.truncated,

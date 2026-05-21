@@ -58,5 +58,8 @@ sbatch ./READMEs/Clusters/Karolina/WPO/control_1_Walk.sh
 sbatch ./READMEs/Clusters/Karolina/DME_REPPO/control_1.sh
 sbatch ./READMEs/Clusters/Karolina/DME_REPPO/control_2.sh
 sbatch ./READMEs/Clusters/Karolina/DME_REPPO/low_dim.sh
+sbatch ./READMEs/Clusters/Karolina/DME_REPPO/env_time_fish_hopper.sh
+
+sbatch ./READMEs/Clusters/Karolina/DME_REPPO/run_sweep_4_steps_tests.sh
 
 ```

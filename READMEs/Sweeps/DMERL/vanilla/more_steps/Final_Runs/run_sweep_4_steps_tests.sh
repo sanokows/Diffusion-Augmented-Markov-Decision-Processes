@@ -8,20 +8,39 @@ ENV_NAMES=(
 
 # Step 2: Fixed defaults and explicit tuple sweep.
 DIFF_STEP=4
+NUM_MINI_BATCHES=8
+GAMMA=0.99
+LMBDA=0.95
+NUM_BINS=151
+WANDB_PROJECT_SUFFIX="_FR_4step_no_reward_norm_vbounds_lr"
 
-# Step 2a: Sweep tuples.
-# Format: "vmin|vmax|lr|temperature_lr|lagrangian_lr|aux_loss_mult|gamma|lmbda|num_mini_batches|ent_target_mult|num_collection_step_factor|num_bins|friction|seed"
-SWEEP_TUPLES=(
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|0"
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|1"
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|2"
-    "-25|20|1e-3|3e-4|3e-4|0.25|0.9878|0.96|4|6|0.5|301|0.25|3"
-    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|4"
-    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|0.25|5"
-    # "-10|10|1e-3|3e-4|3e-4|0.15|0.9908|0.96|4|4|0.5|151|
-
+REWARD_NORMALIZATION_MODES=(
+    none
 )
 
+REWARD_NORMALIZATION_WINDOW_ROLLOUTS=(
+    0
+    #8
+)
+
+# Step 2a: Sweep value bounds and learning-rate tuples.
+# Format: "vmin|vmax"
+VMIN_VMAX_TUPLES=(
+    "-12|5"
+    "-20|10"
+    "-40|25"
+)
+
+# Format: "lr|temperature_lr|lagrangian_lr"
+LR_TUPLES=(
+    "1e-3|6e-4|6e-4"
+    # "1e-3|1e-3|1e-3"
+   # "1e-3|3e-4|3e-4"
+)
+
+ADAPTIVE_HL_GAUSS_BOUNDS_VALUES=(
+    False
+)
 
 # Step 3: Define GPU pool and round-robin scheduling.
 # Prefer the SLURM-provided visibility mask when present.
@@ -36,8 +55,9 @@ if [ "${#GPU_DEVICES[@]}" -eq 0 ]; then
 fi
 NUM_GPUS=${#GPU_DEVICES[@]}
 GPU_INDEX=0
-TOTAL_RUNS=$(( ${#ENV_NAMES[@]} * ${#SWEEP_TUPLES[@]} ))
-echo "Planned runs: $TOTAL_RUNS (env=${#ENV_NAMES[@]} sweep_tuples=${#SWEEP_TUPLES[@]})"
+TOTAL_RUNS=$(( ${#ENV_NAMES[@]} * ${#REWARD_NORMALIZATION_MODES[@]} * ${#REWARD_NORMALIZATION_WINDOW_ROLLOUTS[@]} * ${#VMIN_VMAX_TUPLES[@]} * ${#LR_TUPLES[@]} * ${#ADAPTIVE_HL_GAUSS_BOUNDS_VALUES[@]} ))
+echo "Planned runs: $TOTAL_RUNS (env=${#ENV_NAMES[@]} reward_modes=${#REWARD_NORMALIZATION_MODES[@]} window_rollouts=${#REWARD_NORMALIZATION_WINDOW_ROLLOUTS[@]} vmin_vmax_tuples=${#VMIN_VMAX_TUPLES[@]} lr_tuples=${#LR_TUPLES[@]} adaptive_hl_gauss_bounds=${#ADAPTIVE_HL_GAUSS_BOUNDS_VALUES[@]})"
+echo "Fixed hyperparameters: gamma=$GAMMA lmbda=$LMBDA num_bins=$NUM_BINS"
 echo "Visible GPU devices: ${GPU_DEVICES[*]} (count=$NUM_GPUS)"
 
 # Step 4: Wait until a GPU is free (no active compute processes)
@@ -66,6 +86,7 @@ wait_for_gpu() {
 
 # Step 5: Launch a single run with explicit hyperparameters (one per GPU slot at a time)
 declare -a GPU_PIDS
+declare -A LAUNCHED_CONFIGS
 launch_run() {
     local ENV_NAME="$1"
     local SWEEP_AXIS="$2"
@@ -74,15 +95,16 @@ launch_run() {
     local LR="$5"
     local TEMPERATURE_LR="$6"
     local LAGRANGIAN_LR="$7"
-    local AUX_LOSS_MULT="$8"
-    local GAMMA="$9"
-    local LMBDA="${10}"
-    local NUM_MINI_BATCHES="${11}"
-    local ENT_TARGET_MULT="${12}"
-    local NUM_COLLECTION_STEP_FACTOR="${13}"
-    local NUM_BINS="${14}"
-    local FRICTION="${15}"
-    local SEED="${16:-0}"
+    local ADAPTIVE_HL_GAUSS_BOUNDS="$8"
+    local REWARD_NORMALIZATION_MODE="$9"
+    local REWARD_NORMALIZATION_WINDOW_ROLLOUT="${10}"
+    local CONFIG_KEY="${ENV_NAME}|${DIFF_STEP}|${GAMMA}|${LMBDA}|${REWARD_NORMALIZATION_MODE}|${REWARD_NORMALIZATION_WINDOW_ROLLOUT}|${VMIN}|${VMAX}|${LR}|${TEMPERATURE_LR}|${LAGRANGIAN_LR}|${NUM_BINS}|${ADAPTIVE_HL_GAUSS_BOUNDS}"
+
+    if [ -n "${LAUNCHED_CONFIGS[$CONFIG_KEY]+x}" ]; then
+        echo "Skipping duplicate config from axis=$SWEEP_AXIS: env.name=$ENV_NAME diff_steps=$DIFF_STEP num_mini_batches=$NUM_MINI_BATCHES gamma=$GAMMA lmbda=$LMBDA reward_normalization_mode=$REWARD_NORMALIZATION_MODE reward_normalization_window_rollouts=$REWARD_NORMALIZATION_WINDOW_ROLLOUT vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR num_bins=$NUM_BINS adaptive_hl_gauss_bounds=$ADAPTIVE_HL_GAUSS_BOUNDS"
+        return
+    fi
+    LAUNCHED_CONFIGS["$CONFIG_KEY"]=1
 
     local GPU_SLOT=$((GPU_INDEX % NUM_GPUS))
     local GPU_DEVICE="${GPU_DEVICES[$GPU_SLOT]}"
@@ -91,31 +113,25 @@ launch_run() {
         echo "Waiting for previous run on GPU slot $GPU_SLOT (pid ${GPU_PIDS[$GPU_SLOT]})..."
         wait "${GPU_PIDS[$GPU_SLOT]}"
     fi
-    echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR aux_loss_mult=$AUX_LOSS_MULT gamma=$GAMMA lmbda=$LMBDA num_bins=$NUM_BINS friction=$FRICTION seed=$SEED on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
+    echo "Starting axis=$SWEEP_AXIS env.name=$ENV_NAME diff_steps=$DIFF_STEP num_mini_batches=$NUM_MINI_BATCHES gamma=$GAMMA lmbda=$LMBDA reward_normalization_mode=$REWARD_NORMALIZATION_MODE reward_normalization_window_rollouts=$REWARD_NORMALIZATION_WINDOW_ROLLOUT vmin=$VMIN vmax=$VMAX lr=$LR temperature_lr=$TEMPERATURE_LR lagrangian_lr=$LAGRANGIAN_LR num_bins=$NUM_BINS adaptive_hl_gauss_bounds=$ADAPTIVE_HL_GAUSS_BOUNDS on GPU slot $GPU_SLOT (device $GPU_DEVICE)..."
     CUDA_VISIBLE_DEVICES="$GPU_DEVICE" python -m src.jaxrl.reppo_DMERL_new \
         env.name="$ENV_NAME" \
-        wandb.project_suffix="_FR_more_steps_rew_norm_final" \
-        hyperparameters.num_eval=50 \
-        hyperparameters.total_time_steps=50000000 \
+        wandb.project_suffix="$WANDB_PROJECT_SUFFIX" \
         hyperparameters.diffusion.diff_steps="$DIFF_STEP" \
         hyperparameters.num_mini_batches="$NUM_MINI_BATCHES" \
+        hyperparameters.gamma="$GAMMA" \
+        hyperparameters.lmbda="$LMBDA" \
+        hyperparameters.reward_normalization_mode="$REWARD_NORMALIZATION_MODE" \
+        hyperparameters.reward_normalization_window_rollouts="$REWARD_NORMALIZATION_WINDOW_ROLLOUT" \
         hyperparameters.lr="$LR" \
         hyperparameters.temperature_lr="$TEMPERATURE_LR" \
         hyperparameters.lagrangian_lr="$LAGRANGIAN_LR" \
-        hyperparameters.gamma="$GAMMA" \
-        hyperparameters.lmbda="$LMBDA" \
         hyperparameters.vmin="$VMIN" \
         hyperparameters.vmax="$VMAX" \
         hyperparameters.num_bins="$NUM_BINS" \
-        hyperparameters.aux_loss_mult="$AUX_LOSS_MULT" \
-        hyperparameters.ent_target_mult="$ENT_TARGET_MULT" \
-        hyperparameters.num_collection_step_factor="$NUM_COLLECTION_STEP_FACTOR" \
-        hyperparameters.ent_start=0.01 \
-        hyperparameters.diffusion.friction="$FRICTION" \
-        hyperparameters.normalize_reward=true \
+        hyperparameters.adaptive_hl_gauss_bounds="$ADAPTIVE_HL_GAUSS_BOUNDS" \
         env=mjx_humanoid_dime \
         num_trials=1 \
-        seed="$SEED" \
         experiment_overrides=dmerl/mjx_humanoid_large_data_DMERL &
     GPU_PIDS[$GPU_SLOT]=$!
     GPU_INDEX=$((GPU_INDEX + 1))
@@ -125,11 +141,19 @@ launch_run() {
 for ENV_NAME in "${ENV_NAMES[@]}"; do
     ENV_NAME="${ENV_NAME%,}"
 
-    for SWEEP_TUPLE in "${SWEEP_TUPLES[@]}"; do
-        IFS='|' read -r VMIN VMAX LR TEMPERATURE_LR LAGRANGIAN_LR AUX_LOSS_MULT GAMMA LMBDA NUM_MINI_BATCHES ENT_TARGET_MULT NUM_COLLECTION_STEP_FACTOR NUM_BINS FRICTION SEED <<< "$SWEEP_TUPLE"
-        launch_run "$ENV_NAME" "sweep_tuple" \
-            "$VMIN" "$VMAX" "$LR" "$TEMPERATURE_LR" "$LAGRANGIAN_LR" "$AUX_LOSS_MULT" \
-            "$GAMMA" "$LMBDA" "$NUM_MINI_BATCHES" "$ENT_TARGET_MULT" "$NUM_COLLECTION_STEP_FACTOR" "$NUM_BINS" "$FRICTION" "$SEED"
+    for VMIN_VMAX_TUPLE in "${VMIN_VMAX_TUPLES[@]}"; do
+        IFS='|' read -r VMIN VMAX <<< "$VMIN_VMAX_TUPLE"
+        for REWARD_NORMALIZATION_MODE in "${REWARD_NORMALIZATION_MODES[@]}"; do
+            for REWARD_NORMALIZATION_WINDOW_ROLLOUT in "${REWARD_NORMALIZATION_WINDOW_ROLLOUTS[@]}"; do
+                for LR_TUPLE in "${LR_TUPLES[@]}"; do
+                    IFS='|' read -r LR TEMPERATURE_LR LAGRANGIAN_LR <<< "$LR_TUPLE"
+                    for ADAPTIVE_HL_GAUSS_BOUNDS in "${ADAPTIVE_HL_GAUSS_BOUNDS_VALUES[@]}"; do
+                        launch_run "$ENV_NAME" "value_bounds_lr_tuple" \
+                            "$VMIN" "$VMAX" "$LR" "$TEMPERATURE_LR" "$LAGRANGIAN_LR" "$ADAPTIVE_HL_GAUSS_BOUNDS" "$REWARD_NORMALIZATION_MODE" "$REWARD_NORMALIZATION_WINDOW_ROLLOUT"
+                    done
+                done
+            done
+        done
     done
 done
 
@@ -137,4 +161,3 @@ done
 echo "All runs started. Waiting for them to finish..."
 wait
 echo "All runs have finished."
-# CUDA_VISIBLE_DEVICES=2 python -m src.jaxrl.reppo_dime env.name=CartpoleSwingup wandb.project_suffix=_FinalRuns hyperparameters.num_eval=50 hyperparameters.total_time_steps=50000000 hyperparameters.diffusion.diff_steps=8 hyperparameters.kl_action_rep=4 hyperparameters.reverse_kl=false hyperparameters.actor_kl_clip_mode=clipped hyperparameters.ent_start=0.01 hyperparameters.vmin=-20 hyperparameters.vmax=170 hyperparameters.num_bins=191 hyperparameters.diffusion.learn_friction=true hyperparameters.diffusion.learn_dt=true hyperparameters.diffusion.per_step_dt=true hyperparameters.lr=3e-4 env=mjx_dmc num_trials=5 experiment_overrides=dime/mjx_dmc_large_data
